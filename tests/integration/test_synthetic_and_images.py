@@ -29,7 +29,7 @@ def test_fit_image_flattens_transparency_and_bounds_size():
 def test_profiles_postprocess():
     olm = PROFILES["olmocr"].postprocess("---\nprimary_language: en\n---\n# Title\nBody")
     assert olm == "# Title\nBody"
-    assert PROFILES["nanonets"].postprocess("Text <page_number>3</page_number>") == "Text 3"
+    assert PROFILES["nanonets"].postprocess("Text <page_number>3</page_number>") == "Text"
     assert PROFILES["markdown"].postprocess("<think>hmm</think>```markdown\n# A\n```") == "# A"
     assert profile_for("markdown", max_side=900).max_side == 900
     with pytest.raises(ValueError, match="unknown OCR profile"):

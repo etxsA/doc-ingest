@@ -535,7 +535,8 @@ def test_refresh_outputs_reapplies_cleanup_backs_up_and_skips_running(tmp_path):
         out.write_text(raw)
     tel = tmp_path / "telemetry" / "synthetic"
     tel.mkdir(parents=True)
-    (tel / "done.jsonl").write_text("{}\n")  # complete: 1 record for 1 sample
+    record = {"sample_id": sample.id, "chars": len(raw), "empty": False}
+    (tel / "done.jsonl").write_text(_json.dumps(record) + "\n")  # complete: 1 of 1 samples
     assert refresh_outputs(tmp_path, suite, manifest) == {"done"}
     assert suite.output_path(tmp_path, "done", sample).read_text() == "# T"
     assert suite.output_path(tmp_path, "running", sample).read_text() == raw  # untouched
@@ -544,4 +545,91 @@ def test_refresh_outputs_reapplies_cleanup_backs_up_and_skips_running(tmp_path):
     )
     assert backup.read_text() == raw
     assert _json.loads((tmp_path / "postprocess_log.json").read_text())["synthetic"]["done"]
+    (updated,) = [_json.loads(x) for x in (tel / "done.jsonl").read_text().splitlines()]
+    assert updated["chars"] == len("# T") and updated["empty"] is False
     assert refresh_outputs(tmp_path, suite, manifest) == set()  # idempotent
+
+
+# ------------------------------------- model fidelity (olmOCR-Bench failure analysis)
+HEADER_ONLY = (
+    "```yaml\nprimary_language: en\nis_rotation_valid: True\nrotation_correction: 0\n"
+    "is_table: False\nis_diagram: False\n```"
+)
+VALID = (
+    "---\nprimary_language: en\nis_rotation_valid: True\nrotation_correction: 0\n"
+    "is_table: False\nis_diagram: False\n---\n# Title\nBody text"
+)
+
+
+def test_olmocr_runs_text_first_and_retries_header_only_output(monkeypatch):
+    """9 of 42 olmOCR-Bench pages came back as front matter only (stop, 33 tokens) and
+    were accepted; the authors' pipeline retries until the front matter parses."""
+    from docingest.adapters.ocr.mlx_vlm import MlxVlmOcr
+    from docingest.adapters.ocr.profiles import OLMOCR_LADDER, profile_for
+    from docingest.domain.models import ModelRef
+
+    calls, _ = _stub_mlx(monkeypatch, [_gen(HEADER_ONLY, 33, "stop"), _gen(VALID, 400, "stop")])
+    templated = []
+
+    class Processor:
+        def apply_chat_template(self, messages, **kw):
+            templated.append(messages)
+            return "text-first prompt"
+
+    engine = MlxVlmOcr(ModelRef(repo_id="org/olmocr", revision="0" * 40), profile_for("olmocr"))
+    engine._model, engine._processor, engine._config = object(), Processor(), {}
+    res = engine.transcribe(Image.new("RGB", (64, 64), "white"))
+    assert [p["type"] for p in templated[0][0]["content"]] == ["text", "image"]
+    assert res.text == "# Title\nBody text" and res.attempts == 2
+    assert [c["temperature"] for c in calls] == [t for t, _ in OLMOCR_LADDER[:2]]
+    assert res.raw_text == VALID  # kept for audits
+
+
+def test_every_profile_retries_empty_output_and_keeps_the_best_text(monkeypatch):
+    from docingest.adapters.ocr.mlx_vlm import MlxVlmOcr
+    from docingest.adapters.ocr.profiles import profile_for
+    from docingest.domain.models import ModelRef
+
+    _stub_mlx(monkeypatch, [_gen("", 1, "stop"), _gen("Real page", 40, "stop")])
+    engine = MlxVlmOcr(ModelRef(repo_id="org/m", revision="0" * 40), profile_for("markdown"))
+    engine._model = object()
+    res = engine.transcribe(Image.new("RGB", (32, 32), "white"))
+    assert res.text == "Real page" and res.attempts == 2
+
+
+def test_openai_adapter_sends_the_profiles_prompt_order():
+    from docingest.adapters.ocr.openai_compat import OpenAICompatibleOcr
+    from docingest.adapters.ocr.profiles import profile_for
+    from docingest.domain.models import ModelRef
+
+    ref = ModelRef(repo_id="org/m", revision="0" * 40)
+    olm = OpenAICompatibleOcr(ref, profile_for("olmocr"), base_url="http://localhost:1")
+    gen = OpenAICompatibleOcr(ref, profile_for("markdown"), base_url="http://localhost:1")
+    assert [c["type"] for c in olm._content("data:")] == ["text", "image_url"]
+    assert [c["type"] for c in gen._content("data:")] == ["image_url", "text"]
+    assert (
+        olm.fingerprint
+        != OpenAICompatibleOcr(
+            ref,
+            profile_for("markdown", prompt_override=profile_for("olmocr").prompt),
+            base_url="http://localhost:1",
+        ).fingerprint
+    )  # prompt order and ladder are part of the cache key
+
+
+class RawOcr(FakeOcr):
+    """Page "b" needed clean-up (a code fence); the others came back clean."""
+
+    def transcribe(self, image):
+        sid = image.info.get("id", "")
+        raw = f"```markdown\n{sid}\n```" if sid == "b" else sid
+        return OcrResult(sid, 1.0, 10, "stop", raw_text=raw)
+
+
+def test_runner_keeps_the_raw_model_output_when_cleanup_changed_it(tmp_path):
+    from docingest.application.benchmark import RAW_DIR
+
+    runner({"r": RawOcr()}).run(TaggedSuite(), [spec("r")], tmp_path)
+    raw_dir = tmp_path / RAW_DIR / "mem" / "r"
+    assert sorted(p.name for p in raw_dir.iterdir()) == ["b.txt"]
+    assert (raw_dir / "b.txt").read_text().startswith("```markdown")

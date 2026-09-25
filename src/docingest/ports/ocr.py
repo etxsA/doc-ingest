@@ -27,6 +27,7 @@ class OcrResult:
     first_finish_reason: str | None = None  # the first attempt's; defaults to finish_reason
     total_gen_tokens: int | None = None  # over every attempt; defaults to gen_tokens
     gen_seconds: float | None = None  # decode time of every attempt (None: not measured)
+    raw_text: str | None = None  # the model's output before clean-up, for audits
 
     def __post_init__(self) -> None:
         if self.attempts == 1:  # the only attempt is also the first one
