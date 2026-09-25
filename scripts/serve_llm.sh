@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Local OpenAI-compatible LLM server for PaperQA2 (same Qwen3-VL model used for OCR).
+# Local OpenAI-compatible LLM server for PaperQA2. Serves the pinned local snapshot
+# (same Qwen3-VL commit as OCR, see config/pipeline.toml) so nothing is pulled from `main`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-MODEL="${DOCINGEST_LLM:-mlx-community/Qwen3-VL-4B-Instruct-4bit}"
-exec uv run --extra qa python -m mlx_vlm.server --model "$MODEL" --host 127.0.0.1 --port "${PORT:-8080}"
+MODEL="${DOCINGEST_LLM:-$(uv run --all-extras docingest model-path llm)}"
+export HF_HUB_OFFLINE=1
+exec uv run --all-extras python -m mlx_vlm.server --model "$MODEL" --host 127.0.0.1 --port "${PORT:-8080}"

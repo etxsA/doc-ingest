@@ -15,6 +15,8 @@ _MD = re.compile(r"[#*_`>|\[\]\\$^{}]|<!--.*?-->|-{3,}", re.DOTALL)
 
 def normalize(text: str) -> str:
     text = unicodedata.normalize("NFKC", text)
+    # Hyphenation is a formatting choice ("transduc-tion" / "transduction"): ignore it.
+    text = re.sub(r"(\w)[-\x02]\s*(\w)", r"\1\2", text)
     text = _MD.sub(" ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip().lower()
@@ -29,10 +31,12 @@ def word_f1(ref: str, hyp: str) -> float:
     return 2 * p * rc / (p + rc)
 
 
-def score(reference: str, hypothesis: str) -> dict[str, float]:
+def score(reference: str, hypothesis: str) -> dict[str, float | None]:
     import jiwer
 
     ref, hyp = normalize(reference), normalize(hypothesis)
+    if not ref:  # jiwer would return a raw insertion count, not a rate
+        return {"cer": None, "wer": None, "word_f1": None, "ref_chars": 0, "hyp_chars": len(hyp)}
     return {
         "cer": round(jiwer.cer(ref, hyp), 4),
         "wer": round(jiwer.wer(ref, hyp), 4),
