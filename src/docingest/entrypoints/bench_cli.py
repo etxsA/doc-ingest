@@ -430,6 +430,26 @@ def run(  # keyword-only: typer passes options by name
     console.print(f"outputs -> {escape(str(run_dir))}")
 
 
+def _sync_telemetry(run_dir: Path, suite: str, current: dict[str, dict[str, str]]) -> set[str]:
+    """Keep telemetry's chars / empty true to the output files whenever they drifted (also
+    for files an earlier version of refresh_outputs rewrote without updating telemetry)."""
+    drifted: set[str] = set()
+    for cand, texts in current.items():
+        tel = run_dir / "telemetry" / suite / f"{cand}.jsonl"
+        records = [json.loads(line) for line in tel.read_text().splitlines() if line.strip()]
+        drift = False
+        for r in records:
+            t = texts.get(r.get("sample_id"))
+            if t is not None and (r.get("chars") != len(t) or r.get("empty") != (not t.strip())):
+                r["chars"], r["empty"], drift = len(t), not t.strip(), True
+        if drift:
+            tmp = tel.with_suffix(".jsonl.tmp")
+            tmp.write_text("".join(json.dumps(r) + "\n" for r in records))
+            tmp.replace(tel)
+            drifted.add(cand)  # its throughput numbers changed: re-score / re-report it
+    return drifted
+
+
 def refresh_outputs(
     run_dir: Path, suite: BenchmarkSuite, manifest: dict[str, Any], names: list[str] | None = None
 ) -> set[str]:
@@ -474,21 +494,7 @@ def refresh_outputs(
             entries = log.setdefault(suite.name, {}).setdefault(cand, [])
             if rel not in entries:
                 entries.append(rel)
-    # Keep telemetry's chars / empty true to the files, whenever they drifted (also for
-    # files an earlier version of this function rewrote without updating telemetry).
-    for cand, texts in current.items():
-        tel = run_dir / "telemetry" / suite.name / f"{cand}.jsonl"
-        records = [json.loads(line) for line in tel.read_text().splitlines() if line.strip()]
-        drift = False
-        for r in records:
-            t = texts.get(r.get("sample_id"))
-            if t is not None and (r.get("chars") != len(t) or r.get("empty") != (not t.strip())):
-                r["chars"], r["empty"], drift = len(t), not t.strip(), True
-        if drift:
-            tmp = tel.with_suffix(".jsonl.tmp")
-            tmp.write_text("".join(json.dumps(r) + "\n" for r in records))
-            tmp.replace(tel)
-            changed.add(cand)  # its throughput numbers changed: re-score / re-report it
+    changed |= _sync_telemetry(run_dir, suite.name, current)
     if changed:
         log_path.write_text(json.dumps(log, indent=2))
         console.print(f"[yellow]re-applied clean-up[/] to {escape(', '.join(sorted(changed)))}")
