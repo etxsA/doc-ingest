@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from importlib.metadata import PackageNotFoundError, version
+from typing import Any
 
 from PIL import Image, ImageOps
 
@@ -22,7 +23,9 @@ def fit_image(img: Image.Image, max_side: int) -> Image.Image:
     img = img.convert("RGB")
     scale = max_side / max(img.size)
     if scale < 1:
-        img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
+        img = img.resize(
+            (round(img.width * scale), round(img.height * scale)), Image.Resampling.LANCZOS
+        )
     return img
 
 
@@ -70,12 +73,15 @@ class MlxVlmOcr:
             },
             sort_keys=True,
         )
-        self._model = None
+        # mlx-vlm objects; its type hints are narrower than what it accepts (PIL images).
+        self._model: Any = None
+        self._processor: Any = None
+        self._config: Any = None
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
-        from mlx_vlm import load
+        from mlx_vlm import load  # pyright: ignore[reportPrivateImportUsage]
         from mlx_vlm.utils import load_config
 
         path = resolve(self.model.repo_id, self.model.revision)
@@ -106,20 +112,33 @@ class MlxVlmOcr:
         ]
 
     def transcribe(self, image: Image.Image) -> OcrResult:
-        from mlx_vlm import apply_chat_template, generate
+        from mlx_vlm import (
+            apply_chat_template,  # pyright: ignore[reportPrivateImportUsage]
+            generate,  # pyright: ignore[reportPrivateImportUsage]
+        )
 
         self._ensure_loaded()
         img = fit_image(image, self.profile.max_side)
-        prompt = apply_chat_template(
-            self._processor, self._config, self.profile.prompt, num_images=1, **self.profile.chat_kwargs
+        prompt: Any = apply_chat_template(
+            self._processor,
+            self._config,
+            self.profile.prompt,
+            num_images=1,
+            **self.profile.chat_kwargs,
         )
+        import mlx.core as mx
+
+        mx.reset_peak_memory()  # per-page peak, not the process-wide high-water mark
         t0 = time.perf_counter()
         res = None
         for temperature, penalty in self._attempts():
             kwargs: dict = {"max_tokens": self.max_tokens, "temperature": temperature}
             if penalty:
                 kwargs["repetition_penalty"] = penalty
-            res = generate(self._model, self._processor, prompt, image=[img], verbose=False, **kwargs)
+            images: Any = [img]  # mlx-vlm accepts PIL images; its hint says paths only
+            res = generate(
+                self._model, self._processor, prompt, image=images, verbose=False, **kwargs
+            )
             if res.finish_reason != "length":
                 break
         assert res is not None

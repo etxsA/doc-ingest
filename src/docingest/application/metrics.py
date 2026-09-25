@@ -7,6 +7,7 @@ character 3-gram F1 that tolerates reordering but still penalizes misspellings.
 
 from __future__ import annotations
 
+import html
 import random
 import re
 import unicodedata
@@ -16,8 +17,25 @@ from collections.abc import Sequence
 _MD = re.compile(r"[#*_`>|\[\]\\$^{}]|<!--.*?-->|-{3,}", re.DOTALL)
 
 
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)\s]*\)")
+_HTML_TAG = re.compile(
+    r"</?(?:table|thead|tbody|tfoot|tr|td|th|caption|colgroup|col|br|hr|p|div|span|img|"
+    r"sup|sub|b|i|u|em|strong|ul|ol|li|h[1-6]|figure|figcaption|page_number|watermark|"
+    r"signature)\b[^<>]*/?>",
+    re.IGNORECASE,
+)
+
+
+def plain_text(markdown: str) -> str:
+    """A transcription reduced to what a text layer can contain, for format-neutral CER."""
+    text = _HTML_COMMENT.sub(" ", markdown)
+    text = _MD_IMAGE.sub(" ", text)
+    return html.unescape(_HTML_TAG.sub(" ", text))
+
+
 def normalize(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text)
+    text = unicodedata.normalize("NFKC", plain_text(text))
     # Hyphenation is a formatting choice ("transduc-tion" / "transduction"): ignore it.
     text = re.sub(r"(\w)[-\x02]\s*(\w)", r"\1\2", text)
     text = _MD.sub(" ", text)
@@ -40,9 +58,9 @@ def word_f1(ref: str, hyp: str) -> float:
 def _word_trigrams(text: str) -> Counter[str]:
     """Trigrams inside space-padded words: independent of word order, sensitive to spelling."""
     grams: Counter[str] = Counter()
-    for w in text.split():
-        w = f" {w} "
-        grams.update(w[i : i + 3] for i in range(len(w) - 2))
+    for word in text.split():
+        padded = f" {word} "
+        grams.update(padded[i : i + 3] for i in range(len(padded) - 2))
     return grams
 
 
@@ -79,7 +97,8 @@ def bootstrap_ci(
     """(mean, low, high) percentile bootstrap CI of the mean. Deterministic via seed."""
     vals = [v for v in values if v is not None]
     if not vals:
-        return (float("nan"),) * 3
+        nan = float("nan")
+        return nan, nan, nan
     rng = random.Random(seed)
     k = len(vals)
     means = sorted(sum(rng.choices(vals, k=k)) / k for _ in range(n))

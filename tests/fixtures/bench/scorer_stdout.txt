@@ -1,0 +1,174 @@
+
+Running tests for each candidate:
+
+Evaluating candidate: empty
+
+Candidate: empty
+  [FAIL] Test 3_pg39_equation_01 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x' = ax + by anywhere in content
+  [FAIL] Test 3_pg39_equation_02 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for y'= dx + ey + fz anywhere in content
+  [FAIL] Test 2503.07875_pg21_math_001 on arxiv_math/2503.07875_pg21 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for \Sigma_2^* = \left(1,0,0,0,\frac{1}{c_{1v}},0,0\right) anywhere in content
+  [FAIL] Test 17_pg34_pg1_text_01 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'and if Sir Salar Jung had ever thought o...' with threshold 1.0 but best match ratio was 0.000
+  [FAIL] Test 17_pg34_pg1_text_02 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'Roads, tanks, wells, irrigation works a ...' with threshold 0.997229916897507 but best match ratio was 0.000
+  [FAIL] Test 3_pg39_equation_00 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x' = ax+by+cz anywhere in content
+  [FAIL] Test 17_pg34_pg1_text_05 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'Mr. Hunter records, in his Life of Lord ...' with threshold 0.9910714285714286 but best match ratio was 0.000
+  [FAIL] Test 17_pg34_pg1_text_00 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'well acquainted with the facts has state...' with threshold 1.0 but best match ratio was 0.000
+  [FAIL] Test 17_pg34_pg1_text_07 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'The one road to favour was to lie throug...' with threshold 0.9907407407407407 but best match ratio was 0.000
+  [FAIL] Test 17_pg34_pg1_text_06 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'He determined that from the outset of hi...' with threshold 0.991869918699187 but best match ratio was 0.000
+  [FAIL] Test 3_pg39_equation_06 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x = a'x' + b'y' anywhere in content
+  [FAIL] Test 3_pg39_equation_10 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x = y = z = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_04 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for z'=gx+hy+kz anywhere in content
+  [FAIL] Test 3_pg39_equation_05 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x = a'x' + b'y' + c'z' anywhere in content
+  [FAIL] Test 3_pg39_equation_13 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for Ax + By + D = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_09 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for z = g'x' + h'y' + k'z' anywhere in content
+  [FAIL] Test 3_pg39_equation_03 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for y' = cx + dy anywhere in content
+  [FAIL] Test 3_pg39_equation_07 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for y = d'x' + e'y'+ f'z' anywhere in content
+  [FAIL] Test 3_pg39_equation_16 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for A(a'x' + b'y') + B(c'x' + d'y') + D = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_15 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for + C(g'x' + h'y' + k'x') + D = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_17 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for A' = a'A + d'B + g'C anywhere in content
+  [FAIL] Test 3_pg39_equation_14 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for A(a'x' + b'y' + c'z') + B(d'x' + e'y' + f'z') anywhere in content
+  [FAIL] Test 17_pg34_pg1_text_04 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'He has helped us to solve the dfficult p...' with threshold 0.9856115107913669 but best match ratio was 0.000
+  [FAIL] Test 3_pg39_equation_20 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for A'=a'A+c'B anywhere in content
+  [FAIL] Test 3_pg39_equation_22 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for b'A + e'B+h'C=0 anywhere in content
+  [FAIL] Test 3_pg39_equation_21 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for B'=b'A+d'B anywhere in content
+  [FAIL] Test 3_pg39_equation_19 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for C'=c'A + f'B + k'C anywhere in content
+  [FAIL] Test 3_pg39_equation_11 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x' = y' = z' = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_12 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for Ax + By + Cz + D = 0 anywhere in content
+  [FAIL] Test 3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_table_04 on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No tables found in the content
+  [FAIL] Test 3_pg39_equation_18 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for B' = b'A + e'B + h'C anywhere in content
+  [FAIL] Test 3_pg39_equation_23 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for a'A + c'B = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_25 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for c'A + f'B + h'C = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_08 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for y = c'x' + d'y' anywhere in content
+  [FAIL] Test 29_231231 on old_scans/29 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'At this time, after having watched you...' with threshold 0.9736842105263158 but best match ratio was 0.000
+  [FAIL] Test 3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_table_01 on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No tables found in the content
+  [FAIL] Test 3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_table_03 on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No tables found in the content
+  [FAIL] Test 29_967492 on old_scans/29 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: 'before' text 'My Dear Mr. Roosevelt...' not found with max_l_dist 0
+  [FAIL] Test 29_928938 on old_scans/29 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'express to you my appreciation of your m...' with threshold 1.0 but best match ratio was 0.000
+  [FAIL] Test headers_footers/b536cd5df0874a60e9e5cdfd6bda47946f706b11_page_2.pdf_baseline on headers_footers/b536cd5df0874a60e9e5cdfd6bda47946f706b11_page_2 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: The text contains no alpha numeric characters
+  [FAIL] Test 09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7.pdf_order_e6fbcb7e on multi_column/09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: 'before' text 'Text-surface-based only with Answer Just...' not found with max_l_dist 1
+  [FAIL] Test tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1.pdf_baseline on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: The text contains no alpha numeric characters
+  [FAIL] Test 3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_table_02 on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No tables found in the content
+  [FAIL] Test arxiv_math/2503.07875_pg21.pdf_baseline on arxiv_math/2503.07875_pg21 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: The text contains no alpha numeric characters
+  [FAIL] Test 3_pg39_equation_24 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for b'A + d'B = 0 anywhere in content
+  [FAIL] Test 09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7.pdf_order_1c99c64b on multi_column/09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: 'before' text 'Both qualitative and quantitative evalua...' not found with max_l_dist 2
+  [FAIL] Test old_scans/29.pdf_baseline on old_scans/29 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: The text contains no alpha numeric characters
+  [FAIL] Test 09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7.pdf_order_7ab04829 on multi_column/09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: 'before' text 'scores obtained when only shallow method...' not found with max_l_dist 1
+  [FAIL] Test multi_column/09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7_pg1.pdf_baseline on multi_column/09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: The text contains no alpha numeric characters
+  [FAIL] Test 3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_table_00 on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No tables found in the content
+  [FAIL] Test old_scans_math/3_pg39.pdf_baseline on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: The text contains no alpha numeric characters
+  [FAIL] Test long_tiny_text/17_pg34_pg1.pdf_baseline on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: The text contains no alpha numeric characters
+  [FAIL] Test 29_762787 on old_scans/29 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'Roosevelt I want to express to you my ap...' with threshold 1.0 but best match ratio was 0.000
+  Average Score: 16.7% (95% CI: [12.5%, 20.8%]) over 56 tests.
+
+Evaluating candidate: partial
+
+Candidate: partial
+  [ERROR] Candidate 'partial' is missing MD repeats for tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1.pdf (expected files matching tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1_pg{page}_repeat*.md).
+  [ERROR] Candidate 'partial' is missing MD repeats for headers_footers/b536cd5df0874a60e9e5cdfd6bda47946f706b11_page_2.pdf (expected files matching headers_footers/b536cd5df0874a60e9e5cdfd6bda47946f706b11_page_2_pg{page}_repeat*.md).
+  [ERROR] Candidate 'partial' is missing MD repeats for multi_column/09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7_pg1.pdf (expected files matching multi_column/09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7_pg1_pg{page}_repeat*.md).
+  [ERROR] Candidate 'partial' is missing MD repeats for long_tiny_text/17_pg34_pg1.pdf (expected files matching long_tiny_text/17_pg34_pg1_pg{page}_repeat*.md).
+  [ERROR] Candidate 'partial' is missing MD repeats for old_scans_math/3_pg39.pdf (expected files matching old_scans_math/3_pg39_pg{page}_repeat*.md).
+  [ERROR] Candidate 'partial' is missing MD repeats for arxiv_math/2503.07875_pg21.pdf (expected files matching arxiv_math/2503.07875_pg21_pg{page}_repeat*.md).
+
+Evaluating candidate: textlayer
+
+Candidate: textlayer
+  [FAIL] Test 17_pg34_pg1_text_06 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'He determined that from the outset of hi...' with threshold 0.991869918699187 but best match ratio was 0.000
+  [FAIL] Test 17_pg34_pg1_text_01 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'and if Sir Salar Jung had ever thought o...' with threshold 1.0 but best match ratio was 0.000
+  [FAIL] Test 17_pg34_pg1_text_07 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'The one road to favour was to lie throug...' with threshold 0.9907407407407407 but best match ratio was 0.000
+  [FAIL] Test 17_pg34_pg1_text_05 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'Mr. Hunter records, in his Life of Lord ...' with threshold 0.9910714285714286 but best match ratio was 0.000
+  [FAIL] Test 17_pg34_pg1_text_04 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'He has helped us to solve the dfficult p...' with threshold 0.9856115107913669 but best match ratio was 0.000
+  [FAIL] Test 17_pg34_pg1_text_00 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'well acquainted with the facts has state...' with threshold 1.0 but best match ratio was 0.000
+  [FAIL] Test 17_pg34_pg1_text_02 on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'Roads, tanks, wells, irrigation works a ...' with threshold 0.997229916897507 but best match ratio was 0.000
+  [FAIL] Test 3_pg39_equation_00 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x' = ax+by+cz anywhere in content
+  [FAIL] Test 3_pg39_equation_06 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x = a'x' + b'y' anywhere in content
+  [FAIL] Test 3_pg39_equation_07 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for y = d'x' + e'y'+ f'z' anywhere in content
+  [FAIL] Test 3_pg39_equation_05 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x = a'x' + b'y' + c'z' anywhere in content
+  [FAIL] Test 2503.07875_pg21_math_001 on arxiv_math/2503.07875_pg21 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for \Sigma_2^* = \left(1,0,0,0,\frac{1}{c_{1v}},0,0\right) anywhere in content
+  [FAIL] Test 3_pg39_equation_08 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for y = c'x' + d'y' anywhere in content
+  [FAIL] Test 3_pg39_equation_02 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for y'= dx + ey + fz anywhere in content
+  [FAIL] Test 3_pg39_equation_09 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for z = g'x' + h'y' + k'z' anywhere in content
+  [FAIL] Test 3_pg39_equation_04 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for z'=gx+hy+kz anywhere in content
+  [FAIL] Test 3_pg39_equation_03 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for y' = cx + dy anywhere in content
+  [FAIL] Test 3_pg39_equation_17 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for A' = a'A + d'B + g'C anywhere in content
+  [FAIL] Test 3_pg39_equation_12 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for Ax + By + Cz + D = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_19 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for C'=c'A + f'B + k'C anywhere in content
+  [FAIL] Test 3_pg39_equation_11 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x' = y' = z' = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_10 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x = y = z = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_15 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for + C(g'x' + h'y' + k'x') + D = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_14 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for A(a'x' + b'y' + c'z') + B(d'x' + e'y' + f'z') anywhere in content
+  [FAIL] Test 3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_table_00 on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No tables found in the content
+  [FAIL] Test 3_pg39_equation_24 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for b'A + d'B = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_20 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for A'=a'A+c'B anywhere in content
+  [FAIL] Test 3_pg39_equation_13 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for Ax + By + D = 0 anywhere in content
+  [FAIL] Test 3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_table_03 on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No tables found in the content
+  [FAIL] Test 3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_table_02 on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No tables found in the content
+  [FAIL] Test 3_pg39_equation_16 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for A(a'x' + b'y') + B(c'x' + d'y') + D = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_01 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for x' = ax + by anywhere in content
+  [FAIL] Test 3_pg39_equation_21 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for B'=b'A+d'B anywhere in content
+  [FAIL] Test 3_pg39_equation_23 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for a'A + c'B = 0 anywhere in content
+  [FAIL] Test 3_pg39_equation_25 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for c'A + f'B + h'C = 0 anywhere in content
+  [FAIL] Test 09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7.pdf_order_e6fbcb7e on multi_column/09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: 'before' text 'Text-surface-based only with Answer Just...' not found with max_l_dist 1
+  [FAIL] Test 29_762787 on old_scans/29 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'Roosevelt I want to express to you my ap...' with threshold 1.0 but best match ratio was 0.000
+  [FAIL] Test 3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_table_01 on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No tables found in the content
+  [FAIL] Test 3_pg39_equation_18 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for B' = b'A + e'B + h'C anywhere in content
+  [FAIL] Test 29_967492 on old_scans/29 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: 'before' text 'My Dear Mr. Roosevelt...' not found with max_l_dist 0
+  [FAIL] Test b536cd5df0874a60e9e5cdfd6bda47946f706b11_page_2_header_00 on headers_footers/b536cd5df0874a60e9e5cdfd6bda47946f706b11_page_2 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected absence of 'page 2 / 2...' with threshold 1.0 but best match ratio was 1.000
+  [FAIL] Test 29_231231 on old_scans/29 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'At this time, after having watched you...' with threshold 0.9736842105263158 but best match ratio was 0.000
+  [FAIL] Test 29_928938 on old_scans/29 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: Expected 'express to you my appreciation of your m...' with threshold 1.0 but best match ratio was 0.000
+  [FAIL] Test old_scans_math/3_pg39.pdf_baseline on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: The text contains no alpha numeric characters
+  [FAIL] Test old_scans/29.pdf_baseline on old_scans/29 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: The text contains no alpha numeric characters
+  [FAIL] Test 3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_table_04 on tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No tables found in the content
+  [FAIL] Test 3_pg39_equation_22 on old_scans_math/3_pg39 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: No match found for b'A + e'B+h'C=0 anywhere in content
+  [FAIL] Test long_tiny_text/17_pg34_pg1.pdf_baseline on long_tiny_text/17_pg34_pg1 page 1 average pass ratio: 0.000 (0/1 repeats passed). Ex: The text contains no alpha numeric characters
+  Average Score: 19.6% (95% CI: [9.8%, 29.2%]) over 56 tests.
+
+============================================================
+Final Summary with 95% Confidence Intervals:
+empty                : Average Score: 16.7% ± 4.2% (average of per-JSONL scores)
+    absent  : 100.0% average pass rate over 3 tests
+    baseline: 0.0% average pass rate over 7 tests
+    math    : 0.0% average pass rate over 27 tests
+    order   : 0.0% average pass rate over 4 tests
+    present : 0.0% average pass rate over 10 tests
+    table   : 0.0% average pass rate over 5 tests
+
+    Results by JSONL file:
+        arxiv_math.jsonl              : 0.0% (0/1 tests)
+        baseline                      : 0.0% (0/7 tests)
+        headers_footers.jsonl         : 100.0% (1/1 tests)
+        long_tiny_text.jsonl          : 0.0% (0/7 tests)
+        multi_column.jsonl            : 0.0% (0/3 tests)
+        old_scans.jsonl               : 33.3% (2/6 tests)
+        old_scans_math.jsonl          : 0.0% (0/26 tests)
+        table_tests.jsonl             : 0.0% (0/5 tests)
+
+partial              : Average Score: FAILED (errors)  (average of per-JSONL scores)
+
+    Results by JSONL file:
+        arxiv_math.jsonl              : 0.0% (0/1 tests)
+        baseline                      : 0.0% (0/7 tests)
+        headers_footers.jsonl         : 0.0% (0/1 tests)
+        long_tiny_text.jsonl          : 0.0% (0/7 tests)
+        multi_column.jsonl            : 0.0% (0/3 tests)
+        old_scans.jsonl               : 0.0% (0/6 tests)
+        old_scans_math.jsonl          : 0.0% (0/26 tests)
+        table_tests.jsonl             : 0.0% (0/5 tests)
+
+textlayer            : Average Score: 19.6% ± 9.7% (average of per-JSONL scores)
+    absent  : 66.7% average pass rate over 3 tests
+    baseline: 57.1% average pass rate over 7 tests
+    math    : 0.0% average pass rate over 27 tests
+    order   : 50.0% average pass rate over 4 tests
+    present : 0.0% average pass rate over 10 tests
+    table   : 0.0% average pass rate over 5 tests
+
+    Results by JSONL file:
+        arxiv_math.jsonl              : 0.0% (0/1 tests)
+        baseline                      : 57.1% (4/7 tests)
+        headers_footers.jsonl         : 0.0% (0/1 tests)
+        long_tiny_text.jsonl          : 0.0% (0/7 tests)
+        multi_column.jsonl            : 66.7% (2/3 tests)
+        old_scans.jsonl               : 33.3% (2/6 tests)
+        old_scans_math.jsonl          : 0.0% (0/26 tests)
+        table_tests.jsonl             : 0.0% (0/5 tests)
+

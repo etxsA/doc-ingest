@@ -1,0 +1,130 @@
+# OCR benchmark: every [[candidates]] entry x every suite. See `docingest bench --help`.
+#
+#   ./scripts/setup_bench_scorer.sh                       # once: official olmOCR-bench scorer
+#   docingest bench prepare                               # download / check suite data
+#   docingest bench run --run-id full                     # resumable; rerun to continue
+#   docingest bench report --run-id full                  # scores + summary.json + report.md
+#
+# A run directory (runs_dir/<run-id>/) records each suite's settings and fingerprint and
+# every candidate's spec; resuming it with different settings is refused.
+# Paths are relative to the working directory (the repo root), like pipeline.toml.
+
+runs_dir = "data/bench/runs"
+data_dir = "data/bench"
+# Base configuration for the OCR adapters (e.g. base_url for "openai-compatible");
+# each candidate overrides the [ocr] model / profile / generation settings.
+pipeline_config = "config/pipeline.toml"
+
+[suites.synthetic]
+# Born-digital pages -> raster at `dpi` -> degraded per level; reference = text layer.
+dpi = 200
+seed = 0
+levels = ["clean", "light", "heavy"]  # clean = raster only; light = degrade(); heavy = worse + JPEG q35
+min_ref_chars = 200                   # skip pages with less reference text (figures, references)
+primary_metric = "cer"                # ranking metric: cer | wer | word_f1 | char3_f1
+
+[[suites.synthetic.documents]]
+path = "data/raw/attention_1706.03762.pdf"
+pages = [0, 3, 7, 9]      # 0-based: title+abstract, figure+math, results table, table+body
+
+[[suites.synthetic.documents]]
+path = "data/raw/paperqa2_2409.13740.pdf"
+pages = [0, 2, 6, 10]     # title page, body, body, references
+
+[[suites.synthetic.documents]]
+path = "data/raw/olmocr_2502.18443.pdf"
+pages = [0, 4, 11, 21]    # title page, body, dense author list, body
+
+[suites.olmocr-bench]
+repo_id = "allenai/olmOCR-bench"
+revision = "54a96a6fb6a2bd3b297e59869491db4d3625b711"  # dataset commit, 2026-02-19
+per_category = 20      # seeded sample of PDFs per category; 0 = the full benchmark (1404 PDFs)
+seed = 0
+long_side = 2048       # render size; each OCR profile downsizes to its model's max_side
+categories = [
+    "arxiv_math", "old_scans_math", "table_tests", "old_scans",
+    "headers_footers", "multi_column", "long_tiny_text",
+]
+# Official scorer (olmocr==0.4.27 in an isolated venv). Not part of the suite fingerprint.
+# Env overrides: DOCINGEST_BENCH_SCORER_PYTHON, DOCINGEST_BENCH_PLAYWRIGHT_BROWSERS,
+# DOCINGEST_BENCH_SCORER_HOME.
+scorer_python = ".bench-venv/bin/python"
+playwright_browsers = ".bench-venv/pw"
+scorer_home = ".bench-venv/home"   # keeps the scorer's equation cache inside the repo
+scorer_timeout_s = 3600
+bootstrap_samples = 1000
+confidence_level = 0.95
+skip_baseline = false              # the leaderboard includes the baseline tests
+
+# Presets overlay the settings above: `docingest bench run --preset smoke --run-id smoke`.
+[presets.smoke]
+candidates = ["qwen3-vl-2b", "paddleocr-vl"]
+
+[presets.smoke.suites.synthetic]
+documents = [{ path = "data/raw/attention_1706.03762.pdf", pages = [0, 9] }]
+levels = ["clean", "heavy"]
+
+[presets.smoke.suites.olmocr-bench]
+per_category = 1
+
+# Screening round: every candidate, smaller olmOCR-bench sample (nested in the full one).
+[presets.screen.suites.olmocr-bench]
+per_category = 6
+
+# Candidates: model x profile x settings. Revisions are Hugging Face commit shas.
+# Optional per candidate: ocr (adapter, default "mlx-vlm"), max_side, max_tokens, dpi,
+# prompt, temperature, repetition_penalty (unset -> the profile's model-card defaults).
+
+[[candidates]]
+name = "qwen3-vl-2b"
+repo_id = "mlx-community/Qwen3-VL-2B-Instruct-4bit"
+revision = "9c4f5209e57b31f4b9dfba735de3fb983739c9cc"
+profile = "markdown"
+
+[[candidates]]
+name = "qwen3-vl-4b"
+repo_id = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
+revision = "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b"
+profile = "markdown"
+
+[[candidates]]
+name = "qwen3-vl-8b"
+repo_id = "mlx-community/Qwen3-VL-8B-Instruct-4bit"
+revision = "defcdea7cc7a4b0858fea563cbbce171d328e457"
+profile = "markdown"
+
+[[candidates]]
+name = "qwen3.5-4b"
+repo_id = "mlx-community/Qwen3.5-4B-MLX-4bit"
+revision = "32f3e8ecf65426fc3306969496342d504bfa13f3"
+profile = "markdown"
+
+[[candidates]]
+name = "qwen3.5-9b"
+repo_id = "mlx-community/Qwen3.5-9B-MLX-4bit"
+revision = "938d8919941c6e7efd3c7150eff7fe9d12afa631"
+profile = "markdown"
+
+[[candidates]]
+name = "olmocr-2-7b"
+repo_id = "mlx-community/olmOCR-2-7B-1025-mlx-4bit"
+revision = "c0eaffb7844e795a44e246744cfaba5981a1bf03"
+profile = "olmocr"
+
+[[candidates]]
+name = "nanonets-ocr2-3b"
+repo_id = "mlx-community/Nanonets-OCR2-3B-4bit"
+revision = "fe1396cbeb46cc71cba355907b5d6e11f3553f45"
+profile = "nanonets"
+
+[[candidates]]
+name = "glm-ocr"
+repo_id = "mlx-community/GLM-OCR-4bit"
+revision = "97f587506984cc92fa69b2694b4128e53db6b081"
+profile = "glm-ocr"
+
+[[candidates]]
+name = "paddleocr-vl"
+repo_id = "mlx-community/PaddleOCR-VL-1.6-4bit"
+revision = "c8987b277bdd8aaec8bd265d154f391bd03ad165"
+profile = "paddleocr-vl"

@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import ClassVar
 
 from PIL import Image
 
@@ -101,7 +102,7 @@ class FakePdfReader:
 class FakeDetector:
     """Kind from the suffix only; the real magic-byte detector has its own tests."""
 
-    KINDS = {
+    KINDS: ClassVar[dict[str, tuple[SourceKind, str]]] = {
         ".pdf": (SourceKind.PDF, "application/pdf"),
         ".png": (SourceKind.IMAGE, "image/png"),
         ".docx": (SourceKind.OFFICE, "application/docx"),

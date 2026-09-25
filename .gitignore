@@ -10,3 +10,7 @@ data/samples/*.pdf
 !data/samples/.gitkeep
 data/samples/*.html
 .DS_Store
+
+# Benchmark scorer venv and downloaded benchmark data
+.bench-venv/
+data/bench/

@@ -1,0 +1,18 @@
+\begin{thebibliography}{2}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Child et~al.(2019)]{child2019}
+Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever.
+\newblock Generating long sequences with sparse transformers.
+\newblock {\em arXiv preprint arXiv:1904.10509}, 2019.
+
+\bibitem[Vaswani et~al.(2017)]{vaswani2017}
+Ashish Vaswani, Noam Shazeer, and others.
+\newblock Attention is all you need.
+\newblock In {\em Advances in Neural Information Processing Systems}, 2017.
+
+\end{thebibliography}

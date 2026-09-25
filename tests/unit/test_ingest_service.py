@@ -138,5 +138,5 @@ def test_unreadable_pdf_is_a_domain_error(src):
 
 
 def test_invalid_max_pages_rejected():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="max_pages"):
         IngestOptions(max_pages=0)

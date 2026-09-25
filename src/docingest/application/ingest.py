@@ -100,9 +100,10 @@ class IngestService:
     def ingest(
         self,
         path: Path,
-        options: IngestOptions = IngestOptions(),
+        options: IngestOptions | None = None,
         metadata: SourceMetadata | None = None,
     ) -> StoredDocument:
+        options = options or IngestOptions()
         path = path.resolve()
         kind, mime = self.detector.detect(path)
         doc_id = sha256_file(path)
@@ -126,9 +127,7 @@ class IngestService:
             case SourceKind.IMAGE:
                 records, texts, source_pages = self._image(path, options)
             case _:
-                records, texts, title, source_pages, conv_meta = self._convert(
-                    path, kind, options
-                )
+                records, texts, title, source_pages, conv_meta = self._convert(path, kind, options)
                 metadata = metadata or conv_meta
 
         uses_ocr = any(r.method == PageMethod.VLM_OCR for r in records)
@@ -158,7 +157,9 @@ class IngestService:
         try:
             return self.converters[kind]
         except KeyError:
-            raise UnsupportedInputError(f"no converter configured for {kind.value} inputs") from None
+            raise UnsupportedInputError(
+                f"no converter configured for {kind.value} inputs"
+            ) from None
 
     def _pdf(
         self, path: Path, options: IngestOptions

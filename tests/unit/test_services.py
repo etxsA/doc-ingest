@@ -3,8 +3,17 @@
 import asyncio
 
 import pytest
-from fakes import FakeConverter, FakeCrawler, FakeDetector, FakeImages, FakeOcr, FakePdfReader
-from fakes import FakeQA, InMemoryStore, record
+from fakes import (
+    FakeConverter,
+    FakeCrawler,
+    FakeDetector,
+    FakeImages,
+    FakeOcr,
+    FakePdfReader,
+    FakeQA,
+    InMemoryStore,
+    record,
+)
 
 from docingest.application.ask import AskService
 from docingest.application.crawl import CrawlService
@@ -31,7 +40,7 @@ def test_crawl_fetches_writes_sidecar_ingests_and_survives_failures(tmp_path):
     store = InMemoryStore()
     crawler = FakeCrawler([record("2401.00001"), record("2401.00002")], fail_keys={"2401.00002"})
     report = CrawlService(
-        crawler=crawler, ingest=ingest_service(store), raw_dir=tmp_path, log=lambda _: None
+        crawler=crawler, ingest=lambda: ingest_service(store), raw_dir=tmp_path, log=lambda _: None
     ).run("cat:cs.CL", limit=5)
     assert len(report.fetched) == 1 and len(report.ingested) == 1
     assert report.failures[0][0] == "2401.00002"
@@ -48,9 +57,18 @@ def test_ask_uses_corpus_and_reports_partial_runs():
     from docingest.domain.models import DocumentManifest
 
     m = DocumentManifest(
-        doc_id="a" * 64, source_path="x", source_name="x.pdf", source_kind=SourceKind.PDF,
-        mime="application/pdf", size_bytes=1, n_pages=1, source_pages=2, max_pages=1,
-        pages=[], pipeline_version="t", config_hash="h",
+        doc_id="a" * 64,
+        source_path="x",
+        source_name="x.pdf",
+        source_kind=SourceKind.PDF,
+        mime="application/pdf",
+        size_bytes=1,
+        n_pages=1,
+        source_pages=2,
+        max_pages=1,
+        pages=[],
+        pipeline_version="t",
+        config_hash="h",
     )
     store.save(m, "# x\n")
     answer = asyncio.run(AskService(store=store, qa=qa).ask("q?", warnings.append))

@@ -1,0 +1,14 @@
+# OCR through any OpenAI-compatible vision endpoint instead of in-process MLX:
+# vLLM / SGLang on a GPU box, LM Studio, Ollama (/v1), or `python -m mlx_vlm.server`.
+output_dir = "data/normalized"
+
+[adapters]
+ocr = "openai-compatible"
+
+[ocr]
+repo_id = "mlx-community/Qwen3-VL-8B-Instruct-4bit"   # recorded in manifests for provenance
+revision = "defcdea7cc7a4b0858fea563cbbce171d328e457"
+profile = "markdown"
+base_url = "http://127.0.0.1:8080/v1"
+# served_model = "Qwen/Qwen3-VL-8B-Instruct"   # the id the server expects, if different
+# api_key_env = "OCR_API_KEY"                  # name of the env var holding a key, never the key

@@ -10,6 +10,7 @@ text-layer / OCR router, with the content-addressed cache.
 from __future__ import annotations
 
 import os
+from functools import cache
 from pathlib import Path
 
 from ..application.ingest import IngestService
@@ -18,14 +19,11 @@ from ..config import load_config
 from ..domain.errors import DocumentOpenError
 from ..domain.text import split_pages
 
-_service: IngestService | None = None
 
-
+@cache
 def _ingest() -> IngestService:
-    global _service
-    if _service is None:  # keep the OCR model loaded across calls
-        _service = Container(load_config(), log=lambda _: None).ingest
-    return _service
+    """One service per process, so the OCR model stays loaded across calls."""
+    return Container(load_config(), log=lambda _: None).ingest
 
 
 def parse_pdf_to_pages(

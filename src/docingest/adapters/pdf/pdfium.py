@@ -58,7 +58,8 @@ class PdfiumPage:
         return signals, text
 
     def render(self, dpi: int) -> Image:
-        return self._page.render(scale=dpi / 72).to_pil()
+        bitmap = self._page.render(scale=dpi / 72)  # pyright: ignore[reportArgumentType]  # pypdfium2 accepts float scale
+        return bitmap.to_pil()
 
 
 class PdfiumDocument:

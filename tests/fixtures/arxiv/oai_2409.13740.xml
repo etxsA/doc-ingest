@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Trimmed copy of a live oaipmh.arxiv.org GetRecord response (arXivRaw format,
+     recorded 2026-09-25; abstract shortened). -->
+<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://www.openarchives.org/OAI/2.0/ http://www.openarchives.org/OAI/2.0/OAI-PMH.xsd">
+    <responseDate>2026-09-25T05:19:47Z</responseDate>
+                <request verb="GetRecord" identifier="oai:arXiv.org:2409.13740" metadataPrefix="arXivRaw">http://oaipmh.arxiv.org/oai</request>
+
+
+    <GetRecord>
+                <record>
+                <header>
+        <identifier>oai:arXiv.org:2409.13740</identifier>
+        <datestamp>2024-09-27</datestamp>
+            <setSpec>cs:cs:CL</setSpec>
+            <setSpec>cs:cs:AI</setSpec>
+            <setSpec>cs:cs:IR</setSpec>
+            <setSpec>physics:physics:soc-ph</setSpec>
+    </header>
+
+            <metadata>
+                        <arXivRaw xmlns="http://arxiv.org/OAI/arXivRaw/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://arxiv.org/OAI/arXivRaw/ https://oaipmh.arxiv.org/OAI/arXivRaw.xsd">
+        <id>2409.13740</id>
+        <submitter>Andrew White</submitter>
+            <version version="v1">
+                <date>Tue, 10 Sep 2024 16:37:58 GMT</date>
+                <size>5487kb</size>
+                    <source_type>D</source_type>
+            </version>
+            <version version="v2">
+                <date>Thu, 26 Sep 2024 15:27:08 GMT</date>
+                <size>4537kb</size>
+                    <source_type>D</source_type>
+            </version>
+        <title>Language agents achieve superhuman synthesis of scientific knowledge</title>
+        <authors>Michael D. Skarlinski, Sam Cox, Jon M. Laurent, James D. Braza, Michaela Hinks, Michael J. Hammerling, Manvitha Ponnapati, Samuel G. Rodriques, and Andrew D. White</authors>
+        <categories>cs.CL cs.AI cs.IR physics.soc-ph</categories>
+            <license>http://creativecommons.org/licenses/by-sa/4.0/</license>
+            <abstract>Language models are known to hallucinate incorrect information.</abstract>
+    </arXivRaw>
+
+            </metadata>
+        </record>
+
+    </GetRecord>
+</OAI-PMH>
