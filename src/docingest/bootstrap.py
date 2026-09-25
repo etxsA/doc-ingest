@@ -15,7 +15,7 @@ from collections.abc import Callable
 from functools import cached_property
 from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from .application.ask import AskService
 from .application.crawl import CrawlService
@@ -171,7 +171,7 @@ class Container:
     def crawl(self) -> CrawlService:
         return CrawlService(
             crawler=self.adapter("crawler"),
-            ingest=self.ingest,
+            ingest=lambda: self.ingest,
             raw_dir=Path(self.cfg.raw_dir) / "arxiv",
             log=self.log,
         )
@@ -180,7 +180,11 @@ class Container:
 class _LazyConverters(dict):
     """Builds a converter adapter only when a document of that kind shows up."""
 
-    _PORT = {SourceKind.OFFICE: "office", SourceKind.LATEX: "latex", SourceKind.TEXT: "text"}
+    _PORT: ClassVar[dict[SourceKind, str]] = {
+        SourceKind.OFFICE: "office",
+        SourceKind.LATEX: "latex",
+        SourceKind.TEXT: "text",
+    }
 
     def __init__(self, container: Container):
         super().__init__()

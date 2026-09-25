@@ -9,6 +9,7 @@ Images cross the ports as ``PIL.Image.Image``: the de-facto standard in-memory i
 type, accepted as a pragmatic exception to "no third-party types in ports" (ADR 0001).
 """
 
+from .benchmark import BenchmarkSuite, CandidateSpec, Estimate, Sample, SuiteScore
 from .converters import Conversion, DocumentConverter, Segment
 from .detection import TypeDetector
 from .images import ImageSource
@@ -19,9 +20,12 @@ from .sources import FetchedSource, SourceCrawler, SourceRecord
 from .store import DocumentStore, StoredDocument
 
 __all__ = [
+    "BenchmarkSuite",
+    "CandidateSpec",
     "Conversion",
     "DocumentConverter",
     "DocumentStore",
+    "Estimate",
     "FetchedSource",
     "ImageSource",
     "OcrEngine",
@@ -30,9 +34,11 @@ __all__ = [
     "PdfPage",
     "PdfReader",
     "QuestionAnswerer",
+    "Sample",
     "Segment",
     "SourceCrawler",
     "SourceRecord",
     "StoredDocument",
+    "SuiteScore",
     "TypeDetector",
 ]

@@ -52,6 +52,8 @@ class OcrConfig(BaseModel):
     base_url: str = "http://127.0.0.1:8080/v1"
     served_model: str | None = None  # model id the server expects; default: repo_id
     api_key_env: str | None = None  # name of the env var holding the key, never the key
+    timeout_s: float = 600.0  # openai-compatible: per-request HTTP timeout (not retried)
+    retries: int = 3  # openai-compatible: retries on 408/429/5xx/connection errors
 
     @model_validator(mode="after")
     def _pin(self) -> OcrConfig:

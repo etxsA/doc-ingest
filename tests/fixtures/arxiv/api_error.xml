@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Hand-written in the arXiv API's documented error format (an error is an entry). -->
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/errors</id>
+  <title>Error</title>
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <entry>
+    <id>http://arxiv.org/api/errors#incorrect_id_format_for_1234</id>
+    <title>Error</title>
+    <summary>incorrect id format for 1234</summary>
+    <link href="http://arxiv.org/api/errors#incorrect_id_format_for_1234" rel="alternate" type="text/html"/>
+  </entry>
+</feed>

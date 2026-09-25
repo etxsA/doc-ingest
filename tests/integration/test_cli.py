@@ -29,4 +29,8 @@ def test_cli_rejects_invalid_max_pages(tmp_path):
 
 def test_adapters_command_lists_ports():
     result = CliRunner().invoke(app, ["adapters"])
-    assert result.exit_code == 0 and "mlx-vlm" in result.output and "openai-compatible" in result.output
+    assert (
+        result.exit_code == 0
+        and "mlx-vlm" in result.output
+        and "openai-compatible" in result.output
+    )

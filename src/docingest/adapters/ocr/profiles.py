@@ -92,7 +92,9 @@ PROFILES: dict[str, OcrProfile] = {
 }
 
 
-def profile_for(name: str, prompt_override: str | None = None, max_side: int | None = None) -> OcrProfile:
+def profile_for(
+    name: str, prompt_override: str | None = None, max_side: int | None = None
+) -> OcrProfile:
     try:
         base = PROFILES[name]
     except KeyError:

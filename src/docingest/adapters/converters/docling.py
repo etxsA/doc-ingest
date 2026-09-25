@@ -31,4 +31,6 @@ class DoclingConverter:
             md = DocumentConverter().convert(str(path)).document.export_to_markdown()
         except Exception as e:
             raise ConversionError(f"docling failed on {path.name}: {e}") from e
-        return Conversion(segments=[Segment(md)], method=PageMethod.DOCLING, engine=self.fingerprint)
+        return Conversion(
+            segments=[Segment(md)], method=PageMethod.DOCLING, engine=self.fingerprint
+        )

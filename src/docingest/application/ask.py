@@ -18,6 +18,4 @@ class AskService:
             warn(w)
         if not documents:
             raise RuntimeError("no ingested documents; run `docingest ingest` first")
-        return await self.qa.ask(
-            question, [(d, self.store.markdown(d)) for d in documents], warn
-        )
+        return await self.qa.ask(question, [(d, self.store.markdown(d)) for d in documents], warn)

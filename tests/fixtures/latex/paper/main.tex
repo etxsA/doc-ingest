@@ -1,0 +1,48 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb}
+\usepackage{macros}
+\newcommand{\R}{\mathbb{R}}
+% \input{sections/commented-out}  <- a commented include is never followed
+\title{Sparse Attention for Tiny Transformers}
+\author{Ada Lovelace\thanks{Equal contribution.} \\ Analytical Engine Lab \\ \texttt{ada@example.org}
+  \And Alan Turing \\ University of Manchester}
+\begin{document}
+\maketitle
+\begin{abstract}
+We study attention over $\vx \in \R^d$ and report a 2x speed-up. % hidden remark
+\end{abstract}
+
+\section{Introduction}
+\input{sections/intro}
+
+\section{Method}
+The score is \mymac{} computed as
+\begin{equation}
+\alpha_{ij} = \softmax_j\left(\frac{q_i^\top k_j}{\sqrt{d}}\right)
+\end{equation}
+\subsection{Complexity}
+It costs $O(n \log n)$ instead of $O(n^2)$ \cite{vaswani2017,child2019}, i.e. 50\% fewer FLOPs.
+\begin{verbatim}
+% this line is code, not a comment
+\input{not-an-include}
+\end{verbatim}
+
+\section{Experiments}
+\subsection{Setup}
+\input{sections/setup.tex}
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+Model & BLEU & Params \\
+Base & 27.3 & 65M \\
+Sparse & 27.1 & 40M \\
+\end{tabular}
+\caption{Results on WMT 2014.}
+\end{table}
+
+\section{Conclusion}
+Sparse attention works.
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+\end{document}

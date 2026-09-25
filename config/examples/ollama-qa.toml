@@ -1,0 +1,14 @@
+# Same ingestion as config/pipeline.toml, but PaperQA2 answers with Ollama models
+# (the setup from the partner's agent.py: llama3.1 + mxbai-embed-large).
+#   ollama pull llama3.1 && ollama pull mxbai-embed-large
+#   uv run --all-extras docingest ask "..." --config config/examples/ollama-qa.toml
+output_dir = "data/normalized"
+raw_dir = "data/raw"
+
+[qa]
+llm = "ollama/llama3.1"
+llm_base = "http://localhost:11434"
+embedding = "ollama/mxbai-embed-large"
+evidence_k = 3
+answer_max_sources = 2
+max_concurrent_requests = 1

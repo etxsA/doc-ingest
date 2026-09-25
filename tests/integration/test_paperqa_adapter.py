@@ -2,8 +2,8 @@ import pytest
 
 pytest.importorskip("paperqa")
 
-from docingest.adapters.qa.paperqa import embedding_path, token_windows  # noqa: E402
-from docingest.config import AppConfig  # noqa: E402
+from docingest.adapters.qa.paperqa import embedding_path, token_windows
+from docingest.config import AppConfig
 
 
 def test_token_windows_cover_long_chunks_within_limit():

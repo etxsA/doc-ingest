@@ -105,9 +105,8 @@ class FilesystemStore:
         for d in best.values():
             if not d.canonical:
                 m = d.manifest
-                warnings.append(
-                    f"{m.source_name}: only a partial run exists ({m.n_pages}/{m.source_pages} pages)"
-                )
+                pages = f"{m.n_pages}/{m.source_pages} pages"
+                warnings.append(f"{m.source_name}: only a partial run exists ({pages})")
         return list(best.values()), warnings
 
     def _index(self, m: DocumentManifest) -> None:

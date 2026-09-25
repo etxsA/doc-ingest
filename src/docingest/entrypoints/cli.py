@@ -18,8 +18,10 @@ from ..bootstrap import REGISTRY, Container, available
 from ..config import load_config
 from ..domain.text import split_pages
 from ..ports import StoredDocument
+from .bench_cli import bench_app
 
 app = typer.Typer(add_completion=False, help="Normalize any research document to Markdown.")
+app.add_typer(bench_app, name="bench")
 console = Console()
 
 ConfigOpt = Annotated[Path | None, typer.Option("--config", "-c", help="pipeline.toml")]
@@ -37,7 +39,9 @@ def iter_inputs(paths: list[Path]) -> list[Path]:
     out: list[Path] = []
     for p in paths:
         if p.is_dir():
-            out.extend(sorted(x for x in p.rglob("*") if x.is_file() and not x.name.startswith(".")))
+            out.extend(
+                sorted(x for x in p.rglob("*") if x.is_file() and not x.name.startswith("."))
+            )
         else:
             out.append(p)
     # Sidecars (metadata, ground truth) are not documents.
@@ -80,7 +84,7 @@ def ingest(
     ocr_all: Annotated[bool, typer.Option(help="OCR every PDF page, even born-digital")] = False,
     max_pages: Annotated[int | None, typer.Option(min=1, help="Only first N pages")] = None,
 ) -> None:
-    """Detect type, route each page (text layer / VLM OCR / converter), write Markdown + manifest."""
+    """Detect type, route each page (text layer / OCR / converter); write Markdown + manifest."""
     service = _container(config).ingest
     options = IngestOptions(force=force, ocr_all=ocr_all, max_pages=max_pages)
     stored, failures = [], []

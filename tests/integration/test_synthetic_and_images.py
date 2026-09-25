@@ -16,7 +16,7 @@ def test_make_scan_is_byte_identical_across_runs(tmp_path):
     assert t1["scan_sha256"] == t2["scan_sha256"]
     data = (tmp_path / "s1.pdf").read_bytes()
     assert b"/CreationDate" not in data and b"/ModDate" not in data
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="out of range"):
         make_scan(src, tmp_path / "s3.pdf", [5])
 
 
@@ -32,5 +32,5 @@ def test_profiles_postprocess():
     assert PROFILES["nanonets"].postprocess("Text <page_number>3</page_number>") == "Text 3"
     assert PROFILES["markdown"].postprocess("<think>hmm</think>```markdown\n# A\n```") == "# A"
     assert profile_for("markdown", max_side=900).max_side == 900
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown OCR profile"):
         profile_for("nope")

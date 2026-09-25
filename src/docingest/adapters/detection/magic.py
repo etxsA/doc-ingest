@@ -41,7 +41,7 @@ def _is_tar(block: bytes) -> bool:
 
 
 class MagicBytesDetector:
-    def detect(self, path: Path) -> tuple[SourceKind, str]:
+    def detect(self, path: Path) -> tuple[SourceKind, str]:  # noqa: PLR0911
         with path.open("rb") as f:
             head = f.read(1024)
         suffix = path.suffix.lower()

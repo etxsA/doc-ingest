@@ -19,3 +19,7 @@ class ConversionError(DocingestError):
 
 class SourceUnavailableError(DocingestError):
     """A remote source (e.g. arXiv) has no downloadable content for a record."""
+
+
+class OcrError(DocingestError):
+    """The OCR engine could not transcribe a page."""

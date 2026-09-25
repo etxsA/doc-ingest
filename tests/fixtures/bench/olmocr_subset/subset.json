@@ -1,0 +1,33 @@
+{
+  "repo_id": "allenai/olmOCR-bench",
+  "revision": "54a96a6fb6a2bd3b297e59869491db4d3625b711",
+  "categories": [
+    "arxiv_math",
+    "old_scans_math",
+    "table_tests",
+    "old_scans",
+    "headers_footers",
+    "multi_column",
+    "long_tiny_text"
+  ],
+  "per_category": 1,
+  "seed": 0,
+  "jsonl": {
+    "arxiv_math.jsonl": "423a1c13e33db7838063aadef1652fc58bffb32b4613bfa18728b76641a88212",
+    "old_scans_math.jsonl": "9af04203041a142d075abb9011028fba942af661c5fd5b15351168193b359875",
+    "table_tests.jsonl": "368c5ebaf26dea00b2025c6993e9ecb218b4a994b42e18867b5a5697e6c91754",
+    "old_scans.jsonl": "dbd68206eb7b1d6787875b6968f741e069c8ea2139373c2b458647e8276961cd",
+    "headers_footers.jsonl": "77b83f2cd1f9233f8bba3eb2a2e9616dc4e5285410207516f7dadd38425cdf79",
+    "multi_column.jsonl": "7b1a6a82b31dc474cdd1b7124455b2a88adbb234c027d49e1576adb924494787",
+    "long_tiny_text.jsonl": "b31ee93390ad0fd99674e5a75801a436c6959d0689f57e171afa9e862fc1e049"
+  },
+  "pdfs": {
+    "arxiv_math/2503.07875_pg21.pdf": "6a19349961cfa7b40412e8938f3e54d101b8ba1f3eaf5948b2900468e8fa19dc",
+    "old_scans_math/3_pg39.pdf": "dca433fd4f8c2af1de2206f36cd352248c05afee3334dc64ab48793a57b92c39",
+    "tables/3b18f8c75b5f8cae89fa5b0cf094949966d4_pg2_pg1.pdf": "e0e7973725fe1be777527cba4e1f810c69aa01f16be2a81c7c1a00386d14c368",
+    "old_scans/29.pdf": "bd91de4c922fe0a4fc9db6ad7d20f6e2806905738cec5563c84f31d06922ee51",
+    "headers_footers/b536cd5df0874a60e9e5cdfd6bda47946f706b11_page_2.pdf": "4dd7d4c386670cda78ed27229d4233593a7000f3e39f9962d5fd14003812427d",
+    "multi_column/09f90a8fad0997f7cf454cbcbe79cab3bc0f_page_7_pg1.pdf": "0316b281e61038d91679bc2f9e5d114d023935d35811d48914f3cce39783946e",
+    "long_tiny_text/17_pg34_pg1.pdf": "b04420179e5cbe446d6b085e8fa93eeeda5bf00235e18bcddf18ef598203ea4c"
+  }
+}

@@ -12,7 +12,7 @@ Pure domain: no I/O, no third-party imports besides pydantic.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -114,9 +114,7 @@ class DocumentManifest(BaseModel):
     ocr_model: ModelRef | None = None
     title: str | None = None
     metadata: SourceMetadata | None = None
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
-    )
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
     total_seconds: float = 0.0
 
     @property

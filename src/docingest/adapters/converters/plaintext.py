@@ -13,4 +13,6 @@ class PassthroughConverter:
 
     def convert(self, path: Path) -> Conversion:
         text = path.read_text(errors="replace")
-        return Conversion(segments=[Segment(text)], method=PageMethod.PASSTHROUGH, engine="passthrough")
+        return Conversion(
+            segments=[Segment(text)], method=PageMethod.PASSTHROUGH, engine="passthrough"
+        )
