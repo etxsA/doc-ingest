@@ -73,7 +73,7 @@ per_category = 6
 
 # Second round: top candidates on a larger olmOCR-bench sample (contains the screen one).
 [presets.deep.suites.olmocr-bench]
-per_category = 20
+per_category = 12
 
 # Candidates: model x profile x settings. Revisions are Hugging Face commit shas.
 # Optional per candidate: ocr (adapter, default "mlx-vlm"), max_side, max_tokens, dpi,
