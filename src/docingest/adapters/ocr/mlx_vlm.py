@@ -42,16 +42,19 @@ class MlxVlmOcr:
         profile: OcrProfile,
         *,
         dpi: int = 150,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         temperature: float = 0.0,
-        repetition_penalty: float | None = 1.05,
+        repetition_penalty: float | None = None,
     ):
         self.model = model
         self.profile = profile
         self.dpi = dpi
-        self.max_tokens = max_tokens
+        # None -> the profile's model-card defaults
+        self.max_tokens = max_tokens or profile.max_tokens
         self.temperature = temperature
-        self.repetition_penalty = repetition_penalty
+        self.repetition_penalty = (
+            profile.repetition_penalty if repetition_penalty is None else repetition_penalty
+        )
         self.fingerprint = "mlx-vlm " + json.dumps(
             {
                 "v": _mlx_vlm_version(),
@@ -59,10 +62,11 @@ class MlxVlmOcr:
                 "profile": profile.name,
                 "prompt": profile.prompt,
                 "max_side": profile.max_side,
+                "chat_kwargs": profile.chat_kwargs,
                 "dpi": dpi,
-                "max_tokens": max_tokens,
+                "max_tokens": self.max_tokens,
                 "temperature": temperature,
-                "repetition_penalty": repetition_penalty,
+                "repetition_penalty": self.repetition_penalty,
             },
             sort_keys=True,
         )
@@ -106,7 +110,9 @@ class MlxVlmOcr:
 
         self._ensure_loaded()
         img = fit_image(image, self.profile.max_side)
-        prompt = apply_chat_template(self._processor, self._config, self.profile.prompt, num_images=1)
+        prompt = apply_chat_template(
+            self._processor, self._config, self.profile.prompt, num_images=1, **self.profile.chat_kwargs
+        )
         t0 = time.perf_counter()
         res = None
         for temperature, penalty in self._attempts():

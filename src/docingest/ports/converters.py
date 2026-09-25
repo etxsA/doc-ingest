@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from ..domain.models import PageMethod, SourceMetadata
 
@@ -27,6 +27,7 @@ class Conversion:
     warnings: list[str] = field(default_factory=list)
 
 
+@runtime_checkable
 class DocumentConverter(Protocol):
     fingerprint: str
 

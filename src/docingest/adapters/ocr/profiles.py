@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 _FENCE = re.compile(r"^\s*```(?:markdown|md)?\s*\n(.*?)\n?```\s*$", re.DOTALL)
 _THINK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 _FRONT_MATTER = re.compile(r"\A---\s*\n.*?\n---\s*\n?", re.DOTALL)
-_NANONETS_TAGS = re.compile(r"</?(page_number|watermark)>")
+_NANONETS_TAGS = re.compile(r"</?(page_number|watermark|signature)>")
 
 GENERIC_PROMPT = (
     "Transcribe this document page to clean Markdown. Preserve reading order, "
@@ -67,14 +67,28 @@ class OcrProfile:
     prompt: str
     max_side: int  # longest image side fed to the model (px)
     postprocess: Callable[[str], str] = field(default=_strip_common)
+    # Extra kwargs for the chat template, e.g. GLM-OCR's official prompt needs
+    # enable_thinking=True (mlx-vlm otherwise appends "/nothink").
+    chat_kwargs: dict = field(default_factory=dict)
+    max_tokens: int = 4096  # model-card recommendation for a full page
+    repetition_penalty: float | None = 1.05
 
 
+# Sources: model cards + official repos (allenai/olmocr prompts.py, zai-org/GLM-OCR
+# config.yaml, Nanonets-OCR2 card, PaddleOCR-VL-1.6 card), checked 2026-09-24.
 PROFILES: dict[str, OcrProfile] = {
     "markdown": OcrProfile("markdown", GENERIC_PROMPT, 1600),  # Qwen3-VL, Qwen3.5
-    "olmocr": OcrProfile("olmocr", OLMOCR_PROMPT, 1288, _olmocr),
-    "nanonets": OcrProfile("nanonets", NANONETS_PROMPT, 1600, _nanonets),
-    "glm-ocr": OcrProfile("glm-ocr", "Text Recognition:", 1600),
-    "paddleocr-vl": OcrProfile("paddleocr-vl", "OCR:", 1600),
+    "olmocr": OcrProfile("olmocr", OLMOCR_PROMPT, 1288, _olmocr, max_tokens=8000),
+    "nanonets": OcrProfile("nanonets", NANONETS_PROMPT, 1600, _nanonets, max_tokens=8000),
+    "glm-ocr": OcrProfile(
+        "glm-ocr",
+        "Text Recognition:",
+        1600,
+        chat_kwargs={"enable_thinking": True},
+        max_tokens=8192,
+        repetition_penalty=1.1,
+    ),
+    "paddleocr-vl": OcrProfile("paddleocr-vl", "OCR:", 1600),  # processor caps ~1 MP itself
 }
 
 
@@ -88,4 +102,7 @@ def profile_for(name: str, prompt_override: str | None = None, max_side: int | N
         prompt_override or base.prompt,
         max_side or base.max_side,
         base.postprocess,
+        base.chat_kwargs,
+        base.max_tokens,
+        base.repetition_penalty,
     )

@@ -45,9 +45,9 @@ class OcrConfig(BaseModel):
     prompt: str | None = None  # override the profile's prompt
     max_side: int | None = None  # override the profile's image size
     dpi: int = 150
-    max_tokens: int = 4096
+    max_tokens: int | None = None  # None -> the profile's model-card default
     temperature: float = 0.0
-    repetition_penalty: float | None = 1.05
+    repetition_penalty: float | None = None  # None -> the profile's default
     # Only for the "openai-compatible" OCR adapter (vLLM, LM Studio, mlx_vlm.server, ...):
     base_url: str = "http://127.0.0.1:8080/v1"
     served_model: str | None = None  # model id the server expects; default: repo_id
@@ -89,9 +89,13 @@ class QaConfig(BaseModel):
 class LatexConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    timeout_s: int = 120  # pandoc wall-clock limit per document
+    timeout_s: int = 120  # pandoc wall-clock limit per document (pandoc can hang on \input loops)
     max_archive_mb: int = 200  # refuse larger extracted sources (zip-bomb guard)
     split_level: int = 2  # section depth that becomes one segment ("page")
+    # None -> the pandoc bundled by pypandoc-binary (pinned by uv.lock). Set e.g.
+    # "/opt/homebrew/bin/pandoc" for a native arm64 build.
+    pandoc_path: str | None = None
+    fallback: bool = True  # pylatexenc plain-text fallback when pandoc fails
 
 
 class ArxivConfig(BaseModel):
@@ -105,6 +109,9 @@ class ArxivConfig(BaseModel):
     retries: int = 3
     contact: str | None = None  # optional mailto for the User-Agent, as arXiv asks
     prefer: list[str] = Field(default_factory=lambda: ["latex", "pdf"])
+    src_url: str = "https://arxiv.org/src/{id}"  # /e-print/ 301-redirects here
+    oai_url: str = "https://oaipmh.arxiv.org/oai"  # OAI-PMH (moved in 2025); has licenses
+    fetch_license: bool = True  # one extra OAI-PMH request per paper
 
 
 class AppConfig(BaseModel):
