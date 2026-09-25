@@ -1,167 +1,175 @@
-# docingest: a document normalization layer for the PaperQA2 research agent
+# docingest: a document normalization layer for a research agent (PaperQA2)
 
-`docingest` sits in front of PaperQA2. It accepts any research document (a born-digital PDF, a scanned PDF, an image, or an office/HTML file) and turns it into one canonical form: Markdown plus a provenance manifest. Scanned pages are transcribed locally by a Qwen vision-language model running on Apple Silicon through MLX. No cloud services and no CUDA are needed.
+docingest takes **any research document** and turns it into the same canonical form: Markdown plus a provenance manifest. Supported inputs are born-digital PDFs, scanned PDFs, page images, arXiv LaTeX sources, DOCX, PPTX, HTML and Markdown. The output is what PaperQA2 (or any RAG agent) consumes.
+- Scanned pages are transcribed locally by a Qwen vision-language model on Apple Silicon (MLX), or by any OpenAI-compatible vision endpoint.
+- arXiv papers are fetched as **LaTeX source**, so math, tables and structure arrive intact.
+
+Everything runs locally and reproducibly: `uv.lock`, pinned model commits, content-addressed outputs.
 
 ```mermaid
 flowchart LR
-    A[any input] --> D{detect by magic bytes}
+    AX[arXiv crawler<br/>API + /src + OAI license] --> RAW[(data/raw)]
+    RAW --> D{detect<br/>magic bytes}
     D -->|PDF| P[per-page probe]
-    D -->|PNG/JPG/TIFF| O
-    D -->|DOCX/PPTX/HTML| C[Docling]
-    D -->|MD/TXT| T[passthrough]
-    P -->|text layer OK| L[pypdfium2 text]
-    P -->|no text, full-page image, garbled| O[Qwen3-VL OCR on MLX]
-    L --> N[document.md + manifest.json<br/>content-addressed by sha256]
-    O --> N
-    C --> N
-    T --> N
-    N --> Q[PaperQA2 Docs.aadd / parse_pdf hook]
-    Q --> R[cited answers, local LLM]
+    P -->|good text layer| TL[pypdfium2 text]
+    P -->|scan / garbled| OCR[VLM OCR<br/>Qwen3-VL on MLX<br/>or OpenAI-compatible]
+    D -->|PNG/JPG/TIFF| OCR
+    D -->|.tex / arXiv tar.gz| TEX[pandoc LaTeX<br/>sandboxed + fallback]
+    D -->|DOCX/PPTX/HTML| DOC[Docling]
+    D -->|MD/TXT| PASS[passthrough]
+    TL & OCR & TEX & DOC & PASS --> OUT[(document.md + manifest.json<br/>sha256-addressed)]
+    OUT --> QA[PaperQA2<br/>any litellm model]
 ```
-
-## Why a normalization layer
-
-* **One contract downstream.** PaperQA2, a vector DB, or any agent reads `document.md` and never has to deal with format quirks.
-* **Per-page routing, not per-file.** Real PDFs are often mixed: digital pages alongside scanned appendices. Each page is probed and routed on its own, and the manifest records the reason (`"only 0 embedded chars; image covers 100% of page"`).
-* **OCR only where it is needed.** Text-layer pages take about 1 ms. VLM OCR takes about 10 s per page, so it is reserved for pages that fail the probe. If the model hits its token limit (usually a repetition loop), the page is retried with a little temperature and a stronger repetition penalty, following olmOCR's retry ladder.
-* **Provenance and reproducibility.** Every output records the input sha256, pipeline version, config hash, OCR model repo, and the exact Hugging Face commit. Cached outputs are reused only when the config hash matches.
-* **Text layers are cleaned, not trusted blindly.** pdfium marks a line-end hyphen with a control character (U+0002). The cleaner joins the two halves only when the joined word appears elsewhere in the document (`transduc-tion` becomes `transduction`) and otherwise keeps the hyphen (`sequence-aligned`, `2019-2020`, `Qwen-2.5-VL-7B`).
-
-### OCR routing heuristics (`config/pipeline.toml`)
-
-| signal | threshold | source of idea |
-|---|---|---|
-| embedded chars on page | < 50 | Marker / olmOCR |
-| image objects cover page and text is sparse | ≥ 60% and < 400 chars | Marker (`image_threshold` 0.65) |
-| broken glyphs (`U+FFFD`, `(cid:N)`, private-use) | > 10% | Marker `detect_bad_ocr` |
-| alphabetic ratio of text layer | < 50% | olmOCR filter |
 
 ## Quick start
 
 ```bash
-uv sync --locked --all-extras       # Python 3.12, pinned by uv.lock (extras: qa=PaperQA2, office=Docling)
-./scripts/fetch_samples.sh           # 3 arXiv papers + a 1948 scanned paper, sha256-verified
-uv run docingest ingest data/raw/    # normalize everything (add --max-pages N for a quick demo)
+uv sync --locked --all-extras        # Python 3.12; extras: mlx (Apple Silicon OCR), qa (PaperQA2), office (Docling)
+./scripts/fetch_samples.sh           # sample corpus, sha256-verified
+uv run docingest ingest data/raw     # normalize everything (cached; --max-pages N for a quick look)
+uv run docingest crawl 'cat:cs.CL AND ti:"retrieval augmented"' --limit 5   # arXiv -> LaTeX -> Markdown
+./scripts/serve_llm.sh &             # local OpenAI-compatible LLM (pinned Qwen3-VL snapshot)
+uv run docingest ask "What are the main failure modes of retrieval-augmented generation?"
+uv run docingest adapters            # which implementation plugs into each port
 ```
 
-The first OCR call downloads the pinned model, `mlx-community/Qwen3-VL-4B-Instruct-4bit` (3.1 GB).
+## Inputs and how each is handled
 
-### Demo script
+| Input | Detected by | Adapter (port) | Page / segment method |
+|---|---|---|---|
+| Born-digital PDF | `%PDF-` | pypdfium2 (`pdf`) | `text_layer`, with document-level de-hyphenation |
+| Scanned or garbled PDF page | routing policy on page signals | mlx-vlm or HTTP (`ocr`) | `vlm_ocr` |
+| Mixed PDF | per page | both of the above | chosen per page, with the reason recorded |
+| PNG / JPG / TIFF (multi-frame) / WebP / BMP | magic bytes | Pillow (`images`) + `ocr` | `vlm_ocr` |
+| LaTeX `.tex`, arXiv `.tar.gz`, single gzipped `.tex` | gzip/tar sniffing | pandoc (`latex`) | `latex` (one segment per section), or `latex_plaintext` fallback |
+| DOCX / PPTX / XLSX / HTML | suffix | Docling (`office`) | `docling` |
+| Markdown / text | suffix | passthrough (`text`) | `passthrough` |
+
+A PDF page goes to OCR when:
+- it has fewer than 50 embedded characters;
+- images cover at least 60% of it and it has fewer than 400 characters;
+- more than 10% of its glyphs are broken; or
+- fewer than 50% of its characters are letters.
+
+These thresholds come from Marker and olmOCR. Image coverage is measured in page space, including nested Form XObjects and rotated or offset page boxes.
+
+## arXiv crawler
 
 ```bash
-# 1. Born-digital papers: every page takes the text-layer path in under 1 s
-uv run docingest ingest data/raw/attention_1706.03762.pdf data/raw/paperqa2_2409.13740.pdf
-
-# 2. A real scan (Shannon 1948, image-only): every page routes to Qwen3-VL OCR
-uv run docingest ingest data/raw/shannon1948_bstj_scanned.pdf --max-pages 3
-
-# 3. A raw image as input
-pdfimages -f 3 -l 3 -png data/raw/shannon1948_bstj_scanned.pdf data/samples/shannon_page
-uv run docingest ingest data/samples/shannon_page-000.png
-
-# 4. Measure OCR quality: degrade digital pages into a fake scan, score against the true text
-uv run docingest make-scan data/raw/attention_1706.03762.pdf data/samples/attention_scanned.pdf --pages 2,3
-uv run docingest eval-ocr data/samples/attention_scanned.pdf
-
-# 5. Ask PaperQA2 about the scanned paper (local LLM, local embeddings)
-./scripts/serve_llm.sh &             # mlx_vlm.server on :8080, same Qwen3-VL model
-uv run --all-extras docingest ask "According to Shannon, what is an ensemble of functions?"
-
-# 6. Office / HTML inputs through Docling
-curl -fsSL -o data/samples/paperqa2_arxiv.html https://arxiv.org/html/2409.13740v2
-uv run --all-extras docingest ingest data/samples/paperqa2_arxiv.html
+uv run docingest crawl 'cat:cs.CL AND ti:retrieval' --limit 10            # search + download + ingest
+uv run docingest crawl 'ids:1706.03762,2409.13740'                         # specific papers
+uv run docingest crawl 'au:Shannon' --no-ingest                            # download only
 ```
 
-### Results on an M4 Pro with 24 GB (2026-09-24, pipeline 0.2.1)
+- **Polite.** One shared rate limiter (one request per 3 s, a single connection, as the arXiv API terms require), retries with backoff that honour `Retry-After`, and a User-Agent with an optional contact address (`[arxiv].contact`).
+- **LaTeX first.** It fetches `/src/<id>`, detects the format from the bytes (tar.gz, single gzipped `.tex`, or PDF-only submission) and falls back to the PDF according to `[arxiv].prefer`. Downloads are atomic and reused if already present.
+- **Metadata and license.** Title, authors, year, abstract, categories and DOI come from the Atom API. The license comes from OAI-PMH (`oaipmh.arxiv.org`). They are written to a `<file>.meta.json` sidecar and to the manifest, and they become the PaperQA2 citation (`Vaswani et al. (2017). Attention Is All You Need. arXiv:1706.03762v7`).
+- arXiv metadata is CC0, but e-prints may not be redistributed without the copyright holder's permission. `data/raw/` is git-ignored and every paper's license is recorded.
 
-| test | result |
-|---|---|
-| 3 born-digital arXiv papers, 73 pages | 73 of 73 pages took the text layer, about 0.1 s per document |
-| full Shannon 1948 BSTJ scan, 34 pages, image-only | Markdown with LaTeX equations; 320–346 s across runs on an idle machine (9.4–10 s per page), up to 426 s when other GPU work runs alongside |
-| synthetic scan (blur, noise, rotation, JPEG) of *Attention* pp. 3–4 | CER 1.6% / 4.0%, WER 6.2% / 17.1%, word-F1 0.96 / 0.89 |
-| mixed PDF (digital, scanned, digital) | routed text layer / OCR / text layer |
-| 37 OCR'd pages across all tests | every one finished normally (no repetition loops) |
-| arXiv HTML page / DOCX with a table (Docling) | Markdown with headings and a Markdown table; 1.3 s / 1.9 s |
-| PaperQA2 question answered from the scanned PDF and the PNG | correct answer with page-level citations ("pages 4-5"), 30 s end to end with `HF_HUB_OFFLINE=1` |
+## LaTeX ingestion
 
-The CER metric strips Markdown and ignores hyphenation on both sides. Part of the remaining error is LaTeX (`$d_{\text{model}}$`) where the reference text has plain `dmodel`, so these numbers understate the actual quality.
+1. **Safe extraction.** tar with `filter='data'`, size caps, and no links or devices.
+2. **Main-file detection.** `00README.json` or `00README.XXX` first, then `\documentclass` together with `\begin{document}`, then name heuristics.
+3. **Python flattener.** It resolves `\input`, `\include` and `\subfile` with cycle protection. Each file is decoded as UTF-8, then cp1252, then latin-1, because pandoc silently drops latin-1 includes. Comments are stripped, self-referential macros (which hang pandoc) are dropped, and the `.bbl` is inlined as a References section.
+4. **pandoc 3.9** runs under `--sandbox`, with a wall-clock timeout and a heap cap. Its Markdown profile keeps `$…$` and `$$…$$` math, tables and `[@cite]` keys.
+5. **Sections become segments.** The abstract is the first segment, and title and authors go into the metadata.
+6. **Fallback.** If pandoc fails, pylatexenc produces plain text with the math kept verbatim, so ingestion never stops at a bad source.
 
-### Code review
+Measured on real arXiv sources:
 
-The code went through an adversarial review: three reviewers (pipeline, PaperQA2 integration, evaluation and reproducibility), with a skeptic agent trying to refute each finding. 18 defects were confirmed and fixed. A second pass then reviewed the fixes themselves and found 8 more issues, 3 of them regressions introduced by the first round; all are fixed, with regression tests where feasible. Examples:
+| Source | Segments | Characters | Time |
+|---|---|---|---|
+| Transformer paper | 22 | 43k | 0.24 s |
+| PaperQA2 paper | 13 | 92k | 0.22 s |
+| GPT-4 report | 28 | 101k | 0.40 s |
+| Perelman, math/0211159 | 15 | 99k | 0.15 s |
 
-* pdfium's line-end hyphen marker (U+0002) was leaking into the Markdown (139 occurrences across 3 papers), and a naive `-\n` join corrupted a DOI and `Qwen-2.5-VL-7B`.
-* One unreadable file aborted a whole batch.
-* A `--max-pages` preview overwrote the complete OCR result.
-* 5000-character chunks were being embedded by a 256-token model, so most of each chunk was invisible to retrieval.
-* The QA LLM and embedder were not pinned to revisions.
-* Scans wrapped in nested Form XObjects, or on rotated or offset page boxes, were misrouted to the text layer.
-* Second pass: the relaxed PDF sniffing turned Markdown that *mentions* `%PDF-1.7` into a "PDF"; chunks fused words across page boundaries; outputs were written with owner-only permissions.
-* The simulated scan was not byte-reproducible.
+## Architecture: hexagonal, with every part replaceable
 
-## Plugging into PaperQA2
+`domain` (pure) ← `ports` (Protocols) ← `application` (use cases) ← `adapters` ← `bootstrap` (composition root) ← `entrypoints` (CLI, PaperQA2 hook).
 
-1. **Corpus mode** (any input type): `docingest.qa.ask_corpus` builds page-aware chunks in memory (`chunk_pdf`) from each normalized document and adds them with `Docs.aadd_texts`, so citations point to page ranges. The explicit citation means PaperQA2 does not call the LLM or the network for metadata. The local embedder (all-MiniLM-L6-v2) only reads 256 tokens, so chunks target 900 characters, and any chunk still over that window is re-split by tokens. No text goes unembedded. If a document only has a partial (`--max-pages`) run, `ask` uses it, labels the citation "pages 1-N of M", and prints a warning.
-2. **Native reader hook** (PDFs): set `settings.parsing.parse_pdf = docingest.qa.parse_pdf_to_pages`. PaperQA2's own `aadd("paper.pdf")` then sends every page through the router, and the content-addressed cache still applies. It follows PaperQA2's reader contract: unreadable PDFs and oversized pages raise `ImpossibleParsingError`.
+Five **import-linter contracts** enforce these layers in CI (`uv run lint-imports`). See [docs/architecture.md](docs/architecture.md) and the ADRs in [docs/adr/](docs/adr/).
 
-```python
-from paperqa import Docs
-from docingest.qa import local_settings, parse_pdf_to_pages
-s = local_settings()
-s.parsing.parse_pdf = parse_pdf_to_pages
-await Docs().aadd("scan.pdf", citation="Shannon 1948", settings=s)
+| Port | Built-in adapters | Selected in `[adapters]` |
+|---|---|---|
+| `TypeDetector` | `magic` | `detector` |
+| `PdfReader` | `pdfium` | `pdf` |
+| `OcrEngine` | `mlx-vlm`, `openai-compatible` | `ocr` |
+| `ImageSource` | `pillow` | `images` |
+| `DocumentConverter` | `pandoc` (LaTeX), `docling` (office), `passthrough` (text) | `latex`, `office`, `text` |
+| `DocumentStore` | `filesystem` | `store` |
+| `SourceCrawler` | `arxiv` | `crawler` |
+| `QuestionAnswerer` | `paperqa` (any litellm model) | `qa` |
+| `BenchmarkSuite` | `synthetic`, `olmocr-bench` | `config/benchmark.toml` |
+
+- **Swap by config.** For example, `ocr = "openai-compatible"` sends OCR to vLLM, LM Studio or Ollama (see `config/examples/remote-ocr.toml`). `config/examples/ollama-qa.toml` runs QA on `ollama/llama3.1` with `mxbai-embed-large`.
+- **Swap by plugin.** Register a factory under the entry-point group `docingest.<port>`, with no change to this repo.
+- **Cache follows replacement.** Every adapter has a `fingerprint` that feeds the cache key, so changing a model, prompt or converter version re-processes exactly the affected documents.
+
+## OCR models and benchmark
+
+The OCR model is one config line. Every model below is pinned by commit in `config/benchmark.toml`, uses a **per-model profile** (prompt, image size, clean-up and generation defaults, all taken from the model cards) and has been benchmarked on this machine:
+
+| Candidate | Profile | Size |
+|---|---|---|
+| Qwen3-VL-2B / 4B / 8B Instruct | `markdown` | 1.8 / 3.1 / 5.8 GB |
+| Qwen3.5-4B / 9B | `markdown` | 3.1 / 6.0 GB |
+| olmOCR-2-7B (AllenAI) | `olmocr` | 5.6 GB |
+| Nanonets-OCR2-3B | `nanonets` | 3.1 GB |
+| GLM-OCR | `glm-ocr` | 1.3 GB |
+| PaddleOCR-VL-1.6 | `paddleocr-vl` | 0.7 GB |
+
+```bash
+./scripts/setup_bench_scorer.sh                  # official olmOCR-Bench scorer in .bench-venv (+ headless Chromium)
+uv run docingest bench prepare                   # pinned dataset subset + synthetic scans
+uv run docingest bench run --run-id full         # resumable; per-page telemetry
+uv run docingest bench report --run-id full      # summary.json + report.md, paired comparisons
 ```
+
+There are two suites:
+- **Synthetic degraded scans.** Born-digital pages at three degradation levels, scored against the true text layer with CER, WER, word-F1 and char-3-gram F1, each with bootstrap 95% CIs.
+- **olmOCR-Bench subset.** Real old scans, math, tables, multi-column pages, headers and footers, and tiny text. It is scored by the **official scorer**, so the numbers can be compared with published results.
+
+Results and the model decision are in [docs/benchmark.md](docs/benchmark.md).
+
+## PaperQA2 integration
+
+- **Corpus mode:** `uv run docingest ask "…"`. Every normalized document is chunked page-aware in memory (citations cite page ranges). Any chunk longer than the embedder's 256-token window is re-split by tokens, and the documents are added with `Docs.aadd_texts`.
+- **Native hook:** `settings.parsing.parse_pdf = docingest.entrypoints.paperqa_hook.parse_pdf_to_pages`. PaperQA2's own `aadd("x.pdf")` then routes pages through the OCR router. The hook follows PaperQA2's reader contract (`ImpossibleParsingError`).
+- **LLM:** any litellm model. The default is the pinned local Qwen3-VL served by `scripts/serve_llm.sh`, which works with `HF_HUB_OFFLINE=1`. `config/examples/ollama-qa.toml` reproduces the Ollama llama3.1 setup.
 
 ## Output layout
 
 ```
-data/normalized/<sha256[:16]>/     # canonical: complete, default-option runs only
-  document.md      # "# title" then "<!-- page N | method=vlm_ocr -->" + page Markdown
-  manifest.json    # DocumentManifest: probes, methods, timings, model + revision, config_hash
-  ocr_eval.json    # only when eval-ocr ran
-data/normalized/_variants/<id>-<config>-p<N>/   # --max-pages / --ocr-all runs
-data/normalized/index.json         # catalog of canonical documents
+data/normalized/<sha256[:16]>/              canonical: complete, default-option runs
+  document.md      "# title" + "<!-- page N | method=… -->" per page / section
+  manifest.json    probes + routing reasons, engine fingerprints, model + revision, timings, metadata
+data/normalized/_variants/<id>-<cfg>-p<N>/  --max-pages / --ocr-all runs (never replace a full result)
+data/normalized/index.json                  catalog with citations
 ```
-
-A partial run (`--max-pages`) or a forced-OCR run (`--ocr-all`) is written to `_variants/` and never replaces a complete result. A complete result also answers any later `--max-pages` request from cache. Files are written atomically, and an unreadable manifest counts as a cache miss.
 
 ## Reproducibility
+- The environment is locked by `uv.lock`, `.python-version` (3.12) and `uv sync --locked`. `mlx-vlm` is a platform-marked extra, so Linux installs cleanly.
+- The OCR model, the QA LLM, the embedder and the benchmark dataset are all pinned by commit sha. Models load offline-first.
+- Inputs are pinned by sha256, and outputs are content-addressed and written atomically. The simulated scans are byte-identical on every run.
+- A benchmark run records the suite fingerprints, the candidate specs and machine info, and it refuses to resume with different settings.
 
-* `uv.lock` and `.python-version` (3.12). Use `uv sync --locked` for byte-identical environments.
-* All three models are pinned by Hugging Face commit in `config/pipeline.toml`: the OCR model, the QA LLM, and the embedder. They are loaded offline-first from the HF cache. `scripts/serve_llm.sh` serves the pinned local snapshot path (`docingest model-path llm`) with `HF_HUB_OFFLINE=1`, so the server never pulls `main`.
-* Inputs are pinned by sha256 in `scripts/samples.sha256`, and outputs are content-addressed. The simulated scan is byte-identical on every run (no PDF timestamps), and its sha256 is recorded in `attention_scanned.truth.json`.
-* Changing a threshold or a model changes `config_hash`, so stale outputs are never silently reused.
-* Git holds only code and config. For data versioning add DVC (`dvc add data/raw data/normalized`).
-
-## Swapping the OCR model
-
-Edit `[ocr]` in `config/pipeline.toml`, and always change `repo_id` and `revision` together. A missing revision is an error, never a silent fallback to `main`. All of these exist as MLX conversions supported by mlx-vlm 0.7.3 (revisions checked 2026-09-24):
-
-| model | revision | size | notes |
-|---|---|---|---|
-| `mlx-community/Qwen3-VL-4B-Instruct-4bit` (default) | `2fd8dacb…` | 3.1 GB | general Qwen VLM, good Markdown and LaTeX |
-| `mlx-community/olmOCR-2-7B-1025-mlx-4bit` | `c0eaffb7…` | 5.6 GB | Qwen2.5-VL-7B fine-tuned for OCR (AllenAI) |
-| `mlx-community/Nanonets-OCR2-3B-4bit` | `fe1396cb…` | 3.1 GB | Qwen2.5-VL-3B OCR fine-tune, HTML tables |
-| `mlx-community/Qwen3.5-4B-MLX-4bit` | `32f3e8ec…` | 3.1 GB | newer natively multimodal Qwen |
-| `mlx-community/GLM-OCR-4bit` | `97f58750…` | 1.3 GB | fastest, specialised OCR prompts |
-| `mlx-community/PaddleOCR-VL-1.6-4bit` | `c8987b27…` | 0.7 GB | smallest, specialised OCR prompts |
-
-Full revision hashes are in `config/pipeline.toml`.
-
-## Office / HTML inputs
-
-DOCX, PPTX, XLSX, and HTML files go through Docling, which is in the `office` extra (`uv sync --extra office`). Docling pins `typer<0.27`, so the project allows `typer>=0.19`.
-
-## Tests
+## Development
 
 ```bash
-uv run pytest    # 26 tests, no model needed: detection, routing (Form XObject, rotated and
-                 # offset page boxes), pdfium hyphens, cache/variants, CLI batch errors, file
-                 # permissions, token-window chunking, metrics, scan determinism
+./scripts/check.sh      # ruff + format + import-linter + pyright + pytest --cov (the CI gates)
+DOCINGEST_MODEL_TESTS=1 uv run pytest -m model         # opt-in: loads Qwen3-VL-2B
+DOCINGEST_NETWORK_TESTS=1 uv run pytest -m network     # opt-in: live arXiv / Hugging Face
+DOCINGEST_LATEX_SAMPLES=<dir of raw arXiv /src files> uv run pytest tests/integration/test_pandoc_latex.py
 ```
 
-## Roadmap
+The test suite has 239 tests and about 88% branch coverage without loading any model. It is organised as:
+- **unit:** the domain, plus the use cases running against in-memory fakes of every port;
+- **contract:** the same behavioural tests run against the fake and the real implementation of a port;
+- **integration:** real adapters, a fake HTTP server, and recorded arXiv responses;
+- **opt-in:** tests marked `model` or `network`.
 
-* Region-level OCR for mixed pages (digital text plus embedded scanned figures).
-* Batch or parallel OCR, and a Docling layout pass for tables in born-digital PDFs.
-* A larger OCR benchmark: several degradation levels and several models from the table above.
+## History
+- **v0.1:** first prototype (PDF text layer plus Qwen3-VL OCR, with PaperQA2 integration).
+- **v0.2:** 26 defects found by adversarial review and fixed (pdfium hyphen markers, cache variants, token windows, pinning, and more).
+- **v0.3:** hexagonal architecture, LaTeX and arXiv, the OpenAI-compatible OCR adapter, the benchmark harness, and quality gates.
