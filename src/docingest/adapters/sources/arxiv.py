@@ -417,14 +417,14 @@ class ArxivCrawler:
             try:
                 records += self._page(id_params(batch), 0, len(batch)).records
                 continue
-            except HttpStatusError as e:
+            except (HttpStatusError, RetriesExhaustedError) as e:
                 if e.status != 406 or len(batch) == 1:
                     raise
             self.warn(f"arXiv API refused {len(batch)} ids in one request (406); one by one")
             for one in batch:
                 try:
                     records += self._page(id_params([one]), 0, 1).records
-                except HttpStatusError as e:
+                except (HttpStatusError, RetriesExhaustedError) as e:
                     if e.status != 406:
                         raise
                     refused.append(one)
