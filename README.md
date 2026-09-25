@@ -114,10 +114,13 @@ The OCR model is one config line. Every model below is pinned by commit in `conf
 |---|---|---|
 | Qwen3-VL-2B / 4B / 8B Instruct | `markdown` | 1.8 / 3.1 / 5.8 GB |
 | Qwen3.5-4B / 9B | `markdown` | 3.1 / 6.0 GB |
-| olmOCR-2-7B (AllenAI) | `olmocr` | 5.6 GB |
+| olmOCR-2-7B (AllenAI) | `olmocr` | 5.6 GB; run twice, see below |
 | Nanonets-OCR2-3B | `nanonets` | 3.1 GB |
 | GLM-OCR | `glm-ocr` | 1.3 GB |
 | PaddleOCR-VL-1.6 | `paddleocr-vl` | 0.7 GB |
+| Qwen3-VL-30B-A3B Instruct | `markdown` | 18.3 GB (mixture-of-experts, about 3B active); needs the GPU wired-memory limit raised to about 20 GB |
+
+olmOCR-2 appears twice with the same weights. `olmocr-2-7b` is our first adapter (image before the prompt, retried only on the token cap). `olmocr-2-7b-v2` is closer to its authors' pipeline: prompt before the image and the authors' temperature ladder, retrying until the output has olmOCR front matter followed by page text. The authors' pipeline (olmocr 0.4.27) also uses the prompt-first order and that ladder, but it parses the front matter strictly, accepts a header-only answer as a blank page, retries rotated pages, and falls back to the PDF's text layer when every attempt fails; v2 does none of those. The two runs are compared in the benchmark doc.
 
 ```bash
 ./scripts/setup_bench_scorer.sh                  # official olmOCR-Bench scorer in .bench-venv (+ headless Chromium)
@@ -163,7 +166,7 @@ DOCINGEST_NETWORK_TESTS=1 uv run pytest -m network     # opt-in: live arXiv / Hu
 DOCINGEST_LATEX_SAMPLES=<dir of raw arXiv /src files> uv run pytest tests/integration/test_pandoc_latex.py
 ```
 
-The test suite has 239 tests and about 88% branch coverage without loading any model. It is organised as:
+The test suite has 396 tests (plus 11 opt-in model, network and sample tests) and about 90% branch coverage without loading any model. It is organised as:
 - **unit:** the domain, plus the use cases running against in-memory fakes of every port;
 - **contract:** the same behavioural tests run against the fake and the real implementation of a port;
 - **integration:** real adapters, a fake HTTP server, and recorded arXiv responses;

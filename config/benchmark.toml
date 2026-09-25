@@ -148,9 +148,11 @@ repo_id = "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit"
 revision = "0555d34cb1ed80c0e61a5635194c70027b4c2ff3"
 profile = "markdown"
 
-# Same model and weights as olmocr-2-7b, run the way its authors run it (pipeline 0.3.1+):
-# text before the image (olmOCR training order), outputs accepted only when the front
-# matter parses, otherwise retried up olmOCR's temperature ladder. The olmOCR-Bench
+# Same model and weights as olmocr-2-7b, run closer to its authors' pipeline (pipeline
+# 0.3.1+): text before the image (olmOCR training order) and olmOCR's temperature ladder,
+# retried until the output has front matter followed by page text. Unlike olmocr's own
+# pipeline: no strict front-matter parse, header-only answers are retried (not accepted as
+# blank pages), no rotation retries, no text-layer fallback. The olmOCR-Bench
 # failure analysis traced 46 of olmocr-2-7b's 93 failed tests to header-only outputs
 # that the earlier adapter (image first, retry on max_tokens only) accepted.
 [[candidates]]
