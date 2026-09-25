@@ -137,14 +137,17 @@ def synthetic_table(summary: dict, run: str) -> list[str]:
     sep = next(iter(s["scores"].values()))["details"].get("reported_separately", {})
     out.append("")
     for cluster, info in sep.items():
-        out += [
-            f"**Reported separately: `{cluster}`.** {info['reason']} Per model on this page: "
-            + ", ".join(
-                f"{n} {pct(s['scores'][n]['details']['reported_separately'][cluster]['metrics']['cer']['mean'])}%"
-                for n in scored(s, "cer")
-                if cluster in s["scores"][n]["details"].get("reported_separately", {})
+
+        def page_cer(n: str, cluster: str = cluster) -> str:
+            sep_n = s["scores"][n]["details"].get("reported_separately", {})
+            return (
+                f"{n} {pct(sep_n[cluster]['metrics']['cer']['mean'])}%" if cluster in sep_n else ""
             )
-            + ".",
+
+        per_model = ", ".join(c for c in map(page_cer, scored(s, "cer")) if c)
+        out += [
+            f"**Reported separately: `{cluster}`.** {info['reason']} "
+            f"Per model on this page: {per_model}.",
             "",
         ]
     return out
