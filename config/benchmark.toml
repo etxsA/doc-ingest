@@ -147,3 +147,14 @@ name = "qwen3-vl-30b-a3b"
 repo_id = "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit"
 revision = "0555d34cb1ed80c0e61a5635194c70027b4c2ff3"
 profile = "markdown"
+
+# Same model and weights as olmocr-2-7b, run the way its authors run it (pipeline 0.3.1+):
+# text before the image (olmOCR training order), outputs accepted only when the front
+# matter parses, otherwise retried up olmOCR's temperature ladder. The olmOCR-Bench
+# failure analysis traced 46 of olmocr-2-7b's 93 failed tests to header-only outputs
+# that the earlier adapter (image first, retry on max_tokens only) accepted.
+[[candidates]]
+name = "olmocr-2-7b-v2"
+repo_id = "mlx-community/olmOCR-2-7B-1025-mlx-4bit"
+revision = "c0eaffb7844e795a44e246744cfaba5981a1bf03"
+profile = "olmocr"

@@ -30,7 +30,7 @@ from ...domain.errors import OcrError
 from ...domain.models import ModelRef
 from ...ports import OcrResult
 from .mlx_vlm import fit_image
-from .profiles import OcrProfile
+from .profiles import OcrProfile, acceptable, attempts
 
 if TYPE_CHECKING:
     from ...config import OcrConfig
@@ -148,6 +148,9 @@ class OpenAICompatibleOcr:
                 "prompt": profile.prompt,
                 "max_side": profile.max_side,
                 "chat_kwargs": profile.chat_kwargs,
+                "prompt_first": profile.prompt_first,
+                "ladder": profile.ladder,
+                "validated": profile.valid is not None,
                 "dpi": dpi,
                 "max_tokens": self.max_tokens,
                 "temperature": temperature,
@@ -175,16 +178,6 @@ class OpenAICompatibleOcr:
             retries=getattr(cfg, "retries", DEFAULT_RETRIES),
         )
 
-    def _attempts(self) -> list[tuple[float, float | None]]:
-        # Same olmOCR-style ladder as MlxVlmOcr: hitting max_tokens usually means a
-        # repetition loop, so retry with a little temperature and a stronger penalty.
-        base = self.repetition_penalty
-        return [
-            (self.temperature, base),
-            (0.2, max(base or 1.0, 1.15)),
-            (0.5, max(base or 1.0, 1.25)),
-        ]
-
     def transcribe(self, image: Image.Image) -> OcrResult:
         data_url = _png_data_url(fit_image(image, self.profile.max_side))
         t0 = time.perf_counter()
@@ -192,14 +185,23 @@ class OpenAICompatibleOcr:
         usage: dict[str, Any] = {}
         finishes: list[str | None] = []
         total_tokens = 0
-        for temperature, penalty in self._attempts():
+        best: tuple[dict[str, Any], dict[str, Any]] | None = None
+        for temperature, penalty in attempts(
+            self.profile, self.temperature, self.repetition_penalty
+        ):
             reply = self._post(self._body(data_url, temperature, penalty))
             choice = _first_choice(reply)
             usage = reply.get("usage") or {}
             finishes.append(choice.get("finish_reason"))
             total_tokens += int(usage.get("completion_tokens") or 0)
-            if choice.get("finish_reason") != "length":
+            raw = _content_text(choice)
+            if any(c.isalnum() for c in self.profile.postprocess(raw)):
+                best = (choice, usage)  # latest attempt with text, in case none is valid
+            if acceptable(self.profile, raw, choice.get("finish_reason")):
+                best = (choice, usage)
                 break
+        if best is not None:
+            choice, usage = best
         return OcrResult(
             text=self.profile.postprocess(_content_text(choice)),
             seconds=time.perf_counter() - t0,
@@ -210,7 +212,14 @@ class OpenAICompatibleOcr:
             attempts=len(finishes),
             first_finish_reason=finishes[0] if finishes else None,
             total_gen_tokens=total_tokens,
+            raw_text=_content_text(choice),
         )
+
+    def _content(self, data_url: str) -> list[dict[str, Any]]:
+        image = {"type": "image_url", "image_url": {"url": data_url}}
+        text = {"type": "text", "text": self.profile.prompt}
+        # Same order the model was trained with (olmOCR: text first); default image first.
+        return [text, image] if self.profile.prompt_first else [image, text]
 
     def _body(self, data_url: str, temperature: float, penalty: float | None) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -218,10 +227,7 @@ class OpenAICompatibleOcr:
             "messages": [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                        {"type": "text", "text": self.profile.prompt},
-                    ],
+                    "content": self._content(data_url),
                 }
             ],
             "temperature": temperature,

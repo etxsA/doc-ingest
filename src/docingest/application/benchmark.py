@@ -45,6 +45,7 @@ EngineFactory = Callable[[CandidateSpec], OcrEngine]
 MANIFEST = "manifest.json"
 SCORES_DIR = "scores"
 TELEMETRY_DIR = "telemetry"
+RAW_DIR = "model_raw"  # raw model output per sample, when clean-up changed it
 # Library versions recorded in the manifest (absent ones are recorded as None).
 TRACKED_DISTRIBUTIONS = (
     "docingest",
@@ -359,6 +360,9 @@ class BenchmarkRunner:
             error = f"{type(e).__name__}: {e}"
         text = res.text if res is not None else ""
         _write_atomic(suite.output_path(run_dir, name, sample), text)
+        raw = res.raw_text if res is not None else None
+        if raw is not None and raw != text:  # the model's own words, before our clean-up
+            _write_atomic(run_dir / RAW_DIR / suite.name / name / f"{sample.id}.txt", raw)
         wall = self.clock() - t0
         return {
             "sample_id": sample.id,
