@@ -202,14 +202,14 @@ from docingest.domain.models import SourceKind
 from docingest.domain.routing import RoutingPolicy
 
 service = IngestService(
-    detector=my_detector,                              # TypeDetector
-    pdf=my_pdf_reader,                                 # PdfReader
-    ocr=my_ocr_engine,                                 # OcrEngine
-    images=my_image_source,                            # ImageSource
+    detector=my_detector,  # TypeDetector
+    pdf=my_pdf_reader,  # PdfReader
+    ocr=my_ocr_engine,  # OcrEngine
+    images=my_image_source,  # ImageSource
     converters={SourceKind.LATEX: my_latex_converter},  # only the kinds you need
-    store=my_store,                                    # DocumentStore
+    store=my_store,  # DocumentStore
     policy=RoutingPolicy(),
-    log=lambda _: None,                                # progress lines; default is print
+    log=lambda _: None,  # progress lines; default is print
 )
 ```
 
@@ -1201,9 +1201,9 @@ Examples (verified against the current code):
 ```python
 from docingest.application.metrics import latex_to_text, normalize
 
-normalize("## **Bold** `x`")                         # 'bold x'
-latex_to_text(r"$d_{model}$")                       # 'dmodel'
-latex_to_text(r"$\alpha = 0.3$")                    # 'α = 0.3'
+normalize("## **Bold** `x`")  # 'bold x'
+latex_to_text(r"$d_{model}$")  # 'dmodel'
+latex_to_text(r"$\alpha = 0.3$")  # 'α = 0.3'
 latex_to_text(r"\mathrm{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)")  # 'softmax(QKT √dk)'
 normalize("The trans-\nformer uses $d_k$, see ![fig](a.png) <img>a chart</img> [link](http://x)")
 # 'the transformer uses dk, see link'
@@ -1410,7 +1410,7 @@ r = paired_bootstrap(a, b, clusters=pages, n=2000, seed=0)
 # r.p_value == 0.25, r.n == 6, r.n_clusters == 3, r.exact is True
 # r.significant is False: with 3 clusters the smallest p is 2/2^3 = 0.25
 
-cluster_bootstrap_ci(a, clusters=pages, n=2000)   # (0.2083..., 0.11, 0.305)
+cluster_bootstrap_ci(a, clusters=pages, n=2000)  # (0.2083..., 0.11, 0.305)
 cluster_bootstrap_ci([0.1, 0.2], clusters=["x", "x"])  # (0.15..., nan, nan): one cluster
 ```
 

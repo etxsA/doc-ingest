@@ -474,11 +474,12 @@ from docingest.config import LatexConfig
 conv = PandocLatexConverter(LatexConfig(split_level=2)).convert(
     Path("tests/fixtures/latex/paper/main.tex")
 )
-print(conv.method, conv.engine, conv.degraded)   # latex pandoc <version> False
-print(conv.title)                                # Sparse Attention for Tiny Transformers
-print(conv.warnings)                             # ['skipped \\input{sections/setup} (recursive include)']
+print(conv.method, conv.engine, conv.degraded)  # latex pandoc <version> False
+print(conv.title)  # Sparse Attention for Tiny Transformers
+print(conv.warnings)  # ['skipped \\input{sections/setup} (recursive include)']
 for segment in conv.segments:
-    print(segment.title, len(segment.text))      # Abstract, Introduction, Method, Method > Complexity, ...
+    # Abstract, Introduction, Method, Method > Complexity, ...
+    print(segment.title, len(segment.text))
 ```
 
 The helpers in `latex_source.py` are pure functions over paths and strings and can be used on their own:
@@ -487,10 +488,14 @@ The helpers in `latex_source.py` are pure functions over paths and strings and c
 from pathlib import Path
 
 from docingest.adapters.converters.latex_source import (
-    cut_at_endinput, decode_tex, find_main, flatten, prepare_for_pandoc,
+    cut_at_endinput,
+    decode_tex,
+    find_main,
+    flatten,
+    prepare_for_pandoc,
 )
 
-assert decode_tex(b"caf\xe9 \xe2\x80\x94 ok") == "café — ok"     # UTF-8 plus one latin-1 byte
+assert decode_tex(b"caf\xe9 \xe2\x80\x94 ok") == "café — ok"  # UTF-8 plus one latin-1 byte
 assert cut_at_endinput("keep\n\\endinput rest of line\ndropped\n") == "keep\n rest of line\n"
 
 root = Path("tests/fixtures/latex/paper").resolve()
@@ -533,9 +538,7 @@ print(flat.files, flat.warnings + more_notes)
            segments = assemble(split_markdown(text, self.split_level))
            if not segments:
                raise ConversionError(f"{path.name}: no text")
-           return Conversion(
-               segments=segments, method=PageMethod.PASSTHROUGH, engine=self.fingerprint
-           )
+           return Conversion(segments=segments, method=PageMethod.PASSTHROUGH, engine=self.fingerprint)
    ```
 
 2. Register a factory `(AppConfig) -> converter` under the kind's port in `REGISTRY` in [`bootstrap.py`](../../bootstrap.py), importing the module inside the factory:
@@ -545,6 +548,7 @@ print(flat.files, flat.warnings + more_notes)
        from .adapters.converters.markdown_sections import MarkdownSectionsConverter
 
        return MarkdownSectionsConverter()
+
 
    REGISTRY: dict[str, dict[str, Factory]] = {
        # ... other ports unchanged ...
