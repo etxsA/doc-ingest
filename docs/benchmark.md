@@ -4,6 +4,79 @@ This benchmark compares local vision-language models for transcribing scanned re
 
 <!-- RESULTS -->
 
+## Results
+
+Machine: Apple M4 Pro, 24 GB; mlx-vlm 0.7.3, mlx 0.32.2. Full generated reports: [screening](benchmark/screen_report.md), [deep](benchmark/deep_report.md). Failure analyses: [synthetic](benchmark/synthetic_failure_analysis.md), [olmOCR-Bench](benchmark/olmocr_bench_failure_analysis.md).
+
+![Quality vs speed](benchmark/quality_vs_speed.png)
+
+### olmOCR-Bench (real scans, math, tables, layout)
+
+#### Screening: all candidates, 6 PDFs per category
+
+| model | pass rate % [95% CI] | official ± | vs top mean (paired) | median s/page | peak GB | empty | truncated (1st try) |
+|---|---|---|---|---|---|---|---|
+| qwen3.5-9b | 83.0 [76.1, 88.2] | 4.5 | top mean | 22.5 | 7.8 | 0% | ≥0% |
+| qwen3.5-4b | 80.2 [73.0, 86.5] | 5.2 | -2.9 pts, p = 0.393: not distinguishable | 14.5 | 5.0 | 0% | ≥0% |
+| qwen3-vl-8b | 79.4 [72.0, 86.8] | 4.6 | -3.6 pts, p = 0.494: not distinguishable | 23.5 | 7.1 | 0% | ≥2% |
+| glm-ocr | 75.2 [67.9, 82.0] | 4.5 | -7.8 pts, p = 0.116: not distinguishable | 5.8 | 2.6 | 0% | ≥0% |
+| qwen3-vl-30b-a3b | 74.9 [66.6, 82.4] | 5.4 | -8.2 pts, p = 0.075: not distinguishable | 15.4 | 19.5 | 0% | 2% |
+| nanonets-ocr2-3b | 71.1 [63.2, 78.1] | 4.9 | -11.9 pts, p = 0.043: lower (p < 0.05) | 15.2 | 4.1 | 0% | ≥2% |
+| qwen3-vl-4b | 69.9 [61.8, 78.0] | 5.5 | -13.1 pts, p = 0.001: lower (p < 0.05) | 14.9 | 4.5 | 0% | ≥0% |
+| qwen3-vl-2b | 68.4 [59.3, 77.2] | 5.5 | -14.6 pts, p = 0.001: lower (p < 0.05) | 7.1 | 3.1 | 0% | ≥0% |
+| olmocr-2-7b | 64.4 [52.4, 74.8] | 5.9 | -18.6 pts, p = 0.001: lower (p < 0.05) | 20.0 | 6.6 | 0% | ≥0% |
+| paddleocr-vl | 55.3 [47.5, 61.9] | 5.4 | -27.7 pts, p = 0.000: lower (p < 0.05) | 3.1 | 1.7 | 0% | ≥0% |
+
+42 PDFs (42 clusters). *official ±* is the scorer's own interval (tests resampled independently, narrower); the bracketed CI resamples whole PDFs within categories. *vs top mean*: paired cluster bootstrap / sign-flip test against the candidate with the highest mean.
+
+#### Deep sample: candidates the screening could not separate from the top mean, 12 PDFs per category
+
+| model | pass rate % [95% CI] | official ± | vs top mean (paired) | median s/page | peak GB | empty | truncated (1st try) |
+|---|---|---|---|---|---|---|---|
+| qwen3.5-4b | 79.4 [74.2, 83.9] | 3.3 | top mean | 14.6 | 5.0 | 0% | 2% |
+| qwen3.5-9b | 79.3 [74.3, 83.5] | 3.2 | -0.1 pts, p = 0.971: not distinguishable | 22.7 | 7.8 | 0% | 0% |
+| nanonets-ocr2-3b | 67.6 [61.0, 74.2] | 3.6 | -11.7 pts, p = 0.005: lower (p < 0.05) | 14.8 | 4.2 | 0% | 2% |
+
+84 PDFs (84 clusters). *official ±* is the scorer's own interval (tests resampled independently, narrower); the bracketed CI resamples whole PDFs within categories. *vs top mean*: paired cluster bootstrap / sign-flip test against the candidate with the highest mean.
+
+#### Pass rate by category (screening, %)
+
+![olmOCR-Bench categories](benchmark/olmocr_categories.png)
+
+| model | arXiv math | old scans math | tables | old scans | headers/footers | multi-column | tiny text |
+|---|---|---|---|---|---|---|---|
+| qwen3.5-9b | 83 | 88 | 94 | 50 | 88 | 73 | 88 |
+| qwen3.5-4b | 81 | 87 | 84 | 56 | 76 | 67 | 91 |
+| qwen3-vl-8b | 89 | 91 | 84 | 59 | 44 | 80 | 88 |
+| glm-ocr | 69 | 78 | 31 | 53 | 100 | 73 | 97 |
+| qwen3-vl-30b-a3b | 83 | 91 | 62 | 56 | 64 | 67 | 75 |
+| nanonets-ocr2-3b | 75 | 35 | 100 | 56 | 32 | 80 | 91 |
+| qwen3-vl-4b | 64 | 82 | 81 | 44 | 40 | 73 | 75 |
+| qwen3-vl-2b | 69 | 66 | 91 | 47 | 68 | 47 | 59 |
+| olmocr-2-7b | 83 | 71 | 53 | 38 | 72 | 47 | 72 |
+| paddleocr-vl | 67 | 66 | 6 | 44 | 20 | 67 | 78 |
+
+### Synthetic degraded scans (exact ground truth)
+
+| model | CER % [95% CI] | median CER % | word-F1 | clean | light | heavy | median s/page | peak GB |
+|---|---|---|---|---|---|---|---|---|
+| nanonets-ocr2-3b | 1.1 [0.4, 2.0] | 0.4 | 0.968 | 0.7 | 1.4 | 1.2 | 19.3 | 4.1 |
+| qwen3.5-9b | 1.4 [0.4, 3.0] | 0.4 | 0.975 | 0.4 | 2.4 | 1.4 | 30.5 | 7.7 |
+| qwen3.5-4b | 2.1 [0.7, 4.2] | 0.4 | 0.971 | 4.6 | 0.8 | 1.0 | 19.8 | 4.9 |
+| paddleocr-vl | 2.7 [0.9, 5.0] | 0.8 | 0.965 | 1.6 | 3.5 | 2.9 | 3.6 | 1.7 |
+| qwen3-vl-30b-a3b | 3.0 [0.4, 7.1] | 0.4 | 0.974 | 8.0 | 0.6 | 0.4 | 21.5 | 19.3 |
+| glm-ocr | 3.0 [0.9, 5.4] | 0.3 | 0.970 | 3.8 | 2.4 | 2.7 | 7.9 | 2.4 |
+| qwen3-vl-8b | 4.4 [0.3, 11.6] | 0.4 | 0.976 | 6.1 | 6.2 | 0.9 | 32.1 | 6.9 |
+| olmocr-2-7b | 6.9 [1.1, 13.7] | 0.3 | 0.946 | 2.6 | 8.1 | 9.9 | 30.2 | 6.6 |
+| qwen3-vl-4b | 7.3 [1.1, 15.7] | 0.7 | 0.940 | 1.3 | 1.1 | 19.5 | 20.3 | 4.5 |
+| qwen3-vl-2b | 9.4 [3.0, 17.9] | 2.7 | 0.940 | 6.1 | 6.0 | 16.1 | 11.1 | 3.0 |
+
+**Reported separately: `olmocr_2502.18443.pdf#p001`.** Figure 1's internal vector text (1,103 of 3,225 reference characters) is in the text layer, panel-interleaved and with its spaces lost; a flawless transcription of the visible non-figure text scores CER 0.342 against it (found by the failure analysis). Per model on this page: nanonets-ocr2-3b 36.8%, qwen3.5-9b 46.7%, qwen3.5-4b 33.7%, paddleocr-vl 34.9%, qwen3-vl-30b-a3b 34.6%, glm-ocr 46.1%, qwen3-vl-8b 34.6%, olmocr-2-7b 36.7%, qwen3-vl-4b 35.6%, qwen3-vl-2b 56.9%.
+
+![Synthetic CER by degradation](benchmark/synthetic_cer.png)
+
+<!-- /RESULTS -->
+
 ## Methodology
 
 ### Candidates
