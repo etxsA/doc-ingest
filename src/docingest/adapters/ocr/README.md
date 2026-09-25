@@ -537,8 +537,15 @@ No code change is needed.
 
 
    class MyRuntimeOcr:
-       def __init__(self, model: ModelRef, profile: OcrProfile, *, dpi: int = 150,
-                    temperature: float = 0.0, repetition_penalty: float | None = None):
+       def __init__(
+           self,
+           model: ModelRef,
+           profile: OcrProfile,
+           *,
+           dpi: int = 150,
+           temperature: float = 0.0,
+           repetition_penalty: float | None = None,
+       ):
            self.model = model
            self.profile = profile
            self.dpi = dpi
@@ -614,6 +621,7 @@ No code change is needed.
            temperature=o.temperature,
            repetition_penalty=o.repetition_penalty,
        )
+
 
    REGISTRY: dict[str, dict[str, Factory]] = {
        # ... other ports unchanged ...

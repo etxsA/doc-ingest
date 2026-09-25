@@ -199,7 +199,8 @@ from pathlib import Path
 
 from docingest.config import AppConfig, load_config
 
-cfg = load_config()  # config/pipeline.toml at the repository root, or all defaults if that file is absent
+# config/pipeline.toml at the repository root, or all defaults if that file is absent
+cfg = load_config()
 cfg = load_config(Path("config/examples/remote-ocr.toml"))  # an explicit path must exist
 
 # The same keys as the TOML file, validated by pydantic:
@@ -228,7 +229,8 @@ from docingest.config import load_config
 container = Container(load_config(), log=print)
 stored = container.ingest.ingest(Path("paper.pdf"))
 
-print(stored.location)   # filesystem store, canonical result: <output_dir>/<first 16 hex chars of the SHA-256>
+# filesystem store, canonical result: <output_dir>/<first 16 hex chars of the SHA-256>
+print(stored.location)
 print(stored.canonical)  # True for a complete run without ocr_all that is not a degraded fallback
 ```
 
@@ -262,7 +264,8 @@ from docingest.domain.models import DocumentManifest
 doc_dir = Path("data/normalized") / "0123456789abcdef"  # the first 16 hex chars of doc_id
 manifest = DocumentManifest.model_validate_json((doc_dir / "manifest.json").read_text())
 markdown = (doc_dir / "document.md").read_text()
-catalog = json.loads(Path("data/normalized/index.json").read_text())  # canonical documents, keyed by doc_id
+# canonical documents, keyed by doc_id
+catalog = json.loads(Path("data/normalized/index.json").read_text())
 ```
 
 Where the filesystem store puts each result:
@@ -282,9 +285,11 @@ Every field of the manifest is described in [domain/README.md](domain/README.md#
 from docingest.application.ingest import IngestOptions
 
 svc = container.ingest
-svc.ingest(Path("paper.pdf"), IngestOptions(max_pages=2))   # only the first 2 pages, frames or segments
-svc.ingest(Path("paper.pdf"), IngestOptions(ocr_all=True))  # OCR every PDF page, even with a good text layer
-svc.ingest(Path("paper.pdf"), IngestOptions(force=True))    # ignore cached results and process again
+# only the first 2 pages, frames or segments
+svc.ingest(Path("paper.pdf"), IngestOptions(max_pages=2))
+# OCR every PDF page, even with a good text layer
+svc.ingest(Path("paper.pdf"), IngestOptions(ocr_all=True))
+svc.ingest(Path("paper.pdf"), IngestOptions(force=True))  # ignore cached results and process again
 ```
 
 | Option | Default | Effect |
@@ -298,7 +303,7 @@ To see the cache key a run would use without running it:
 ```python
 from docingest.domain.models import SourceKind
 
-print(container.ingest.config_hash(SourceKind.PDF))                # 12 hex chars
+print(container.ingest.config_hash(SourceKind.PDF))  # 12 hex chars
 print(container.ingest.config_hash(SourceKind.PDF, ocr_all=True))  # a different key
 ```
 
@@ -315,7 +320,8 @@ meta = SourceMetadata(
     version="v7",
 )
 stored = container.ingest.ingest(Path("paper.pdf"), metadata=meta)
-print(stored.manifest.citation())  # Vaswani et al. (2017). Attention Is All You Need. arXiv:1706.03762v7
+# Vaswani et al. (2017). Attention Is All You Need. arXiv:1706.03762v7
+print(stored.manifest.citation())
 
 # Or write a sidecar next to the input; a later plain ingest (CLI or library) picks it up:
 Path("paper.pdf.meta.json").write_text(meta.model_dump_json(indent=2))
