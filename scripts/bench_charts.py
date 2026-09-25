@@ -96,12 +96,58 @@ def title(ax, text: str, sub: str) -> None:
     ax.text(0, 1.02, sub, transform=ax.transAxes, fontsize=8.5, color=TEXT_2, va="bottom")
 
 
+def place_labels(fig, ax, points: list[tuple[str, float, float]]) -> None:
+    """Direct labels without collisions: try positions around each point, keep the first
+    whose box overlaps no placed label and no marker (greedy, highest points first)."""
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    to_disp = ax.transData.transform
+    markers = [to_disp((x, y)) for _, x, y in points]
+    placed = []
+    offsets = [
+        (7, 3, "left"),
+        (7, -11, "left"),
+        (-7, 3, "right"),
+        (-7, -11, "right"),
+        (7, 13, "left"),
+        (7, -21, "left"),
+        (-7, 13, "right"),
+        (-7, -21, "right"),
+    ]
+
+    def clash(bb) -> bool:
+        pad = bb.expanded(1.05, 1.15)
+        if any(pad.overlaps(p) for p in placed):
+            return True
+        return any(
+            pad.x0 - 5 <= mx <= pad.x1 + 5 and pad.y0 - 5 <= my <= pad.y1 + 5 for mx, my in markers
+        )
+
+    for name, x, y in sorted(points, key=lambda p: -p[2]):
+        for dx, dy, ha in offsets:
+            t = ax.annotate(
+                name,
+                (x, y),
+                xytext=(dx, dy),
+                textcoords="offset points",
+                fontsize=8,
+                color=TEXT,
+                ha=ha,
+            )
+            bb = t.get_window_extent(renderer)
+            if not clash(bb) or (dx, dy, ha) == offsets[-1]:
+                placed.append(bb)
+                break
+            t.remove()
+
+
 def quality_vs_speed(summary: dict, out: Path) -> Path | None:
     suite = summary["suites"].get("olmocr-bench")
     if not suite:
         return None
     fig, ax = figure(8.2, 4.8)
     seen = set()
+    points: list[tuple[str, float, float]] = []
     for name, sc in suite["scores"].items():
         m = sc["metrics"]["pass_rate"]
         tp = suite["throughput"].get(name, {})
@@ -123,7 +169,7 @@ def quality_vs_speed(summary: dict, out: Path) -> Path | None:
             label=fam if fam not in seen else None,
         )
         seen.add(fam)
-        ax.annotate(name, (x, y), xytext=(7, 4), textcoords="offset points", fontsize=8, color=TEXT)
+        points.append((name, x, y))
     ax.set_xscale("log")
     lo, hi = ax.get_xlim()
     ticks = [t for t in (1, 2, 3, 5, 10, 20, 30, 50, 100) if lo <= t <= hi]
@@ -132,6 +178,7 @@ def quality_vs_speed(summary: dict, out: Path) -> Path | None:
     ax.set_xlabel("median seconds per page (log scale, M4 Pro 24 GB)", color=TEXT_2, fontsize=9)
     ax.set_ylabel("olmOCR-Bench pass rate (%)", color=TEXT_2, fontsize=9)
     ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g} s"))
+    place_labels(fig, ax, points)
     title(
         ax,
         "Quality vs speed",
@@ -157,7 +204,12 @@ def categories(summary: dict, out: Path) -> Path | None:
     suite = summary["suites"].get("olmocr-bench")
     if not suite:
         return None
-    rows = [n for n in suite.get("ranking", []) if n in suite["scores"]]
+    rows = [
+        n
+        for n in suite.get("ranking", [])
+        if suite["scores"].get(n, {}).get("metrics", {}).get("pass_rate", {}).get("mean")
+        is not None
+    ]
     cols = [c for c in CATEGORIES if any(c in suite["scores"][r]["by_category"] for r in rows)]
     grid = []
     for r in rows:
