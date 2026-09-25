@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from PIL.Image import Image
 
 from ..domain.models import PageSignals
 
 
+@runtime_checkable
 class PdfPage(Protocol):
     def signals(self) -> tuple[PageSignals, str]:
         """Measurements for the OCR routing policy, plus the raw embedded text."""
@@ -18,6 +19,7 @@ class PdfPage(Protocol):
     def render(self, dpi: int) -> Image: ...
 
 
+@runtime_checkable
 class PdfDocument(Protocol):
     title: str | None
 
@@ -28,6 +30,7 @@ class PdfDocument(Protocol):
     def close(self) -> None: ...
 
 
+@runtime_checkable
 class PdfReader(Protocol):
     fingerprint: str
 

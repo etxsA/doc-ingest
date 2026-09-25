@@ -7,8 +7,4 @@ Hexagonal layout: ``domain`` (pure) <- ``ports`` (Protocols) <- ``application``
 
 from .application.ingest import PIPELINE_VERSION as __version__
 
-
-def main() -> None:
-    from .entrypoints.cli import app
-
-    app()
+__all__ = ["__version__"]

@@ -9,19 +9,25 @@ requires-python = ">=3.12"
 dependencies = [
     "huggingface-hub>=1.33.0,<2",
     "jiwer>=4",
-    "mlx-vlm>=0.7.3",
     "numpy>=2",
     "pillow>=12.3.0",
     "pydantic>=2",
+    "pylatexenc>=2.11",
+    "pypandoc-binary>=1.17",
     "pypdfium2>=5.13",
     "rich>=15.0.0",
     "typer>=0.19",
 ]
 
 [project.scripts]
-docingest = "docingest:main"
+docingest = "docingest.entrypoints.cli:app"
 
 [project.optional-dependencies]
+# In-process OCR on Apple Silicon. Linux / CI installs without it (use the
+# "openai-compatible" OCR adapter against a vLLM / LM Studio server instead).
+mlx = [
+    "mlx-vlm>=0.7.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 qa = [
     "paper-qa[local]>=2026.8.12",
 ]
@@ -35,9 +41,117 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.168",
+    "import-linter>=2.15",
+    "matplotlib>=3.10",
+    "pyright>=1.1.414",
     "pytest>=9.1.1",
+    "pytest-cov>=7",
     "rapidfuzz>=3.14",
+    "ruff>=0.16",
 ]
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["--strict-markers", "-ra"]
+markers = [
+    "model: loads multi-GB OCR models (opt in: DOCINGEST_MODEL_TESTS=1)",
+    "network: talks to remote services such as arXiv (opt in: DOCINGEST_NETWORK_TESTS=1)",
+    "slow: takes more than a few seconds",
+]
+
+[tool.coverage.run]
+source = ["docingest"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PT", "PL", "C4"]
+ignore = [
+    "PLR0913",  # use cases take several ports by design
+    "PLR2004",  # magic values are fine in tests and thresholds
+    "PLC0415",  # lazy imports keep optional heavy deps optional
+    "RUF001", "RUF002", "RUF003",  # ambiguous unicode (× in tables, math in docstrings)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR0913", "PT018", "E501"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+
+[tool.uv]
+default-groups = ["dev"]
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux'",
+]
+
+[tool.importlinter]
+root_packages = ["docingest"]
+include_external_packages = true
+exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Hexagonal layers: outer layers may import inner ones, never the reverse"
+type = "layers"
+layers = [
+    "docingest.entrypoints",
+    "docingest.bootstrap",
+    "docingest.adapters",
+    "docingest.config",
+    "docingest.application",
+    "docingest.ports",
+    "docingest.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Adapters are independent of each other (shared HF resolver excepted)"
+type = "independence"
+modules = [
+    "docingest.adapters.detection",
+    "docingest.adapters.pdf",
+    "docingest.adapters.ocr",
+    "docingest.adapters.images",
+    "docingest.adapters.converters",
+    "docingest.adapters.store",
+    "docingest.adapters.sources",
+    "docingest.adapters.qa",
+    "docingest.adapters.datasets",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain is pure: no I/O or framework libraries"
+type = "forbidden"
+source_modules = ["docingest.domain"]
+forbidden_modules = [
+    "pypdfium2", "PIL", "numpy", "mlx", "mlx_vlm", "paperqa", "docling", "pypandoc",
+    "huggingface_hub", "httpx", "urllib", "typer", "rich", "jiwer",
+]
+
+[[tool.importlinter.contracts]]
+name = "Application depends on ports, not on concrete libraries"
+type = "forbidden"
+source_modules = ["docingest.application", "docingest.ports"]
+forbidden_modules = [
+    "pypdfium2", "mlx", "mlx_vlm", "paperqa", "docling", "pypandoc", "huggingface_hub",
+    "httpx", "typer", "rich",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only the composition root and entrypoints wire concrete adapters"
+type = "protected"
+protected_modules = ["docingest.adapters"]
+allowed_importers = ["docingest.bootstrap", "docingest.entrypoints", "docingest.adapters"]

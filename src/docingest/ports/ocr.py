@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from PIL.Image import Image
 
@@ -19,6 +19,7 @@ class OcrResult:
     peak_memory_gb: float | None = None
 
 
+@runtime_checkable
 class OcrEngine(Protocol):
     fingerprint: str  # model + revision + prompt/profile + generation settings
     model: ModelRef

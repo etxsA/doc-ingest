@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from ..domain.models import DocumentManifest
 
@@ -15,6 +15,7 @@ class StoredDocument:
     canonical: bool  # complete default run (True) or a partial / forced-OCR variant
 
 
+@runtime_checkable
 class DocumentStore(Protocol):
     def lookup(
         self, doc_id: str, config_hash: str, *, max_pages: int | None, ocr_all: bool

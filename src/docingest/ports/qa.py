@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from .store import StoredDocument
 
 
+@runtime_checkable
 class QuestionAnswerer(Protocol):
     async def ask(
         self,

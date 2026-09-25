@@ -40,9 +40,8 @@ revision = "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b"
 #   mlx-community/GLM-OCR-4bit             97f587506984cc92fa69b2694b4128e53db6b081
 #   mlx-community/PaddleOCR-VL-1.6-4bit    c8987b277bdd8aaec8bd265d154f391bd03ad165
 dpi = 150
-max_tokens = 4096
 temperature = 0.0
-repetition_penalty = 1.05
+# max_tokens / repetition_penalty default to the profile's model-card values
 profile = "markdown"       # prompt + image size + clean-up: markdown | olmocr | nanonets | glm-ocr | paddleocr-vl
 
 [qa]

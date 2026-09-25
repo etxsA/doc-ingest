@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from ..domain.models import SourceMetadata
 
@@ -22,6 +22,7 @@ class FetchedSource:
     format: str  # "latex-archive" | "latex" | "pdf"
 
 
+@runtime_checkable
 class SourceCrawler(Protocol):
     def search(self, query: str, limit: int) -> list[SourceRecord]: ...
 
