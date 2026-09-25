@@ -10,9 +10,19 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-_FENCE = re.compile(r"^\s*```(?:markdown|md)?\s*\n(.*?)\n?```\s*$", re.DOTALL)
+# Models wrap output in a code fence, often without closing it (truncated or just
+# sloppy), and sometimes label it yaml when it opens with front matter: strip the
+# opening and closing fence lines independently.
+_OPEN_FENCE = re.compile(r"\A\s*```[ \t]*(?:markdown|md|yaml|yml|text)?[ \t]*\n")
+_CLOSE_FENCE = re.compile(r"\n?```\s*\Z")
 _THINK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
-_FRONT_MATTER = re.compile(r"\A---\s*\n.*?\n---\s*\n?", re.DOTALL)
+# olmOCR front matter keys; the model sometimes drops the '---' delimiters, merges the
+# closing one with the next line ('------') or turns a key into a heading.
+_OLMOCR_KEYS = (
+    r"(?:primary[_ ]language|is[_ ]rotation[_ ]valid|rotation[_ ]correction"
+    r"|is[_ ]table|is[_ ]diagram)"
+)
+_FRONT_MATTER_LINE = re.compile(rf"^\s*(?:#+\s*)?{_OLMOCR_KEYS}\s*:.*$", re.IGNORECASE)
 _NANONETS_TAGS = re.compile(r"</?(page_number|watermark|signature)>")
 
 GENERIC_PROMPT = (
@@ -48,13 +58,22 @@ NANONETS_PROMPT = (
 
 def _strip_common(text: str) -> str:
     text = _THINK.sub("", text).strip()
-    if m := _FENCE.match(text):
-        text = m.group(1).strip()
+    if _OPEN_FENCE.match(text):
+        text = _CLOSE_FENCE.sub("", _OPEN_FENCE.sub("", text, count=1)).strip()
     return text
 
 
 def _olmocr(text: str) -> str:
-    return _FRONT_MATTER.sub("", _strip_common(text), count=1).strip()
+    """Drop the olmOCR front matter block (keys + '---' delimiters) at the top."""
+    lines = _strip_common(text).split("\n")
+    i = 0
+    while i < len(lines) and (
+        not lines[i].strip()
+        or set(lines[i].strip()) == {"-"}  # '---', or a merged '------'
+        or _FRONT_MATTER_LINE.match(lines[i])
+    ):
+        i += 1
+    return "\n".join(lines[i:]).strip()
 
 
 def _nanonets(text: str) -> str:

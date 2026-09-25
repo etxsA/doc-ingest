@@ -15,6 +15,7 @@ import math
 import random
 import zlib
 from collections.abc import Sequence
+from dataclasses import asdict
 from functools import partial
 from importlib.metadata import version
 from pathlib import Path
@@ -108,7 +109,7 @@ DEGRADE_VERSION = 1  # bump when degrade() / degrade_heavy() change: invalidates
 #   2: page furniture (running headers, bare page numbers, arXiv margin stamps) removed
 #      from reference and output; <img> descriptions dropped and LaTeX math normalized
 #      (metrics.normalize); CIs and paired tests resample pages, all levels together.
-SCORING_VERSION = 2
+SCORING_VERSION = 3
 METRICS = ("cer", "wer", "word_f1", "char3_f1")
 HIGHER_IS_BETTER = {"cer": False, "wer": False, "word_f1": True, "char3_f1": True}
 
@@ -177,6 +178,10 @@ class SyntheticSuite:
 
     name = "synthetic"
     scoring_version = SCORING_VERSION
+    # Pages whose reference is known to be unrepresentative (cluster id -> reason). They
+    # are scored and reported separately, not dropped, and never enter headline metrics
+    # or paired tests. Set from [scoring.synthetic] (not part of the suite fingerprint).
+    headline_exclusions: dict[str, str] = {}  # noqa: RUF012 - replaced per instance
 
     def __init__(
         self,
@@ -291,6 +296,20 @@ class SyntheticSuite:
                     )
                     sc = score_text(ref, hyp)
                     units[s.id] = {m: sc[m] for m in METRICS}
+            separate = {
+                cluster: {
+                    "reason": reason,
+                    "metrics": {
+                        m: asdict(e)
+                        for m, e in _estimates(
+                            [(clusters[u], units[u]) for u in units if clusters[u] == cluster]
+                        ).items()
+                    },
+                }
+                for cluster, reason in self.headline_exclusions.items()
+                if any(clusters[u] == cluster for u in units)
+            }
+            units = {u: v for u, v in units.items() if clusters[u] not in self.headline_exclusions}
             by_level = {
                 lv: _estimates(
                     [
@@ -301,7 +320,9 @@ class SyntheticSuite:
                 )
                 for lv in self.levels
             }
-            missing = len(samples) - len(units)
+            missing = len(
+                [s for s in samples if clusters[s.id] not in self.headline_exclusions]
+            ) - len(units)
             out[cand] = SuiteScore(
                 primary=self.primary_metric,
                 higher_is_better=HIGHER_IS_BETTER[self.primary_metric],
@@ -320,6 +341,7 @@ class SyntheticSuite:
                     "reference": "cleaned text layer minus page furniture",
                     "clusters": "a page with all its degradation levels",
                     "n_clusters": len({clusters[u] for u in units}),
+                    "reported_separately": separate,
                 },
                 scoring_version=SCORING_VERSION,
             )

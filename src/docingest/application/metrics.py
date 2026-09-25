@@ -26,7 +26,7 @@ _MD = re.compile(r"[#*_`>|\[\]\\$^{}]|<!--.*?-->|-{3,}", re.DOTALL)
 
 
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
-_MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)\s]*\)")
+_MD_IMAGE = re.compile(r"!\[[^\]\n]*\]\([^)\s]*\)")  # one line: never swallow text
 # Nanonets-style figure placeholder: the description is the model's, not page text, so it
 # goes like the alt text of ![alt](src). A caption the model put inside <img> goes too.
 _HTML_IMAGE = re.compile(r"<img\b[^<>]*>.*?</img\s*>", re.IGNORECASE | re.DOTALL)
@@ -38,11 +38,32 @@ _HTML_TAG = re.compile(
 )
 
 
+# Found by the benchmark's failure analysis (scoring v3): model-written image alt text
+# without a closing "(src)", link targets, code-fence labels, OTSL table-cell tokens
+# and olmOCR front matter were being scored as page text.
+_MD_IMAGE_OPEN = re.compile(r"!\[[^\]\n]*(?:\]\([^)\n]*\)?)?")  # ![alt](src) even if unclosed
+_MD_LINK = re.compile(r"\[([^\]\n]*)\]\([^)\s]*\)")  # [text](url) -> text
+_BARE_URL = re.compile(r"\(\s*https?://[^)\s]*\s*\)")
+_FENCE_LINE = re.compile(r"^\s*```[\w-]*\s*$", re.MULTILINE)
+_OTSL = re.compile(r"</?(?:fcel|ecel|lcel|ucel|xcel|nl|ched|rhed|srow|otsl|loc_\d+)>")
+_FRONT_MATTER_KEY = re.compile(
+    r"^\s*(?:#+\s*)?(?:primary[_ ]language|is[_ ]rotation[_ ]valid|rotation[_ ]correction|"
+    r"is[_ ]table|is[_ ]diagram)\s*:.*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
 def plain_text(markdown: str) -> str:
     """A transcription reduced to what a text layer can contain, for format-neutral CER."""
     text = _HTML_COMMENT.sub(" ", markdown)
     text = _MD_IMAGE.sub(" ", text)
+    text = _MD_IMAGE_OPEN.sub(" ", text)
+    text = _MD_LINK.sub(r"\1", text)
+    text = _BARE_URL.sub(" ", text)
     text = _HTML_IMAGE.sub(" ", text)
+    text = _FENCE_LINE.sub(" ", text)
+    text = _OTSL.sub(" ", text)
+    text = _FRONT_MATTER_KEY.sub(" ", text)
     return html.unescape(_HTML_TAG.sub(" ", text))
 
 
