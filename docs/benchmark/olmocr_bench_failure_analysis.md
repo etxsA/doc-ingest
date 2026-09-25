@@ -2,8 +2,24 @@
 
 Run `screen`, 42 PDFs (6 per category), official scorer olmocr 0.4.27. Three analysts re-ran the
 scorer with per-test failure output on a scratch copy; a verifier re-checked the quantified claims.
-Findings led to pipeline 0.3.1 changes (profiles run each model the way its authors do) and to the
-extra candidate `olmocr-2-7b-v2`.
+Findings led to pipeline 0.3.1 changes (profiles run each model closer to the way its authors do)
+and to the extra candidate `olmocr-2-7b-v2`.
+
+## Follow-up, 2026-09-25: olmocr-2-7b-v2 measured
+
+Same weights and the same 42 PDFs, run closer to the authors' pipeline: prompt before the image,
+their temperature ladder, and a retry until the output has front matter followed by page text.
+
+| | olmocr-2-7b | olmocr-2-7b-v2 |
+|---|---|---|
+| pass rate [95% CI] | 64.4 [52.4, 74.8] | 76.7 [67.8, 84.6] |
+| outputs with no page text | 9 of 42 | 0 of 42 |
+| median s/page | 20.0 | 30.9 (36% of pages retried at least once) |
+
+- **Paired difference:** +12.3 pts [+2.0, +23.2], sign-flip p = 0.061.
+- **Against the estimate below:** the measured 76.7 is inside the 73.9–76.8 range estimated from other models' results on the header-only pages.
+- **Remaining gap to the published 82.4:** v2 still differs from the official pipeline (no strict front-matter parse, no rotation retries, no text-layer fallback), and it runs 4-bit on MLX.
+- **Sources:** numbers from `data/bench/runs/screen/summary.json`; the generated comparison is in [../benchmark.md](../benchmark.md).
 
 # olmOCR-Bench screen: failure-mode synthesis
 

@@ -263,6 +263,31 @@ def _separation(summary: dict | None, suite_name: str, metric: str, label: str) 
     return text.strip()
 
 
+def not_in_deep(screen: dict | None, deep: dict | None) -> str:
+    """Candidates the selection rule would include but the deep run does not have (e.g. a
+    candidate added to the screening after the deep sample was chosen)."""
+    a, b = _olm(screen), _olm(deep)
+    if not a or not b:
+        return ""
+    pv = a.get("paired_vs_best", {})
+    missing = [
+        n
+        for n in complete(a, "pass_rate")
+        if n not in b["scores"] and n != a["best"] and pv.get(n) and not pv[n].get("significant")
+    ]
+    if not missing:
+        return ""
+    return (
+        "Not run on the deep sample, although the screening does not separate "
+        + ("it" if len(missing) == 1 else "them")
+        + " from the top mean: "
+        + names_list([f"{n} ({_p(pv[n]['p_value'])})" for n in missing])
+        + "; the deep sample was chosen before "
+        + ("it was" if len(missing) == 1 else "they were")
+        + " run."
+    )
+
+
 def _subset_mean(score, clusters: set[str]) -> float | None:
     """Mean over categories of the category mean, restricted to units in ``clusters`` (the
     scorer's own aggregation, applied to a subset of PDFs)."""
@@ -508,6 +533,8 @@ def results() -> str:
             "separate from the top mean (paired p ≥ 0.05), plus the one with the lowest "
             "synthetic CER",
         )
+        if note := not_in_deep(screen, deep):
+            out += [note, ""]
     if screen:
         out += [
             "#### Pass rate by category (screening, %)",
