@@ -1,0 +1,405 @@
+{
+ "units": [
+  {
+   "candidate": "glm-ocr",
+   "sample": "olmocr_2502.18443_p001_clean",
+   "cer": 0.4605,
+   "primary": "omission",
+   "secondary": "reference_artifact",
+   "evidence": "Output is only the abstract body. It starts 'PDF documents have the potential to provide trillions...'. The title 'olmOCR: Unlocking Trillions of Tokens', all nine authors ('Jake Poznanski Aman Rangapur...'), the affiliation, the 'Abstract' heading and the 'Code allenai/olmocr Weights & Data...' link row are all missing. Against the figure-stripped reference CER is 0.180 (word_f1 0.912), so this is a real omission layered on the page-wide figure artifact. The abstract text itself is verbatim. finish_reason=stop, 443 tokens.",
+   "model_output_is_acceptable_for_rag": false
+  },
+  {
+   "candidate": "glm-ocr",
+   "sample": "olmocr_2502.18443_p001_light",
+   "cer": 0.4605,
+   "primary": "omission",
+   "secondary": "reference_artifact",
+   "evidence": "Byte-identical to the clean output (same md5). Only the abstract paragraph is present. The title, author list, affiliation/email line, 'Abstract' heading and link footer are dropped. CER against the figure-stripped reference is 0.180. The abstract words are all correct.",
+   "model_output_is_acceptable_for_rag": false
+  },
+  {
+   "candidate": "glm-ocr",
+   "sample": "olmocr_2502.18443_p001_heavy",
+   "cer": 0.4605,
+   "primary": "omission",
+   "secondary": "reference_artifact",
+   "evidence": "Same abstract-only output as clean/light (445 tokens, stop). The title/author/affiliation block and the 'Code ... Demo olmocr.allenai.org' row are missing. CER against the figure-stripped reference is 0.180. The glm-ocr omission is systematic across all levels, not caused by degradation.",
+   "model_output_is_acceptable_for_rag": false
+  },
+  {
+   "candidate": "nanonets-ocr2-3b",
+   "sample": "olmocr_2502.18443_p001_clean",
+   "cer": 0.3526,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "The reference carries Figure 1's internal text in scrambled order, e.g. '150x50 loremipsumdolorsitamet, 150x70 consectetur adipiscing elit, s eddo'. The model replaces the figure with an '<img>Diagram showing a PDF file...</img>' description, which the normalizer strips. Figure-stripped CER is 0.017 (word_f1 0.984). The only real error is 'crawlable' for 'crawled', plus \u2665\ufe0f/emoji insertions.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "nanonets-ocr2-3b",
+   "sample": "olmocr_2502.18443_p001_light",
+   "cer": 0.3491,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "The CER sits at the 0.342 floor that any perfect figure-skipping transcription gets on this reference. Figure-stripped CER is 0.012 and word_f1 0.991. The title, authors, abstract and footer links are all transcribed correctly. The figure is described in <img>, not transcribed.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "nanonets-ocr2-3b",
+   "sample": "olmocr_2502.18443_p001_heavy",
+   "cer": 0.3479,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "Figure-stripped CER is 0.009 and word_f1 0.994. The whole gap to the reference is Figure 1's vector text (1103 of 3225 reference chars), e.g. 'nostrudexercitationullamcolaborisnisi 100x460 utaliquipexeacommodoconsequat.', which the model left out of its figure description.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "olmocr-2-7b",
+   "sample": "olmocr_2502.18443_p001_clean",
+   "cer": 0.3702,
+   "primary": "reference_artifact",
+   "secondary": "misrecognition",
+   "evidence": "The figure artifact accounts for about 0.34 of the CER; figure-stripped CER is 0.044. Real errors: the paper name is read as 'oImOCR' (capital I for l) 8 times, e.g. 'We present oImOCR, an open-source toolkit', and 'kylel1' for 'kylel'. The link footer is omitted. The body is otherwise verbatim, but the key entity name is corrupted, which hurts lexical search for 'olmOCR'.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "olmocr-2-7b",
+   "sample": "olmocr_2502.18443_p001_light",
+   "cer": 0.3851,
+   "primary": "reference_artifact",
+   "secondary": "formatting_residue",
+   "evidence": "Output is wrapped in a ```yaml block with olmOCR front matter. The scored text keeps 'yaml primarylanguage: en isrotationvalid: true rotationcorrection: 0 istable: false isdiagram: false'. The footer link row is omitted. Figure-stripped CER is 0.084. The name is spelled correctly here ('olmOCR').",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "olmocr-2-7b",
+   "sample": "olmocr_2502.18443_p001_heavy",
+   "cer": 0.3851,
+   "primary": "reference_artifact",
+   "secondary": "formatting_residue",
+   "evidence": "Same pattern as light, with identical scores. The ```yaml front matter ('primary_language: en ... is_diagram: False') leaks into the scored text and the 'Code/Weights & Data/Demo' row is dropped. Figure-stripped CER is 0.084. The title, authors and abstract are correct.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "paddleocr-vl",
+   "sample": "olmocr_2502.18443_p001_clean",
+   "cer": 0.3495,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "The figure is skipped entirely, with no placeholder. The reference contains figure text such as '100x420 table 1. ut enim ad minim veni am, quis'. Figure-stripped CER is 0.012. Minor errors: '{jakep|kyle|l1ucas}', 'extraction' for 'extractions', and a duplicated 'Abstract'.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "paddleocr-vl",
+   "sample": "olmocr_2502.18443_p001_light",
+   "cer": 0.3507,
+   "primary": "reference_artifact",
+   "secondary": "misrecognition",
+   "evidence": "Figure-stripped CER is 0.014. Small true OCR slips: 'gpt40' for 'GPT-4o' twice, 'jakepkylel1lucas@allenai.org', and 'extraction' for 'extractions'. It also adds commas between author names ('Poznanski,'). The 0.35 CER is otherwise entirely the figure text in the reference.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "paddleocr-vl",
+   "sample": "olmocr_2502.18443_p001_heavy",
+   "cer": 0.3476,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "Figure-stripped CER is 0.008. The output matches the visible non-figure text almost exactly. The missing ~1100 reference chars are Figure 1 internals, e.g. '50x320 a 150x320 b 250x320 b 50x350 aa'.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-2b",
+   "sample": "olmocr_2502.18443_p001_clean",
+   "cer": 1,
+   "primary": "hallucination_or_loop",
+   "secondary": "truncation",
+   "evidence": "Telemetry shows finish_reason=length and gen_tokens=4096 (106 s). After a correct title/authors/abstract, the model invents '## Code' and '## Contact [https://github.com/AllenAI](http://www.huggin)ing' and repeats them until the token cap. The output is 9954 chars against a 3225-char reference, so CER is capped at 1.0. It also leaves an unclosed '![Illustration of PDF text being processed...' alt text. This is a genuine failure that occurs only at the clean level.",
+   "model_output_is_acceptable_for_rag": false
+  },
+  {
+   "candidate": "qwen3-vl-2b",
+   "sample": "olmocr_2502.18443_p001_light",
+   "cer": 0.4434,
+   "primary": "reference_artifact",
+   "secondary": "formatting_residue",
+   "evidence": "Adds a '## Figure' heading and an unclosed '![Figure showing a comparison between an original PDF file and a generated Markdown file...]' with no (src). The normalizer's image regex needs '(src)', so the model-written description is scored. It also drops 'tables,' and misreads 'oLMOCR'. Figure-stripped CER is 0.155. The real text is correct.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-2b",
+   "sample": "olmocr_2502.18443_p001_heavy",
+   "cer": 0.3439,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "Figure-stripped CER is 0.004 and word_f1 0.994. This is essentially a perfect transcription of the visible non-figure text. The 0.344 CER equals the 0.342 floor set by Figure 1's text-layer content.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-4b",
+   "sample": "olmocr_2502.18443_p001_clean",
+   "cer": 0.3442,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "Figure-stripped CER is 0.003. The figure becomes '![Illustration of olmOCR processing a PDF to generate Markdown output](image.png)', which is correctly stripped. The whole gap is the figure text in the reference ('150x70 consectetur adipiscing elit, s eddo ...'). Core-contributor markers are rendered as '*'.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-4b",
+   "sample": "olmocr_2502.18443_p001_light",
+   "cer": 0.3761,
+   "primary": "reference_artifact",
+   "secondary": "hallucination_or_loop",
+   "evidence": "The model repeats a phrase: 'trained on olmOCR-mix-0225, a sample of 260,000 pages from over 100,000 crawled PDFs (VLM) trained on olmOCR-mix-0225, a sample...'. It also drops 'training code' ('our fine-tuned VLM model, and data') and writes the markers as '^\u2020'. Figure-stripped CER is 0.054.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-4b",
+   "sample": "olmocr_2502.18443_p001_heavy",
+   "cer": 0.3467,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "Figure-stripped CER is 0.007 and word_f1 0.992. All visible header, abstract and link text is correct. The CER sits at the 0.342 figure-text floor.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-8b",
+   "sample": "olmocr_2502.18443_p001_clean",
+   "cer": 0.3237,
+   "primary": "reference_artifact",
+   "secondary": "formatting_residue",
+   "evidence": "The unclosed '![Diagram: Original PDF file with prompt for document anchoring \u2192 Generated Markdown file]' has no (src), so its alt text is scored. It happens to match the figure labels in the reference, which pushes the CER below the 0.342 floor. Other errors: '{jake|kyle1|lucas}' and 'tables, equations, lists' (reordered). Figure-stripped CER is 0.053.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-8b",
+   "sample": "olmocr_2502.18443_p001_light",
+   "cer": 0.3761,
+   "primary": "reference_artifact",
+   "secondary": "formatting_residue",
+   "evidence": "The footer is written as Markdown links with invented targets, and the scored text keeps '(https://github.com/allenai/olmocr)' twice and '(https://olmocr.allenai.org)'. The normalizer does not drop link targets. It also has 'jake' for 'jakep' and drops 'tables,'. Figure-stripped CER is 0.051.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-8b",
+   "sample": "olmocr_2502.18443_p001_heavy",
+   "cer": 0.3433,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "Figure-stripped CER is 0.001. The figure becomes a closed '![Diagram: ...](placeholder)', which is stripped. The output is otherwise verbatim, and the remaining CER is Figure 1's text-layer content.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3.5-4b",
+   "sample": "olmocr_2502.18443_p001_clean",
+   "cer": 0.3209,
+   "primary": "reference_artifact",
+   "secondary": "misrecognition",
+   "evidence": "The model emits the real figure labels 'Prompt with document anchoring / Original PDF file / Generated Markdown file'. These are in the reference, so the CER drops below the floor. Its only true errors are 'allenai/olmcr' twice. Figure-stripped CER is 0.036.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3.5-4b",
+   "sample": "olmocr_2502.18443_p001_light",
+   "cer": 0.3436,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "Figure-stripped CER is 0.002 and word_f1 0.987. This is an essentially perfect non-figure transcription. The 0.344 CER is the Figure 1 text-layer floor (0.342).",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3.5-4b",
+   "sample": "olmocr_2502.18443_p001_heavy",
+   "cer": 0.3454,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "Figure-stripped CER is 0.005. The title, authors, affiliation, abstract and links are all correct. The figure internals (e.g. 'loremipsumdolorsitamet', '250x380 ccc') are skipped, a defensible choice.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3.5-9b",
+   "sample": "olmocr_2502.18443_p001_clean",
+   "cer": 0.3429,
+   "primary": "reference_artifact",
+   "secondary": "omission",
+   "evidence": "Figure-stripped CER is 0.001 and word_f1 0.998, the best unit on this page. The figure is a closed '![Diagram showing...](image.png)', which is stripped. The whole 0.343 CER is Figure 1's text-layer content.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3.5-9b",
+   "sample": "olmocr_2502.18443_p001_light",
+   "cer": 0.7119,
+   "primary": "reading_order",
+   "secondary": "hallucination_or_loop",
+   "evidence": "This is the only unit that transcribes the figure. It places the figure after the abstract and footer (the reference has it before the abstract), as an invented two-column table. It also adds a fabricated caption '**Table 1**: Example transformation from original PDF to generated Markdown.' and a note 'The table above represents a simplified version'. Word_f1 is the page's highest at 0.827, but CER is 0.712 (0.562 figure-stripped). The order is semi-defensible (figure as a float) but the structure is invented. 993 tokens, stop.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3.5-9b",
+   "sample": "olmocr_2502.18443_p001_heavy",
+   "cer": 0.3774,
+   "primary": "reference_artifact",
+   "secondary": "formatting_residue",
+   "evidence": "The footer links get invented URLs that are scored: '(https://github.com/allenai/olmocr)' and '(https://huggingface.co/allenai/olmocr)'. Author names get extra commas ('Poznanski,', 'Borchardt,'). The figure placeholder '![Diagram](https://i.imgur.com/1234567.png)' is stripped. Figure-stripped CER is 0.053.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-2b",
+   "sample": "paperqa2_2409.13740_p001_heavy",
+   "cer": 1,
+   "primary": "hallucination_or_loop",
+   "secondary": "omission (author/affiliation block) + truncation as a side effect (hit max_tokens)",
+   "evidence": "CATASTROPHIC, and the cause is a block-level repetition loop. It is not an empty output, a refusal or the wrong page. Telemetry: gen_tokens=4096, finish_reason=length, 107.9 s. The clean/light siblings stopped normally (665/705 tokens, about 8 s, CER 0.048/0.007). The first pass covers the page correctly from the title to the page's last words, 'This is, to our knowledge,'. The model then goes back to '## 1 Introduction' and repeats the same 1,521-char Introduction block about 14 more times ('## 1 Introduction' appears 15 times). The output is cut mid-word at 'Large language models (LLMs'. The hypothesis is 22,724 chars against a 3,451-char reference, so insertions push CER past 1 and the scorer caps it at 1.0. Keeping only the first cycle gives CER 0.130 and word_f1 0.926. What remains is real loss. The author list ('Michael D. Skarlinski1 Sam Cox1,2 Jon M. Laurent1 ...') and affiliations are skipped in heavy, although clean includes them. There is one garbled line: ref 'reasoning across the scientific literature today are underdeveloped' vs out 'reasoning problems are underdeveloped'. Citation superscripts are dropped ('literature 1,2,3, but still' vs 'literature. But still').",
+   "model_output_is_acceptable_for_rag": false
+  },
+  {
+   "candidate": "qwen3-vl-4b",
+   "sample": "paperqa2_2409.13740_p003_heavy",
+   "cer": 1,
+   "primary": "hallucination_or_loop",
+   "secondary": "truncation (the last page line is never emitted because the token budget runs out)",
+   "evidence": "CATASTROPHIC. This is a sentence-level loop near the bottom of the page. Telemetry: gen_tokens=4096, finish_reason=length, 216.6 s. The clean/light siblings used 1483 tokens, stopped normally, and scored CER 0.0034/0.002. The output is right up to 'lower accuracy (t(3.7) = 3.41, p=0.015), validating the'. It then merges the last two lines and repeats 'We attribute the performance difference to the agent's better recall because it can return to and choose of using an agent.' That is a 124-char cycle repeated about 118 times, giving 20,346 hyp chars against 5,908 ref chars, so CER is capped at 1.0. With the loop replaced by a single copy of the sentence, CER is 0.040 and word_f1 0.959, so the page was otherwise read almost perfectly. Only the final line ('change keyword searches (paper search tool calls) after observing ... The highest') is lost. The running header 'Language Agents Achieve Superhuman Synthesis...' is real page furniture and the furniture stripper removed it from the hypothesis, so it costs nothing. The leftover '```markdown' fence adds the word 'markdown', which is negligible.",
+   "model_output_is_acceptable_for_rag": false
+  },
+  {
+   "candidate": "qwen3-vl-4b",
+   "sample": "paperqa2_2409.13740_p007_heavy",
+   "cer": 1,
+   "primary": "hallucination_or_loop",
+   "secondary": "truncation (27% of the page is never reached)",
+   "evidence": "CATASTROPHIC. A sentence-level loop starts about 73% of the way through the page. Telemetry: gen_tokens=4096, finish_reason=length, 203.0 s. The clean/light siblings used 1350/1346 tokens, stopped normally, and scored CER 0.0083/0.0067. The output is accurate up to 'The source paper, Kriegl et al. (2010) 34, finds' (CER 0.007 against the matching reference prefix; the model misreads 'Kriegl' as 'Kriegel'). It then cycles on 'finds the prognostic implications of LEF-1 expression in colorectal carcinomas. The source paper, Kriegel et al., (2010)', a 131-char period repeated about 76 times. That gives 13,810 hyp chars against 5,778 ref chars, so CER is capped at 1.0. Cut at the loop onset, CER is still 0.248, because 1,553 normalized chars (27%) are never emitted: the rest of the LEF1 paragraph ('using immunohistochemistry on a tissue microarray that LEF-1 correlates positively...'), the paragraph on the 50-claim expert validation (70% agreement, F1 0.82), and footnote 'a' with the WikiCrow bucket URL.",
+   "model_output_is_acceptable_for_rag": false
+  },
+  {
+   "candidate": "qwen3-vl-8b",
+   "sample": "attention_1706.03762_p001_clean",
+   "cer": 0.5955,
+   "primary": "reading_order",
+   "secondary": "",
+   "evidence": "All content is present (word_f1 0.977, char3_f1 0.994). Telemetry: 620 tokens, finish_reason=stop. The only problem is block order. The model emits the footnote block ('*Equal contribution. Listing order is random. Jakob proposed replacing RNNs...' plus the \u2020/\u2021 lines) right after the author list and before '## Abstract'. On the rendered page these footnotes sit below the abstract, which is also the order in the reference. That is wrong in visual terms but has a semantic reason: the model attached the \u2217\u2020\u2021 footnotes to the author block they annotate. Swapping two blocks of about 1k chars each costs about 0.59 CER. Moving the footnotes back after the abstract gives CER 0.0032. The heavy sibling of the same page was read in page order (CER 0.0039), so this is an unstable layout choice by the model, not an effect of image noise. The reference matches the visual order, so this is not a reference_artifact.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-8b",
+   "sample": "attention_1706.03762_p001_light",
+   "cer": 0.5955,
+   "primary": "reading_order",
+   "secondary": "",
+   "evidence": "Same as the clean variant: the footnote block ('*Equal contribution. Listing order is random...', \u2020Work performed while at Google Brain, \u2021...Google Research) is placed after the authors and before '## Abstract', while on the page it sits below the abstract. The only difference from the clean output is 'Lukasz' becoming '\u0141ukasz'. word_f1 is 0.974. Telemetry: 621 tokens, finish_reason=stop. Moving the footnote block after the abstract gives CER 0.0036. Heavy was read in page order (CER 0.0039).",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-2b",
+   "sample": "attention_1706.03762_p001_heavy",
+   "cer": 0.3585,
+   "primary": "reading_order",
+   "secondary": "omission (red permission notice at page top, plus one footnote line)",
+   "evidence": "This is the same template-style restructuring as the clean and light variants. Output: '# Attention Is All You Need / ## Abstract ...', then '## Authors', then '## Footnote'. Both of those headings are invented. The red header 'Provided proper attribution is provided, Google hereby grants permission...' is missing. In heavy, the model also drops the line '\u2020Work performed while at Google Brain.' and relabels the other footnote as '\u2020Work performed while at Google Research.' Telemetry: 576 tokens, finish_reason=stop. Moving the abstract after the authors brings CER from 0.3585 to 0.0816, and adding the notice brings it to 0.0235. word_f1 is 0.925.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-2b",
+   "sample": "attention_1706.03762_p001_clean",
+   "cer": 0.345,
+   "primary": "reading_order",
+   "secondary": "omission (red 3-line permission notice at the top of the page)",
+   "evidence": "The rendered page reads notice, title, author grid, abstract, footnotes, venue, and the reference follows that order. The model instead writes '# Attention Is All You Need' followed immediately by '## Abstract The dominant sequence transduction models...', and only then an invented '## Authors' section. That is not the page's order: the model rearranges the page into a paper template. The red notice 'Provided proper attribution is provided, Google hereby grants permission to reproduce the tables...' is missing entirely. Telemetry: 593 tokens, finish_reason=stop. Moving the abstract back after the authors brings CER from 0.345 to 0.068. Adding back the omitted notice brings it to 0.0096. word_f1 is 0.934. There are no real OCR errors, and the light output is byte-identical except for one footnote marker.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-2b",
+   "sample": "attention_1706.03762_p001_light",
+   "cer": 0.345,
+   "primary": "reading_order",
+   "secondary": "omission (red permission notice)",
+   "evidence": "Identical to the clean output except that 'Illia Polosukhin*\u2020' becomes '*\u2021'. The abstract is placed before the authors ('# Attention Is All You Need / ## Abstract') and the Google permission notice at the page top is missing. Telemetry: 593 tokens, finish_reason=stop. As with clean, putting the blocks back in page order and restoring the notice brings CER to about 0.01. word_f1 is 0.937.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3-vl-2b",
+   "sample": "attention_1706.03762_p004_heavy",
+   "cer": 0.1795,
+   "primary": "reading_order",
+   "secondary": "omission (carry-over sentence at the top of the page and one figure-panel label)",
+   "evidence": "Figure 2 sits at the top of the page, with the panel labels 'Scaled Dot-Product Attention' and 'Multi-Head Attention' and its caption. The reference starts with those. The model emits only '# Scaled Dot-Product Attention' at the top. It then places 'Figure 2: (left) Scaled Dot-Product Attention. (right) Multi-Head Attention consists of...' after section 3.2.2, next to an '<!-- Image -->' comment. That is a defensible float placement, but it does not follow the page. The model also omits the carry-over sentence 'of the values, where the weight assigned to each value is computed by a compatibility function...'. Moving the caption to the top brings CER from 0.1795 to 0.0771. Adding back the sentence and the label brings it to 0.0108. Telemetry: 617 tokens, finish_reason=stop. Math is in LaTeX, which the normalizer handles. The reference's broken fractions ('\u221a 1 dk', 'Pdk i=1 qiki') are small text-layer artifacts that add little. The clean sibling (CER 0.126) omits the caption entirely.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "qwen3.5-4b",
+   "sample": "attention_1706.03762_p001_clean",
+   "cer": 0.3393,
+   "primary": "reading_order",
+   "secondary": "omission",
+   "evidence": "Reading order is wrong and can't be defended. The model put the whole author/affiliation block (391 normalized chars) at the very end, after the footnotes and the venue line. On the page, and in the reference, it sits between the title and the Abstract. Output order: '# Attention Is All You Need / ## Abstract ...' ... '31st Conference ... Long Beach, CA, USA. --- **Ashish Vaswani\\*** Google Brain'. The model also dropped the red permission notice at the top of the page (real content, 173 chars; ref starts 'Provided proper attribution is provided, Google hereby grants permission to reproduce...'). What-if check: moving the author block back before the Abstract gives CER 0.0656. Also adding the notice gives 0.0036, so the transcription itself is nearly perfect (it even gets '\u0141ukasz' right where the text layer has 'Lukasz'). finish_reason=stop, 611 tokens. The same model scored 0.0036 (light) and 0.005 (heavy) on this page, so the layout decision is stochastic.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "olmocr-2-7b",
+   "sample": "attention_1706.03762_p001_light",
+   "cer": 0.6066,
+   "primary": "reading_order",
+   "secondary": "omission",
+   "evidence": "The whole footnote block ('*Equal contribution. Listing order is random...' plus the \u2020 and \u2021 lines, about 1073 chars) comes right after the author block, before 'Abstract'. On the page and in the reference it sits at the bottom, below the abstract. This is partly defensible: the footnotes annotate the authors' \u2217/\u2020/\u2021 markers, which the model dropped. But it breaks visual order, and the same model's clean output (CER 0.0039) kept the footnotes after the abstract. The model also omitted the bottom venue line '31st Conference on Neural Information Processing Systems (NIPS 2017), Long Beach, CA, USA.' What-if check: footnotes moved after the Abstract gives CER 0.0378. Also adding the venue line gives 0.0053. No front matter, HTML or LaTeX residue in this output, so formatting is not the cause. finish_reason=stop, 622 tokens.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "olmocr-2-7b",
+   "sample": "attention_1706.03762_p004_clean",
+   "cer": 0.2201,
+   "primary": "reading_order",
+   "secondary": "formatting_residue",
+   "evidence": "Defensible reading order. olmOCR inlines footnote 4 at its anchor: 'extremely small gradients\\footnote{To illustrate why the dot products get large, assume that...}'. The text layer puts it at the page bottom ('4To illustrate why the dot products get large...'). A block of about 230 chars moving costs about 2x its length in edits. Formatting residue, secondary: the output starts with '```markdown --- primary_language: en is_rotation_valid: True ... is_diagram: True ---'. The normalizer keeps this as 'markdown primarylanguage: en isrotationvalid: true ...' (about 103 chars). '\\footnote' also survives as the token 'footnote', gluing to 'gradientsfootnoteto'. The model also skipped the in-figure labels 'Scaled Dot-Product Attention Multi-Head Attention' (47 chars). What-if check: stripping the front matter gives CER 0.2076. Also moving the footnote to the page end gives 0.0321. The remaining error is mostly the text layer's broken math ('\u221a dk )v (1)', 'Pdk i=1 qiki'), not OCR errors.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "olmocr-2-7b",
+   "sample": "attention_1706.03762_p004_light",
+   "cer": 0.2205,
+   "primary": "reading_order",
+   "secondary": "formatting_residue",
+   "evidence": "Almost identical to the clean output (only one line differs: 'd_k \\), \\( d_k' vs 'd_k, d_k'). Footnote 4 is again inlined as '\\footnote{To illustrate why the dot products get large...}' mid-paragraph, while the reference has it at the page bottom. The '```markdown' YAML front matter ('primary_language: en ... is_diagram: True') leaks into the scored text as 'markdown primarylanguage: en isrotationvalid: true...'. What-if check: no front matter gives 0.2080. Also moving the footnote to the end gives 0.0325. So front matter costs about 0.012 and the footnote relocation about 0.18. The real recognition error rate is about 3%, mostly math spacing against a garbled text layer. finish_reason=stop, 660 tokens.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "paddleocr-vl",
+   "sample": "attention_1706.03762_p008_light",
+   "cer": 0.2575,
+   "primary": "hallucination_or_loop",
+   "secondary": "formatting_residue",
+   "evidence": "Table 2 is garbled and made up. 'ByteNet [18]' becomes 'ON THEteNet [18]', and 'IN THEteNet [n]' then repeats on every row. The numbers are invented: ref 'ConvS2S [9] 25.16 40.46 9.6 \u00b7 1018' becomes out 'ConvS2S [9] | 35.04, 61.81 | IN THEteNet [9]'. The model also added a duplicate caption 'Table 3: The Transformer achieves better BLEU scores...' that isn't on the page. The prose is paraphrased with false facts: ref 'Training took 3.5 days on 8 P100 GPUs' becomes 'Training took $15 min for each group'. Ref 'BLEU score of 41.0' becomes '$14.0'. The output even contains Chinese text: 'any of the\u5fc5\u8981\u7ec4\u522b'. The table section scores CER 0.67 (661 ref chars) and the prose 0.146. Secondary: OTSL table tokens '<lcel><fcel><nl><ucel>' and stray '$' pass through the normalizer. Stripping them only brings CER to 0.2473. finish_reason=stop, 1068 tokens, but it took 27 s vs 3.6 s for clean. The same model scored 0.041 (clean) and 0.101 (heavy) on this page, so this is a stochastic degeneration.",
+   "model_output_is_acceptable_for_rag": false
+  },
+  {
+   "candidate": "glm-ocr",
+   "sample": "attention_1706.03762_p010_clean",
+   "cer": 0.2337,
+   "primary": "omission",
+   "secondary": "",
+   "evidence": "The whole of Table 4 is missing: caption plus 13 rows, 711 normalized chars. Ref begins 'Table 4: The Transformer generalizes well to English constituency parsing ... Parser Training WSJ 23 F1 Vinyals & Kaiser...'. The output begins 'increased the maximum output length to input length + 300.' The rest of the page is nearly perfect: scored against the reference without Table 4, CER is 0.0004. The rendered page shows the table at the top, as a real text table rather than an image. finish_reason=stop, 635 tokens, vs 1032 tokens for light/heavy. Those runs transcribe the table as a Markdown pipe table and score 0.0023. This is a silent drop of a results table.",
+   "model_output_is_acceptable_for_rag": false
+  },
+  {
+   "candidate": "qwen3.5-9b",
+   "sample": "paperqa2_2409.13740_p001_light",
+   "cer": 0.1518,
+   "primary": "hallucination_or_loop",
+   "secondary": "",
+   "evidence": "The page transcription is correct through the page's last words 'This is, to our knowledge,'. The model then adds an invented appendix of about 508 normalized chars. It has a placeholder bibliography, '**References:** 1. [Reference 1] 2. [Reference 2] ... 8. [Reference 8]'. It also has sections not on the page: '**Footnotes:**' (repeating the affiliations), '**Acknowledgments:**', '**Contact Information:**', '**Date:** 26 Sep 2024', '**arXiv ID:** arXiv:2409.13740v2 [cs.CL]' and '**End of Document**'. What-if check: cutting from '**References:**' on gives CER 0.0043. The `${}^{1}$` superscript convention ('skarlinski 1' vs ref 'skarlinski1') adds only about 0.0005. finish_reason=stop, 1004 tokens vs 774 for clean. The heavy output of the same page also adds invented '### References: [1] [2]...' and '### Notes: - Page headers/footers omitted...' (CER 0.058). This trailer behavior only shows up on this page, which ends mid-sentence after superscript citations.",
+   "model_output_is_acceptable_for_rag": true
+  },
+  {
+   "candidate": "olmocr-2-7b",
+   "sample": "paperqa2_2409.13740_p011_heavy",
+   "cer": 0.9777,
+   "primary": "empty_or_refusal",
+   "secondary": "truncation",
+   "evidence": "The whole output is the YAML front matter and nothing else: '```markdown --- primary_language: en is_rotation_valid: True rotation_correction: 0 is_table: False is_diagram: False ---'. None of the reference list is transcribed (ref starts '[21] Perplexity. https://www.perplexity.ai/. Accessed: 2024-07-10.'). Telemetry shows gen_tokens=34 and finish_reason=stop, so the model ended its output by itself right after the front matter. It did not hit a length cap. Clean and light of this page took 1558 tokens and scored 0.0009 and 0.023. The CER is 0.9777 rather than 1.0 only because the 104 front-matter chars partly match reference characters. Telemetry has empty=false because of the front matter, which hides that this is effectively an empty output.",
+   "model_output_is_acceptable_for_rag": false
+  }
+ ],
+ "groups": {
+  "olmocr-p001": "VERDICT: The high CER on olmocr_2502.18443_p001 comes from the reference, but not from the title/author/affiliation block. That block's text-layer order matches the page; its only defect is that the \u2665 core-contributor markers are missing, which costs models 3-4 chars. The real cause is Figure 1 (the 'Prompt with document anchoring -> Original PDF file -> Generated Markdown file' illustration). Its internal vector text is in the text layer:\n- It makes up 1103 of 3225 normalized reference chars (34.2%) and 152 of 468 words.\n- It is in panel-interleaved order: the mini-PDF panel comes first, and it is partly hidden under the semi-transparent prompt box. The table comes before 'Section 6', then the prompt box, then the markdown panel.\n- It is itself corrupted: monospace spaces are lost ('loremipsumdolorsitamet', 'nostrudexercitationullamcolaborisnisi'), words are split ('s eddo', 'veni am'), and 'Lorem ipsum' appears three times.\n\nFLOOR/CEILING PROOF: I built a figure-stripped reference, work/olmocr_p001_ref_nofig.txt, with the project's own metrics.normalize and jiwer. Against the full reference, a flawless transcription of all non-figure text scores CER 0.342 and word_f1 0.806. That is the floor for any figure-skipping model, and 20 of the 27 units sit within about \u00b10.04 of it. Even an idealized visual-order transcription that includes all figure text scores CER 0.176 against the full reference; the figure segment alone scores 0.514. Word_f1 on the full reference is also contaminated: a figure-skipping transcription tops out at 0.806, so the spread from 0.72 to 0.83 is not a quality ranking.\n\nREAL MODEL DIFFERENCES, from rescoring against the figure-stripped reference (work/olmocr_p001_rescored.json). Mean figure-stripped CER / word_f1 across 3 levels:\n- paddleocr-vl 0.011 / 0.964\n- nanonets-ocr2-3b 0.013 / 0.990\n- qwen3.5-4b 0.014 / 0.985\n- qwen3-vl-4b 0.021 / 0.984\n- qwen3-vl-8b 0.035 / 0.981\n- olmocr-2-7b 0.070 / 0.961 ('oImOCR' misread x8 at clean; ```yaml front matter leak at light/heavy)\n- glm-ocr 0.180 / 0.912 (drops title, authors, affiliation and links at every level; clean and light outputs are byte-identical)\n- qwen3.5-9b 0.205 (median 0.053; driven by light, which moved the figure after the abstract as a fabricated table with an invented caption/note)\n- qwen3-vl-2b 0.386 (median 0.155; clean hit a runaway '## Contact [https://github.com/AllenAI](http://www.huggin)ing' loop, finish_reason=length at 4096 tokens)\n\nThe only real failures on this page are glm-ocr (systematic omission), qwen3-vl-2b clean (loop), qwen3.5-9b light (figure restructuring) and, to a lesser degree, olmocr-2-7b. The others are all near-perfect (figure-stripped CER \u2264 0.055).\n\nRECOMMENDATION: Exclude this page from the headline CER, or rescore it against a figure-masked reference, and report it separately as a 'figure with embedded text' diagnostic. Reasons:\n1. It adds about 0.34 CER to every model almost uniformly, which inflates absolute numbers and compresses real differences.\n2. It supplies 27 of the 44 outlier units (61%) in the synthetic index.\n3. It rewards accidents and punishes fidelity. qwen3-vl-8b clean and qwen3.5-4b clean land below the floor (0.324 and 0.321) because unclosed alt text or figure labels happen to match reference words. The one model that tried to transcribe the figure (qwen3.5-9b light) gets the worst non-loop CER, 0.712.\n\nIf a single headline number must include it, use the figure-stripped reference. Longer term, the reference builder should drop text-layer spans inside figure bounding boxes. This figure is vector graphics, not an image, so it needs a drawing-cluster bbox or a manual per-page exclusion.\n\nNORMALIZER GAPS FOUND (apply benchmark-wide):\n(a) _MD_IMAGE requires '(src)', so an unclosed '![alt]' leaks model-written alt text into the scored text (qwen3-vl-2b clean/light, qwen3-vl-8b clean). Suggested pattern: '!\\[[^\\]]*\\](\\([^)]*\\))?'.\n(b) Markdown link targets '[text](url)' are kept, so invented URLs are scored (qwen3-vl-8b light, qwen3.5-9b heavy).\n(c) olmOCR YAML front matter inside a ```yaml fence is not stripped (olmocr-2-7b light/heavy here); check other pages for the same leak.\n(d) The page number '1' is glued to the footer link line, so strip_furniture does not remove it (1 char, negligible).\n\nScratch files are in <local scratch dir>/failures/work/: olmocr_p001.png, olmocr_p001_fig_zoom.png, olmocr_p001_ref_nofig.txt, olmocr_p001_ref_figure_only.txt, olmocr_p001_ideal_figure.txt, olmocr_p001_rescored.json, metr.py (loads metrics.py without writing bytecode).",
+  "qwen3-vl": "9 units (qwen3-vl-2b: 5, 4b: 2, 8b: 2; olmocr p001 excluded). There are two distinct failure types.\n\n(1) All three CER=1.0 cases are repetition loops that run into the 4096-token cap. The units are 2b paperqa2_p001_heavy, 4b paperqa2_p003_heavy and 4b paperqa2_p007_heavy. Telemetry for all three shows gen_tokens=4096, finish_reason=length, and 108 s, 217 s and 203 s wall time, against 8-28 s for their siblings. None of them is an empty output, a refusal or the wrong page's content. CER reads 1.0 only because the scorer caps it: loop insertions make the hypothesis 2.4 to 6.6 times longer than the reference (22.7k vs 3.5k, 20.3k vs 5.9k, 13.8k vs 5.8k chars).\n- Two loop shapes appear. 2b finishes the whole page and then restarts the 1.5k-char Introduction block 14 times. 4b gets stuck on a single 124- or 131-char sentence and repeats it about 118 and 76 times.\n- Before the loop, the transcription is accurate. With the repeats removed, CER is 0.130, 0.040 and 0.248, and the prefix before the loop in p007 scores 0.007. The p007 figure stays at 0.248 because the loop used up the budget before the last 27% of the page (1,553 chars) was emitted, so it is also a truncation. The 2b case also silently drops the author/affiliation block that its clean sibling kept.\n- Every loop happens at the heavy level. The clean/light siblings of the same model and page stopped normally with CER at or below 0.05, and 8b never looped on these pages. So the loops come from small models meeting heavy degradation.\n- These outputs are not acceptable for RAG as they stand, because the repeated text would produce duplicate junk chunks and p007 loses content. Fixes on the decode side: a repetition penalty or no_repeat_ngram setting, loop detection with early stop, and dropping repeated paragraphs or sentences afterwards.\n\n(2) The other 6 units (2b attention p001 at all three levels, 2b p004_heavy, 8b p001 clean/light) are not recognition failures. word_f1 is between 0.925 and 0.977, and the high CER comes from where whole blocks were placed.\n- 2b rearranges the p001 title page into a template: title, abstract, then invented '## Authors' and '## Footnote' sections. It also omits the red Google permission notice. Putting the blocks back in page order brings CER from 0.345 to 0.068, and restoring the notice brings it to 0.0096.\n- 8b puts the \u2217\u2020\u2021 author footnotes before the abstract. That is visually wrong but has a semantic reason: the footnotes annotate the author block. Putting them back after the abstract brings CER from 0.5955 to 0.0032. The behaviour is not stable: 8b read the heavy variant of the same page in correct order (CER 0.0039).\n- 2b p004_heavy puts the Figure 2 caption after the body text, a defensible float placement, and drops one carry-over sentence plus one panel label. Fixing both brings CER from 0.18 to 0.011.\n\nIn every case I checked the reference against the rendered page and it follows visual order, so none of these is a reference_artifact.\n\nTwo smaller issues. A leftover '```markdown' fence puts the word 'markdown' into the scored text; the cost is negligible. And a single block swap of about 1k chars costs 0.3 to 0.6 CER. The benchmark should therefore report word_f1 and char3_f1 next to CER, and separate capped-1.0 loop outputs from genuinely bad transcriptions.\n\nEvidence scripts are in <local scratch dir>/failures/work/: loopcheck.py, sentloop.py, qwen3vl_reorder_att1.py, qwen3vl_p004.py and qwen3vl_p007.py. They use qmetrics.py, a copy of the benchmark's metrics.py. The page renders are att_p001.png and att_p004.png in the same folder.",
+  "others": "8 outlier units in this group (6 candidates, excluding olmocr_2502.18443_p001*). Only 3 of them are real content loss or corruption. The rest are page layout choices where the text itself is right.\n\n1) Reading-order and layout choices, text nearly perfect after fixing (4 units)\n- qwen3.5-4b att_p001_clean: 0.339 \u2192 0.004 after moving the author block back and adding the permission notice.\n- olmocr-2-7b att_p001_light: 0.607 \u2192 0.005 after moving the footnotes back and adding the venue line.\n- olmocr-2-7b att_p004_clean/light: 0.22 \u2192 0.032 after moving footnote 4 back to the page end.\n- In all of these, CER counts moved blocks at about 2x their length. word_f1 stays at 0.92\u20130.95. All four are fine for RAG.\n- All are stochastic: the same model scores \u22640.075 on at least one other degradation level of the same page.\n\n2) Real failures, not acceptable for RAG (3 units)\n- paddleocr-vl att_p008_light: made-up table numbers, a repeated 'IN THEteNet', and paraphrased prose with wrong facts ('3.5 days on 8 P100 GPUs' \u2192 '15 min for each group', 41.0 \u2192 14.0). Its clean run scored 0.041.\n- glm-ocr att_p010_clean: Table 4 silently dropped. CER is 0.0004 on the rest of the page.\n- olmocr-2-7b pq_p011_heavy: output is only the YAML front matter (34 tokens, finish_reason=stop). Telemetry flags empty=false, so it is not caught as empty.\n\n3) Invented trailer (1 unit, fine for RAG after filtering)\n- qwen3.5-9b pq_p001_light adds a made-up 'References: [Reference 1..8] / Contact / Date / End of Document' section. Without it CER is 0.004. The heavy run of the same page shows the same behavior.\n\n4) olmocr-2-7b formatting-residue check, recomputed over all 36 synthetic units with the benchmark's own reference build and normalizer; this reproduces every official CER exactly\n- **YAML front matter:** 15 of 36 outputs start with a front-matter block ('```markdown'/'```yaml' + '---' + 'primary_language: ... is_diagram: ...' + '---'). normalize() drops the backticks and '---' but keeps 'markdown/yaml primarylanguage: en isrotationvalid: true ...' (about 100 chars). That adds a mean of 0.019 CER per affected unit. The model's mean CER goes from 0.1018 to 0.0941 when the block is stripped. None of olmocr's outliers is driven mainly by it; it is the whole failure only in pq_p011_heavy.\n- **HTML tables:** there are none in olmocr-2-7b's synthetic outputs, so they inflate nothing. `<sup>` (4 outputs) is already neutralized.\n- **Footnotes:** the costly convention is `\\footnote{...}` (3 outputs), which moves footnote text to its anchor. It explains about 0.18 of the 0.22 CER on att_p004. The normalizer also leaves the 'footnote' command name behind as a token.\n- **Figure labels:** olmocr skips text inside figures (att_p004 'Scaled Dot-Product Attention Multi-Head Attention', 47 chars), a small omission.\n- **Suggested normalizer fixes** (outside this group's scope): strip a leading front-matter block and code fences in plain_text(); drop OTSL tokens (<lcel>/<fcel>/<ucel>/<xcel>/<nl>, seen in paddleocr-vl); count front-matter-only output as empty. Also consider an order-tolerant headline metric, or segment alignment, because single-block moves dominate these outliers.\n\nScratch scripts are in <local scratch dir>/failures/work/: diag.py, whatif.py, w_*.py and allunits.py (full recompute plus the front-matter ablation)."
+ }
+}
