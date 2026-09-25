@@ -1,13 +1,13 @@
 # OCR model benchmark
 
-The question: which local vision-language model should transcribe scanned pages for the research agent, and at what cost? Every number here comes from runs on one Apple M4 Pro with 24 GB. The runs are reproducible with `docingest bench` (see the end of this document).
+This benchmark compares local vision-language models for transcribing scanned research pages. It covers accuracy (overall and per document type), speed, memory, and failure modes such as truncation, repetition loops and empty output. It **presents comparisons only and does not choose a model**. The right choice depends on the corpus mix, the latency budget and the hardware, and it is left to the reader. Every number here comes from runs on one Apple M4 Pro with 24 GB. The runs are reproducible with `docingest bench` (see the end of this document).
 
 <!-- RESULTS -->
 
 ## Methodology
 
 ### Candidates
-There are 9 models, each pinned to an exact Hugging Face commit in `config/benchmark.toml` and run in-process with mlx-vlm 0.7.3 (4-bit MLX conversions). Each model uses its **own profile**: the prompt, image size, output clean-up and generation limits from its model card or official repository. A model is never judged on a prompt it was not built for.
+There are 10 models, each pinned to an exact Hugging Face commit in `config/benchmark.toml` and run in-process with mlx-vlm 0.7.3 (4-bit MLX conversions). Each model uses its **own profile**: the prompt, image size, output clean-up and generation limits from its model card or official repository. A model is never judged on a prompt it was not built for.
 
 | Candidate | Profile | Notes |
 |---|---|---|
@@ -17,6 +17,7 @@ There are 9 models, each pinned to an exact Hugging Face commit in `config/bench
 | Nanonets-OCR2-3B | `nanonets` | official prompt; `<page_number>`/`<img>` tags handled |
 | GLM-OCR | `glm-ocr` | `Text Recognition:` with the official (thinking-enabled) template |
 | PaddleOCR-VL-1.6 | `paddleocr-vl` | `OCR:`; its processor caps the input at about 1 MP |
+| Qwen3-VL-30B-A3B Instruct | `markdown` | mixture-of-experts: 30B parameters, about 3B active per token; 18.3 GB, needs the GPU wired-memory limit raised to about 20 GB |
 
 All candidates use greedy decoding (temperature 0) and the same retry ladder. If a page hits its token limit, which usually means a repetition loop, it is retried with a little temperature and a stronger repetition penalty, seeded by the page image. Telemetry records whether the first attempt was truncated, the number of attempts and the decode speed.
 
@@ -41,6 +42,7 @@ All candidates use greedy decoding (temperature 0) and the same retry ladder. If
 - **Dataset:** `allenai/olmOCR-bench`, pinned to dataset commit `54a96a6f`.
 - **Categories:** arXiv math, old scans, old scans with math, tables, headers and footers, multi-column, and long tiny text.
 - **Sample:** a seeded sample of PDFs per category. Samples are nested, so the 6-per-category screening sample is contained in the 12-per-category deep sample.
+- **Deep sample:** the leading candidates are re-run on the larger sample. This is only to narrow their confidence intervals, not to select a model.
 - **Scoring:** the **official scorer** (`olmocr==0.4.27`, in an isolated venv with headless Chromium for the math-rendering tests). Scores are therefore comparable in kind with the published leaderboard, although a subset has wider uncertainty than the full benchmark (about 1,400 PDFs).
 - **Test types:** unit tests on the Markdown output. They check that specific text is present, that headers and footers are absent, that reading order is correct, that table cells are placed correctly, and that math renders to the same result as the reference. There are also baseline sanity tests.
 

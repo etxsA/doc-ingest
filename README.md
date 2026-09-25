@@ -130,7 +130,7 @@ There are two suites:
 - **Synthetic degraded scans.** Born-digital pages at three degradation levels, scored against the true text layer with CER, WER, word-F1 and char-3-gram F1, each with bootstrap 95% CIs.
 - **olmOCR-Bench subset.** Real old scans, math, tables, multi-column pages, headers and footers, and tiny text. It is scored by the **official scorer**, so the numbers can be compared with published results.
 
-Results and the model decision are in [docs/benchmark.md](docs/benchmark.md).
+Results and model-by-model comparisons (quality, speed, memory, failure modes) are in [docs/benchmark.md](docs/benchmark.md). The benchmark compares the models; it does not pick one. The default in `config/pipeline.toml` is simply the first model that was integrated.
 
 ## PaperQA2 integration
 
