@@ -65,7 +65,7 @@ CI_RESAMPLES = 2000
 #   1: overall CI = the scorer's test-level bootstrap; per-category CIs resample tests.
 #   2: overall and per-category CIs resample PDFs (all their tests together) within
 #      their category; the scorer's CI moves to details["official_ci"].
-SCORING_VERSION = 2
+SCORING_VERSION = 3
 
 Log = Callable[[str], None]
 

@@ -20,6 +20,8 @@ from docingest.adapters.datasets.olmocr_bench import (
     prepare_subset,
     render_first_page,
 )
+from docingest.adapters.datasets.olmocr_bench import SCORING_VERSION as OLMOCR_SCORING_VERSION
+from docingest.adapters.datasets.synthetic import SCORING_VERSION as SYNTHETIC_SCORING_VERSION
 from docingest.adapters.datasets.synthetic import SyntheticSuite, plain_text
 from docingest.domain.text import clean_text_layer
 from docingest.ports import BenchmarkSuite
@@ -121,7 +123,7 @@ def test_synthetic_scoring_strips_page_furniture_and_clusters_levels(
     scores = suite.score(run, ["follows", "copies"])
     # Old: the prompt-following candidate lost ~0.4 CER per page to header + page number.
     for sc in scores.values():
-        assert sc.metrics["cer"].mean == 0.0 and sc.scoring_version == 2
+        assert sc.metrics["cer"].mean == 0.0 and sc.scoring_version == SYNTHETIC_SCORING_VERSION
     follows = scores["follows"]
     assert follows.unit_clusters["paper_p001_clean"] == follows.unit_clusters["paper_p001_heavy"]
     assert follows.details["n_clusters"] == 4 and len(set(follows.unit_clusters.values())) == 4
@@ -230,7 +232,8 @@ def test_olmocr_score_runs_the_scorer_and_builds_per_test_units(subset, tmp_path
     assert est.mean == 0.196 and est.low is not None and est.high is not None
     assert est.low < 0.196 < est.high and (est.low, est.high) != (0.098, 0.292)
     assert t.details["official_ci"] == [0.098, 0.292] and t.details["n_clusters"] == 7
-    assert t.scoring_version == 2 and scores["notrun"].scoring_version == 2
+    assert t.scoring_version == OLMOCR_SCORING_VERSION
+    assert scores["notrun"].scoring_version == OLMOCR_SCORING_VERSION
     assert t.by_category["old_scans"]["pass_rate"].mean == pytest.approx(2 / 6, abs=1e-4)
     assert len(t.units) == 56 and set(t.unit_groups.values()) == {*CATEGORIES, "baseline"}
     assert t.details["warnings"] == [] and t.details["olmocr"] == "0.4.27"

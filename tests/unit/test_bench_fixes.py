@@ -458,3 +458,90 @@ def test_bench_report_knows_each_suites_scoring_version():
 
     assert SCORING_VERSIONS == {"synthetic": SYNTHETIC, "olmocr-bench": OLMOCR}
     assert SYNTHETIC >= 2 and OLMOCR >= 2
+
+
+# ------------------------------------------ failure-analysis fixes (scoring v3)
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (
+            "```markdown\n---\nprimary_language: en\nis_rotation_valid: True\n---\n# T\nBody\n```",
+            "# T\nBody",
+        ),
+        ("```markdown\n---\nprimary_language: en\nis_diagram: False\n---\n# T\nBody", "# T\nBody"),
+        ("```yaml\nprimary_language: en\nis_table: false\n---\n# T\nx", "# T\nx"),
+        ("---\nprimary_language: en\nis_diagram: False\n------\n# T", "# T"),
+        ("# Primary language: en\n# Title\nBody", "# Title\nBody"),
+        ("```markdown\n---\nprimary_language: en\nis_diagram: False\n---", ""),
+    ],
+)
+def test_olmocr_front_matter_is_stripped_in_every_observed_shape(raw, expected):
+    from docingest.adapters.ocr.profiles import PROFILES
+
+    assert PROFILES["olmocr"].postprocess(raw) == expected
+
+
+def test_normalizer_drops_markup_but_never_page_text():
+    from docingest.application.metrics import normalize
+
+    text = (
+        "```markdown\nprimary_language: en\n# Title\n"
+        "![Figure showing a comparison between an original PDF file\n"
+        "See [code](https://github.com/allenai/olmocr) and (https://x.org/y).\n"
+        "![alt](fig.png) after image\n<fcel>cell<lcel>\n```"
+    )
+    assert normalize(text) == "title see code and . after image cell"
+
+
+def test_pages_reported_separately_leave_headline_and_paired_units(tmp_path):
+    from builders import LONG, text_pdf
+
+    from docingest.adapters.datasets.synthetic import SyntheticSuite
+
+    pdf = text_pdf(tmp_path / "d.pdf", LONG, LONG)
+    suite = SyntheticSuite([(pdf, [0])], levels=["clean"], min_ref_chars=10)
+    (sample,) = suite.samples()
+    cluster = suite.cluster(sample)
+    suite.headline_exclusions = {cluster: "reference known to be unrepresentative"}
+    out = suite.output_path(tmp_path, "c", sample)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("unrelated text")
+    sc = suite.score(tmp_path, ["c"])["c"]
+    assert sc.units == {} and sc.metrics["cer"].mean is None
+    sep = sc.details["reported_separately"][cluster]
+    assert sep["reason"].startswith("reference") and sep["metrics"]["cer"]["mean"] > 0.5
+
+
+def test_refresh_outputs_reapplies_cleanup_backs_up_and_skips_running(tmp_path):
+    import json as _json
+
+    from builders import LONG, text_pdf
+
+    from docingest.adapters.datasets.synthetic import SyntheticSuite
+    from docingest.entrypoints.bench_cli import refresh_outputs
+
+    suite = SyntheticSuite(
+        [(text_pdf(tmp_path / "d.pdf", LONG), [0])], levels=["clean"], min_ref_chars=10
+    )
+    (sample,) = suite.samples()
+    manifest = {
+        "suites": {"synthetic": {"candidates": ["done", "running"]}},
+        "candidates": {"done": {"profile": "olmocr"}, "running": {"profile": "olmocr"}},
+    }
+    raw = "```markdown\n---\nprimary_language: en\n---\n# T"
+    for cand in ("done", "running"):
+        out = suite.output_path(tmp_path, cand, sample)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(raw)
+    tel = tmp_path / "telemetry" / "synthetic"
+    tel.mkdir(parents=True)
+    (tel / "done.jsonl").write_text("{}\n")  # complete: 1 record for 1 sample
+    assert refresh_outputs(tmp_path, suite, manifest) == {"done"}
+    assert suite.output_path(tmp_path, "done", sample).read_text() == "# T"
+    assert suite.output_path(tmp_path, "running", sample).read_text() == raw  # untouched
+    backup = (
+        tmp_path / "raw_outputs" / suite.output_path(tmp_path, "done", sample).relative_to(tmp_path)
+    )
+    assert backup.read_text() == raw
+    assert _json.loads((tmp_path / "postprocess_log.json").read_text())["synthetic"]["done"]
+    assert refresh_outputs(tmp_path, suite, manifest) == set()  # idempotent

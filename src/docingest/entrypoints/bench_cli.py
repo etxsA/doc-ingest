@@ -11,6 +11,7 @@ Mounted by the main CLI as ``app.add_typer(bench_app, name="bench")``.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tomllib
@@ -153,6 +154,9 @@ class BenchConfig(BaseModel):
     data_dir: str = "data/bench"
     pipeline_config: str | None = None  # base AppConfig for the OCR adapters
     suites: SuitesConfig = SuitesConfig()
+    # Scoring-time options (not part of any suite fingerprint): re-scoring a finished run
+    # applies them without re-transcription. [scoring.synthetic] report_separately = [...]
+    scoring: dict[str, dict[str, Any]] = Field(default_factory=dict)
     candidates: list[dict[str, Any]] = Field(default_factory=list)
     presets: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
@@ -217,6 +221,10 @@ def build_suite(
             min_ref_chars=s.min_ref_chars,
             primary_metric=s.primary_metric,
         )
+        suite.headline_exclusions = {
+            e["cluster"]: e["reason"]
+            for e in bc.scoring.get("synthetic", {}).get("report_separately", [])
+        }
         return suite, s.model_dump()
     if name == "olmocr-bench":
         o = OlmOcrBenchSettings.model_validate(settings)
@@ -421,6 +429,54 @@ def run(  # keyword-only: typer passes options by name
     console.print(f"outputs -> {escape(str(run_dir))}")
 
 
+def refresh_outputs(
+    run_dir: Path, suite: BenchmarkSuite, manifest: dict[str, Any], names: list[str] | None = None
+) -> set[str]:
+    """Re-apply each candidate's *current* profile clean-up to its stored outputs.
+
+    Model outputs are kept as generated; this only re-runs our post-processing, so a
+    clean-up bug fixed after a run (e.g. olmOCR front matter inside an unclosed code
+    fence) does not have to be paid for with a re-transcription. Originals are backed up
+    once under raw_outputs/, every rewrite is listed in postprocess_log.json, and
+    candidates still being transcribed are left alone. Returns the changed candidates.
+    """
+    from ..adapters.ocr.profiles import profile_for
+
+    samples = suite.samples()
+    log_path = run_dir / "postprocess_log.json"
+    log: dict[str, Any] = json.loads(log_path.read_text()) if log_path.exists() else {}
+    changed: set[str] = set()
+    for cand in manifest["suites"][suite.name]["candidates"]:
+        if names and cand not in names:
+            continue
+        tel = run_dir / "telemetry" / suite.name / f"{cand}.jsonl"
+        if not tel.exists() or sum(1 for _ in tel.open()) < len(samples):
+            continue  # still transcribing (or never ran): don't touch files being written
+        post = profile_for(manifest["candidates"][cand]["profile"]).postprocess
+        for s in samples:
+            p = suite.output_path(run_dir, cand, s)
+            if not p.exists():
+                continue
+            text = p.read_text(encoding="utf-8")
+            new = post(text)
+            if new == text:
+                continue
+            backup = run_dir / "raw_outputs" / p.relative_to(run_dir)
+            if not backup.exists():
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                backup.write_text(text, encoding="utf-8")
+            p.write_text(new, encoding="utf-8")
+            changed.add(cand)
+            rel = str(p.relative_to(run_dir))
+            entries = log.setdefault(suite.name, {}).setdefault(cand, [])
+            if rel not in entries:
+                entries.append(rel)
+    if changed:
+        log_path.write_text(json.dumps(log, indent=2))
+        console.print(f"[yellow]re-applied clean-up[/] to {escape(', '.join(sorted(changed)))}")
+    return changed
+
+
 @bench_app.command()
 def score(
     run_id: RunIdOpt,
@@ -435,6 +491,7 @@ def score(
     names = [c.strip() for c in candidates.split(",")] if candidates else None
     for name in _suites(suite, tuple(manifest["suites"])):
         s = _suite_from_manifest(name, manifest, bc)
+        refresh_outputs(run_dir, s, manifest, names)
         _print_scores(name, score_run(s, run_dir, names))
 
 
@@ -453,13 +510,14 @@ def report(
     manifest = read_manifest(run_dir)
     for name, entry in manifest["suites"].items():
         version = SCORING_VERSIONS.get(name)
+        s = _suite_from_manifest(name, manifest, bc)
+        refreshed = refresh_outputs(run_dir, s, manifest)
         todo = (
             entry["candidates"]
             if rescore
-            else needs_scoring(run_dir, name, scoring_version=version)
+            else sorted(set(needs_scoring(run_dir, name, scoring_version=version)) | refreshed)
         )
         if todo:
-            s = _suite_from_manifest(name, manifest, bc)
             score_run(s, run_dir, todo)
         _print_scores(name, load_scores(run_dir, name))
     json_path, md_path = write_report(run_dir, n_boot=resamples, seed=seed)

@@ -67,6 +67,12 @@ levels = ["clean", "heavy"]
 [presets.smoke.suites.olmocr-bench]
 per_category = 1
 
+# Scoring-time options: applied when (re-)scoring, never part of a suite fingerprint.
+# Pages whose text layer is not a fair reference are scored and shown separately.
+[[scoring.synthetic.report_separately]]
+cluster = "olmocr_2502.18443.pdf#p001"
+reason = """Figure 1's internal vector text (1,103 of 3,225 reference characters) is in the text layer, panel-interleaved and with its spaces lost; a flawless transcription of the visible non-figure text scores CER 0.342 against it (found by the failure analysis)."""
+
 # Screening round: every candidate, smaller olmOCR-bench sample (nested in the full one).
 [presets.screen.suites.olmocr-bench]
 per_category = 6
