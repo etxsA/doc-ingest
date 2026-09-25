@@ -182,6 +182,31 @@ def synthetic_table(summary: dict, run: str) -> list[str]:
     return out
 
 
+# How candidates are named in the technical report (ids stay in docs/benchmark.md).
+DISPLAY = {
+    "qwen3.5-9b": "Qwen3.5-9B",
+    "qwen3.5-4b": "Qwen3.5-4B",
+    "qwen3-vl-30b-a3b": "Qwen3-VL-30B-A3B",
+    "qwen3-vl-8b": "Qwen3-VL-8B",
+    "qwen3-vl-4b": "Qwen3-VL-4B",
+    "qwen3-vl-2b": "Qwen3-VL-2B",
+    "olmocr-2-7b-v2": "olmOCR-2-7B-v2",
+    "olmocr-2-7b": "olmOCR-2-7B-v1",
+    "nanonets-ocr2-3b": "Nanonets-OCR2-3B",
+    "glm-ocr": "GLM-OCR",
+    "paddleocr-vl": "PaddleOCR-VL",
+}
+
+
+def display(text: str) -> str:
+    """Replace candidate ids with display names (longest first, whole tokens only)."""
+    import re
+
+    for cid in sorted(DISPLAY, key=len, reverse=True):
+        text = re.sub(rf"(?<![\w.-]){re.escape(cid)}(?![\w-])", DISPLAY[cid], text)
+    return text
+
+
 # Candidates that share weights and differ only in how the adapter runs them.
 VARIANTS = [
     (

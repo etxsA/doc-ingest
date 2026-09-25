@@ -1,11 +1,14 @@
 """Charts for a benchmark run: quality vs speed, olmOCR-Bench categories, synthetic CER.
 
     uv run python scripts/bench_charts.py data/bench/runs/screen docs/benchmark
+    uv run python scripts/bench_charts.py data/bench/runs/screen docs/benchmark/paper --paper
 
 Reads <run>/summary.json (written by `docingest bench report`) and writes PNGs.
 Colors follow a validated palette (scripts: dataviz validator): three family hues
 (all-pairs CVD-safe) with direct labels on every point, and a one-hue blue ramp for
-magnitudes and ordered levels.
+magnitudes and ordered levels. --paper writes print-style versions for the technical
+report: black and white, serif type, families told apart by marker shape, no titles
+(the report captions them), display names instead of candidate ids.
 """
 
 from __future__ import annotations
@@ -45,6 +48,34 @@ RAMP = [  # sequential blue 100 -> 700
     "#0d366b",
 ]
 LEVELS = {"clean": "#86b6ef", "light": "#2a78d6", "heavy": "#104281"}  # ordinal, validated
+MARKER = {"Qwen3-VL": "o", "Qwen3.5": "o", "OCR-specialized": "o"}
+EDGE = SURFACE
+PAPER = False
+NAMES: dict[str, str] = {}  # candidate id -> label shown (paper mode)
+
+
+def use_paper_style() -> None:
+    """Monochrome, serif, print-style variant (for the technical report)."""
+    global SURFACE, TEXT, TEXT_2, GRID, FAMILY, RAMP, LEVELS, MARKER, EDGE, PAPER, NAMES  # noqa: PLW0603
+    from bench_docs import DISPLAY
+
+    PAPER = True
+    SURFACE, TEXT, TEXT_2, GRID = "#ffffff", "#000000", "#000000", "#d9d9d9"
+    FAMILY = {"Qwen3-VL": "#000000", "Qwen3.5": "#ffffff", "OCR-specialized": "#8c8c8c"}
+    MARKER = {"Qwen3-VL": "o", "Qwen3.5": "s", "OCR-specialized": "^"}
+    RAMP = ["#f7f7f7", "#e0e0e0", "#c6c6c6", "#a8a8a8", "#8a8a8a", "#6b6b6b", "#4d4d4d", "#2e2e2e"]
+    LEVELS = {"clean": "#ffffff", "light": "#8c8c8c", "heavy": "#000000"}
+    EDGE = "#000000"
+    NAMES = DISPLAY
+    matplotlib.rcParams.update(
+        {"font.family": "STIXGeneral", "mathtext.fontset": "stix", "font.size": 9}
+    )
+
+
+def label(name: str) -> str:
+    return NAMES.get(name, name)
+
+
 CATEGORIES = [
     "arxiv_math",
     "old_scans_math",
@@ -76,22 +107,27 @@ def family(name: str) -> str:
 def style(ax) -> None:
     ax.set_facecolor(SURFACE)
     for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
+        ax.spines[side].set_visible(PAPER)
+        ax.spines[side].set_color(TEXT)
+        ax.spines[side].set_linewidth(0.6)
     for side in ("left", "bottom"):
-        ax.spines[side].set_color(GRID)
-    ax.tick_params(colors=TEXT_2, labelsize=9, length=0)
+        ax.spines[side].set_color(TEXT if PAPER else GRID)
+        ax.spines[side].set_linewidth(0.6 if PAPER else 0.8)
+    ax.tick_params(colors=TEXT_2, labelsize=9, length=3 if PAPER else 0, direction="in")
     ax.grid(True, color=GRID, linewidth=0.6)
     ax.set_axisbelow(True)
 
 
 def figure(w: float, h: float):
-    fig, ax = plt.subplots(figsize=(w, h), dpi=200)
+    fig, ax = plt.subplots(figsize=(w, h), dpi=300 if PAPER else 200)
     fig.patch.set_facecolor(SURFACE)
     style(ax)
     return fig, ax
 
 
 def title(ax, text: str, sub: str) -> None:
+    if PAPER:
+        return  # the report's caption carries the title
     ax.set_title(text, loc="left", fontsize=12, color=TEXT, fontweight="bold", pad=22)
     ax.text(0, 1.02, sub, transform=ax.transAxes, fontsize=8.5, color=TEXT_2, va="bottom")
 
@@ -130,7 +166,7 @@ def place_labels(fig, ax, points: list[tuple[str, float, float]]) -> None:
     for name, x, y in sorted(points, key=lambda p: -p[2]):
         for dx, dy, ha in offsets:
             t = ax.annotate(
-                name,
+                label(name),
                 (x, y),
                 xytext=(dx, dy),
                 textcoords="offset points",
@@ -149,7 +185,7 @@ def quality_vs_speed(summary: dict, out: Path) -> Path | None:
     suite = summary["suites"].get("olmocr-bench")
     if not suite:
         return None
-    fig, ax = figure(8.2, 4.8)
+    fig, ax = figure(6.4, 3.9) if PAPER else figure(8.2, 4.8)
     seen = set()
     points: list[tuple[str, float, float]] = []
     for name, sc in suite["scores"].items():
@@ -161,14 +197,18 @@ def quality_vs_speed(summary: dict, out: Path) -> Path | None:
         fam = family(name)
         c = FAMILY[fam]
         if m.get("low") is not None:
-            ax.plot([x, x], [m["low"] * 100, m["high"] * 100], color=c, lw=1.2, alpha=0.45)
+            bar = ("#8c8c8c", 0.6, 1.0) if PAPER else (c, 1.2, 0.45)
+            ax.plot(
+                [x, x], [m["low"] * 100, m["high"] * 100], color=bar[0], lw=bar[1], alpha=bar[2]
+            )
         ax.scatter(
             [x],
             [y],
-            s=64,
+            s=30 if PAPER else 64,
             color=c,
-            edgecolor=SURFACE,
-            linewidth=2,
+            marker=MARKER[fam],
+            edgecolor=EDGE,
+            linewidth=0.8 if PAPER else 2,
             zorder=3,
             label=fam if fam not in seen else None,
         )
@@ -230,7 +270,7 @@ def categories(summary: dict, out: Path) -> Path | None:
         for j, v in enumerate(row):
             if v is None:
                 continue
-            dark = v >= 0.55  # white text on the darker half of the ramp
+            dark = v >= (0.62 if PAPER else 0.55)  # white text on the darker half of the ramp
             ax.text(
                 j,
                 i,
@@ -241,7 +281,7 @@ def categories(summary: dict, out: Path) -> Path | None:
                 color="#ffffff" if dark else TEXT,
             )
     ax.set_xticks(range(len(cols)), [CATEGORY_LABEL[c] for c in cols], fontsize=8)
-    ax.set_yticks(range(len(rows)), rows, fontsize=8.5)
+    ax.set_yticks(range(len(rows)), [label(r) for r in rows], fontsize=8.5)
     ax.tick_params(colors=TEXT, length=0)
     for s in ax.spines.values():
         s.set_visible(False)
@@ -265,7 +305,7 @@ def synthetic(summary: dict, out: Path) -> Path | None:
     first = suite["scores"][rows[0]]
     n_sep = len(first["details"].get("reported_separately", {}))
     n_pages = (first["metrics"]["cer"].get("n") or first["n_samples"]) // len(LEVELS)
-    fig, ax = figure(7.2, 1.6 + 0.36 * len(rows))
+    fig, ax = figure(6.4, 1.2 + 0.3 * len(rows)) if PAPER else figure(7.2, 1.6 + 0.36 * len(rows))
     for i, name in enumerate(rows):
         bc = suite["scores"][name]["by_category"]
         xs = [
@@ -274,22 +314,22 @@ def synthetic(summary: dict, out: Path) -> Path | None:
             if lv in bc and bc[lv]["cer"]["mean"] is not None
         ]
         if xs:
-            ax.plot([min(xs), max(xs)], [i, i], color=GRID, lw=1.5, zorder=1)
+            ax.plot([min(xs), max(xs)], [i, i], color=GRID, lw=1.0 if PAPER else 1.5, zorder=1)
         for lv, c in LEVELS.items():
             if lv in bc and bc[lv]["cer"]["mean"] is not None:
                 ax.scatter(
                     [bc[lv]["cer"]["mean"] * 100],
                     [i],
-                    s=56,
+                    s=26 if PAPER else 56,
                     color=c,
-                    edgecolor=SURFACE,
-                    linewidth=2,
+                    edgecolor=EDGE,
+                    linewidth=0.8 if PAPER else 2,
                     zorder=3,
                     label=lv if i == 0 else None,
                 )
-    ax.set_yticks(range(len(rows)), rows, fontsize=8.5)
+    ax.set_yticks(range(len(rows)), [label(r) for r in rows], fontsize=8.5)
     ax.set_ylim(len(rows) - 0.5, -0.5)  # in summary order, with breathing room
-    ax.set_xlabel("character error rate (%) - lower is better", color=TEXT_2, fontsize=9)
+    ax.set_xlabel("character error rate (%), lower is better", color=TEXT_2, fontsize=9)
     ax.grid(axis="y", visible=False)
     title(
         ax,
@@ -314,7 +354,9 @@ def synthetic(summary: dict, out: Path) -> Path | None:
     return path
 
 
-def main(run_dir: str, out_dir: str) -> None:
+def main(run_dir: str, out_dir: str, *flags: str) -> None:
+    if "--paper" in flags:
+        use_paper_style()
     summary = json.loads((Path(run_dir) / "summary.json").read_text())
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -324,4 +366,4 @@ def main(run_dir: str, out_dir: str) -> None:
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:3])
+    main(*sys.argv[1:])
