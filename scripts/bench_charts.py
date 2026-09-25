@@ -115,7 +115,11 @@ def place_labels(fig, ax, points: list[tuple[str, float, float]]) -> None:
         (-7, -21, "right"),
     ]
 
+    frame = ax.get_window_extent(renderer)
+
     def clash(bb) -> bool:
+        if bb.x0 < frame.x0 or bb.x1 > frame.x1 or bb.y0 < frame.y0 or bb.y1 > frame.y1:
+            return True  # keep labels inside the plot (never over the legend)
         pad = bb.expanded(1.05, 1.15)
         if any(pad.overlaps(p) for p in placed):
             return True
@@ -171,6 +175,8 @@ def quality_vs_speed(summary: dict, out: Path) -> Path | None:
         seen.add(fam)
         points.append((name, x, y))
     ax.set_xscale("log")
+    xs = [x for _, x, _ in points]
+    ax.set_xlim(min(xs) / 1.25, max(xs) * 1.9)  # headroom so right-hand labels fit inside
     lo, hi = ax.get_xlim()
     ticks = [t for t in (1, 2, 3, 5, 10, 20, 30, 50, 100) if lo <= t <= hi]
     ax.xaxis.set_major_locator(matplotlib.ticker.FixedLocator(ticks))
