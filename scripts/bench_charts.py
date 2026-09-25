@@ -1,14 +1,14 @@
 """Charts for a benchmark run: quality vs speed, olmOCR-Bench categories, synthetic CER.
 
     uv run python scripts/bench_charts.py data/bench/runs/screen docs/benchmark
-    uv run python scripts/bench_charts.py data/bench/runs/screen docs/benchmark/paper --paper
+    uv run python scripts/bench_charts.py data/bench/runs/screen docs/report/figures --paper
 
 Reads <run>/summary.json (written by `docingest bench report`) and writes PNGs.
 Colors follow a validated palette (scripts: dataviz validator): three family hues
 (all-pairs CVD-safe) with direct labels on every point, and a one-hue blue ramp for
-magnitudes and ordered levels. --paper writes print-style versions for the technical
-report: black and white, serif type, families told apart by marker shape, no titles
-(the report captions them), display names instead of candidate ids.
+magnitudes and ordered levels. --paper writes print-style vector PDFs for the LaTeX
+report: black and white, Computer Modern type, families told apart by marker shape, no
+titles (the report captions them), display names instead of candidate ids.
 """
 
 from __future__ import annotations
@@ -51,12 +51,13 @@ LEVELS = {"clean": "#86b6ef", "light": "#2a78d6", "heavy": "#104281"}  # ordinal
 MARKER = {"Qwen3-VL": "o", "Qwen3.5": "o", "OCR-specialized": "o"}
 EDGE = SURFACE
 PAPER = False
+EXT = "png"
 NAMES: dict[str, str] = {}  # candidate id -> label shown (paper mode)
 
 
 def use_paper_style() -> None:
     """Monochrome, serif, print-style variant (for the technical report)."""
-    global SURFACE, TEXT, TEXT_2, GRID, FAMILY, RAMP, LEVELS, MARKER, EDGE, PAPER, NAMES  # noqa: PLW0603
+    global SURFACE, TEXT, TEXT_2, GRID, FAMILY, RAMP, LEVELS, MARKER, EDGE, PAPER, NAMES, EXT  # noqa: PLW0603
     from bench_docs import DISPLAY
 
     PAPER = True
@@ -67,8 +68,17 @@ def use_paper_style() -> None:
     LEVELS = {"clean": "#ffffff", "light": "#8c8c8c", "heavy": "#000000"}
     EDGE = "#000000"
     NAMES = DISPLAY
+    EXT = "pdf"  # vector, for LaTeX
     matplotlib.rcParams.update(
-        {"font.family": "STIXGeneral", "mathtext.fontset": "stix", "font.size": 9}
+        {
+            "font.family": "serif",
+            "font.serif": ["cmr10"],  # Computer Modern, like the LaTeX text around it
+            "mathtext.fontset": "cm",
+            "axes.unicode_minus": False,  # cmr10 has no Unicode minus
+            "axes.formatter.use_mathtext": True,
+            "pdf.fonttype": 42,  # embed TrueType, text stays selectable
+            "font.size": 9,
+        }
     )
 
 
@@ -140,7 +150,9 @@ def place_labels(fig, ax, points: list[tuple[str, float, float]]) -> None:
     to_disp = ax.transData.transform
     markers = [to_disp((x, y)) for _, x, y in points]
     placed = []
-    offsets = [
+    offsets = [  # beside the marker first (unambiguous), then above/below
+        (7, -3, "left"),
+        (-7, -3, "right"),
         (7, 3, "left"),
         (7, -11, "left"),
         (-7, 3, "right"),
@@ -240,7 +252,7 @@ def quality_vs_speed(summary: dict, out: Path) -> Path | None:
         bbox_to_anchor=(1.01, 1.0),
     )
     fig.tight_layout()
-    path = out / "quality_vs_speed.png"
+    path = out / f"quality_vs_speed.{EXT}"
     fig.savefig(path, facecolor=SURFACE)
     plt.close(fig)
     return path
@@ -291,7 +303,7 @@ def categories(summary: dict, out: Path) -> Path | None:
         "Rows ordered by mean pass rate; each cell is one category's test pass rate.",
     )
     fig.tight_layout()
-    path = out / "olmocr_categories.png"
+    path = out / f"olmocr_categories.{EXT}"
     fig.savefig(path, facecolor=SURFACE)
     plt.close(fig)
     return path
@@ -348,7 +360,7 @@ def synthetic(summary: dict, out: Path) -> Path | None:
         bbox_to_anchor=(1.01, 1.0),
     )
     fig.tight_layout()
-    path = out / "synthetic_cer.png"
+    path = out / f"synthetic_cer.{EXT}"
     fig.savefig(path, facecolor=SURFACE)
     plt.close(fig)
     return path
