@@ -25,6 +25,9 @@ class Conversion:
     title: str | None = None
     metadata: SourceMetadata | None = None
     warnings: list[str] = field(default_factory=list)
+    # True when a fallback ran because of the environment (timeout, crash, missing tool),
+    # not because the input is unconvertible: the result must not be cached as canonical.
+    degraded: bool = False
 
 
 @runtime_checkable
