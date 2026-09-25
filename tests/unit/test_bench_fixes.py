@@ -633,3 +633,32 @@ def test_runner_keeps_the_raw_model_output_when_cleanup_changed_it(tmp_path):
     raw_dir = tmp_path / RAW_DIR / "mem" / "r"
     assert sorted(p.name for p in raw_dir.iterdir()) == ["b.txt"]
     assert (raw_dir / "b.txt").read_text().startswith("```markdown")
+
+
+def test_refresh_outputs_heals_telemetry_that_drifted_from_the_files(tmp_path):
+    import json as _json
+
+    from builders import LONG, text_pdf
+
+    from docingest.adapters.datasets.synthetic import SyntheticSuite
+    from docingest.entrypoints.bench_cli import refresh_outputs
+
+    suite = SyntheticSuite(
+        [(text_pdf(tmp_path / "d.pdf", LONG), [0])], levels=["clean"], min_ref_chars=10
+    )
+    (sample,) = suite.samples()
+    manifest = {
+        "suites": {"synthetic": {"candidates": ["c"]}},
+        "candidates": {"c": {"profile": "olmocr"}},
+    }
+    out = suite.output_path(tmp_path, "c", sample)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("")  # already cleaned to nothing by an older refresh...
+    tel = tmp_path / "telemetry" / "synthetic"
+    tel.mkdir(parents=True)
+    rec = {"sample_id": sample.id, "chars": 120, "empty": False}  # ...whose telemetry went stale
+    (tel / "c.jsonl").write_text(_json.dumps(rec) + "\n")
+    assert refresh_outputs(tmp_path, suite, manifest) == {"c"}
+    (healed,) = [_json.loads(x) for x in (tel / "c.jsonl").read_text().splitlines()]
+    assert healed["chars"] == 0 and healed["empty"] is True
+    assert refresh_outputs(tmp_path, suite, manifest) == set()

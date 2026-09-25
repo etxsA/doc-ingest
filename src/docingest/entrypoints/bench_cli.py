@@ -447,7 +447,7 @@ def refresh_outputs(
     log_path = run_dir / "postprocess_log.json"
     log: dict[str, Any] = json.loads(log_path.read_text()) if log_path.exists() else {}
     changed: set[str] = set()
-    fixed: dict[str, dict[str, str]] = defaultdict(dict)  # candidate -> sample id -> text
+    current: dict[str, dict[str, str]] = defaultdict(dict)  # candidate -> sample id -> text
     for cand in manifest["suites"][suite.name]["candidates"]:
         if names and cand not in names:
             continue
@@ -461,6 +461,7 @@ def refresh_outputs(
                 continue
             text = p.read_text(encoding="utf-8")
             new = post(text)
+            current[cand][s.id] = new
             if new == text:
                 continue
             backup = run_dir / "raw_outputs" / p.relative_to(run_dir)
@@ -469,21 +470,25 @@ def refresh_outputs(
                 backup.write_text(text, encoding="utf-8")
             p.write_text(new, encoding="utf-8")
             changed.add(cand)
-            fixed[cand][s.id] = new
             rel = str(p.relative_to(run_dir))
             entries = log.setdefault(suite.name, {}).setdefault(cand, [])
             if rel not in entries:
                 entries.append(rel)
-    for cand, texts in fixed.items():  # keep telemetry's chars / empty true to the files
+    # Keep telemetry's chars / empty true to the files, whenever they drifted (also for
+    # files an earlier version of this function rewrote without updating telemetry).
+    for cand, texts in current.items():
         tel = run_dir / "telemetry" / suite.name / f"{cand}.jsonl"
         records = [json.loads(line) for line in tel.read_text().splitlines() if line.strip()]
+        drift = False
         for r in records:
-            if r.get("sample_id") in texts:
-                r["chars"] = len(texts[r["sample_id"]])
-                r["empty"] = not texts[r["sample_id"]].strip()
-        tmp = tel.with_suffix(".jsonl.tmp")
-        tmp.write_text("".join(json.dumps(r) + "\n" for r in records))
-        tmp.replace(tel)
+            t = texts.get(r.get("sample_id"))
+            if t is not None and (r.get("chars") != len(t) or r.get("empty") != (not t.strip())):
+                r["chars"], r["empty"], drift = len(t), not t.strip(), True
+        if drift:
+            tmp = tel.with_suffix(".jsonl.tmp")
+            tmp.write_text("".join(json.dumps(r) + "\n" for r in records))
+            tmp.replace(tel)
+            changed.add(cand)  # its throughput numbers changed: re-score / re-report it
     if changed:
         log_path.write_text(json.dumps(log, indent=2))
         console.print(f"[yellow]re-applied clean-up[/] to {escape(', '.join(sorted(changed)))}")
