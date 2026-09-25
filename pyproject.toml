@@ -1,0 +1,40 @@
+[project]
+name = "docingest"
+version = "0.1.0"
+description = "Normalize any research document (PDF, scanned PDF, images, office) into Markdown + provenance manifest, with local Qwen-VL OCR on MLX"
+authors = [
+    { name = "etxsA", email = "93368439+etxsA@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "huggingface-hub>=1.33.0,<2",
+    "jiwer>=4",
+    "mlx-vlm>=0.7.3",
+    "numpy>=2",
+    "pillow>=12.3.0",
+    "pydantic>=2",
+    "pypdfium2>=5.13",
+    "rich>=15.0.0",
+    "typer>=0.27",
+]
+
+[project.scripts]
+docingest = "docingest:main"
+
+[project.optional-dependencies]
+qa = [
+    "paper-qa[local]>=2026.8.12",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.2,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "rapidfuzz>=3.14",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

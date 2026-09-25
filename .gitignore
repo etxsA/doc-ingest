@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.hf/
+# Data is reproducible from scripts/fetch_samples.sh + the pipeline; version with DVC if needed.
+data/raw/
+data/normalized/
+data/samples/*.pdf
+!data/samples/.gitkeep
