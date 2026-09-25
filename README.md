@@ -38,7 +38,7 @@ flowchart LR
 ## Quick start
 
 ```bash
-uv sync --locked --extra qa          # Python 3.12, pinned by uv.lock
+uv sync --locked --all-extras       # Python 3.12, pinned by uv.lock (extras: qa=PaperQA2, office=Docling)
 ./scripts/fetch_samples.sh           # 3 arXiv papers + a 1948 scanned paper, sha256-verified
 uv run docingest ingest data/raw/    # normalize everything (add --max-pages N for a quick demo)
 ```
@@ -64,7 +64,11 @@ uv run docingest eval-ocr data/samples/attention_scanned.pdf
 
 # 5. Ask PaperQA2 about the scanned paper (local LLM, local embeddings)
 ./scripts/serve_llm.sh &             # mlx_vlm.server on :8080, same Qwen3-VL model
-uv run --extra qa docingest ask "According to Shannon, what is an ensemble of functions?"
+uv run --all-extras docingest ask "According to Shannon, what is an ensemble of functions?"
+
+# 6. Office / HTML inputs through Docling
+curl -fsSL -o data/samples/paperqa2_arxiv.html https://arxiv.org/html/2409.13740v2
+uv run --all-extras docingest ingest data/samples/paperqa2_arxiv.html
 ```
 
 ### Results on an M4 Pro with 24 GB (2026-09-24)
@@ -74,6 +78,8 @@ uv run --extra qa docingest ask "According to Shannon, what is an ensemble of fu
 | 3 born-digital arXiv papers, 73 pages | 73 of 73 pages took the text layer, about 0.1 s per document |
 | Shannon 1948 BSTJ scan, image-only | clean Markdown with LaTeX equations, 7–9 s per page |
 | synthetic scan (blur, noise, rotation, JPEG) of *Attention* pp. 3–4 | CER 1.7% / 3.9%, word-F1 0.96 / 0.89, 10–12 s per page |
+| full Shannon scan, 34 pages (via the PaperQA2 `parse_pdf` hook) | 346 s total, about 10 s per page |
+| arXiv HTML page / DOCX with a table (Docling) | Markdown with headings and a Markdown table; 29 s / 2 s |
 | PaperQA2 question answered from the scanned PDF and the PNG | correct answer with citations to the OCR'd chunks, 52 s end to end |
 
 CER is measured after stripping Markdown. Part of the remaining error comes from LaTeX formatting (`$d_{\text{model}}$`) where the reference text has plain `dmodel`, so these numbers understate the actual quality.
@@ -123,7 +129,7 @@ Edit `[ocr]` in `config/pipeline.toml`. All of these are verified to exist as ML
 
 ## Office / HTML inputs
 
-DOCX, PPTX, XLSX, and HTML files go through Docling (`uv sync --extra office`, plus `uv add --optional office docling` the first time).
+DOCX, PPTX, XLSX, and HTML files go through Docling, which is in the `office` extra (`uv sync --extra office`). Docling pins `typer<0.27`, so the project allows `typer>=0.19`.
 
 ## Tests
 

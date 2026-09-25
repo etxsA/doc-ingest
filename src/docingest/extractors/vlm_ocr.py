@@ -68,14 +68,29 @@ class VlmOcr:
         prompt = apply_chat_template(
             self._processor, self._config, self.cfg.prompt, num_images=1
         )
-        kwargs: dict = {"max_tokens": self.cfg.max_tokens, "temperature": self.cfg.temperature}
-        if self.cfg.repetition_penalty:
-            kwargs["repetition_penalty"] = self.cfg.repetition_penalty
         t0 = time.perf_counter()
-        res = generate(self._model, self._processor, prompt, image=[img], verbose=False, **kwargs)
+        # olmOCR-style ladder: hitting max_tokens usually means a repetition loop,
+        # so retry with a little sampling temperature and a stronger penalty.
+        for temperature, penalty in self._attempts():
+            kwargs: dict = {"max_tokens": self.cfg.max_tokens, "temperature": temperature}
+            if penalty:
+                kwargs["repetition_penalty"] = penalty
+            res = generate(
+                self._model, self._processor, prompt, image=[img], verbose=False, **kwargs
+            )
+            if res.finish_reason != "length":
+                break
         return OcrResult(
             text=clean_output(res.text),
             seconds=time.perf_counter() - t0,
             gen_tokens=res.generation_tokens,
             finish_reason=res.finish_reason,
         )
+
+    def _attempts(self) -> list[tuple[float, float | None]]:
+        base = self.cfg.repetition_penalty
+        return [
+            (self.cfg.temperature, base),
+            (0.2, max(base or 1.0, 1.15)),
+            (0.5, max(base or 1.0, 1.25)),
+        ]

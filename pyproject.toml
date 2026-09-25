@@ -15,7 +15,7 @@ dependencies = [
     "pydantic>=2",
     "pypdfium2>=5.13",
     "rich>=15.0.0",
-    "typer>=0.27",
+    "typer>=0.19",
 ]
 
 [project.scripts]
@@ -24,6 +24,9 @@ docingest = "docingest:main"
 [project.optional-dependencies]
 qa = [
     "paper-qa[local]>=2026.8.12",
+]
+office = [
+    "docling>=2.130",
 ]
 
 [build-system]

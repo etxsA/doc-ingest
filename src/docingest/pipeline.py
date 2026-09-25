@@ -61,7 +61,9 @@ class Pipeline:
         kind, mime = detect_kind(path)
         doc_id = sha256_file(path)
         # Run options that change the output are part of the cache key.
-        run_key = f"{self.cfg.hash()}|ocr_all={self.ocr_all}|max_pages={self.max_pages}"
+        run_key = (
+            f"{PIPELINE_VERSION}|{self.cfg.hash()}|ocr_all={self.ocr_all}|max_pages={self.max_pages}"
+        )
         config_hash = hashlib.sha256(run_key.encode()).hexdigest()[:12]
         out_dir = Path(self.cfg.output_dir) / doc_id[:16]
         manifest_path = out_dir / "manifest.json"

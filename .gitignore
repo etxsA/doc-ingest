@@ -8,3 +8,4 @@ data/raw/
 data/normalized/
 data/samples/*.pdf
 !data/samples/.gitkeep
+data/samples/*.html
