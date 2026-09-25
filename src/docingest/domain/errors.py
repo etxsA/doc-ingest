@@ -23,3 +23,16 @@ class SourceUnavailableError(DocingestError):
 
 class OcrError(DocingestError):
     """The OCR engine could not transcribe a page."""
+
+
+class RateLimitedError(SourceUnavailableError):
+    """The source asked for a pause (429 / ``Retry-After``) that a crawler will not sit out.
+
+    Unlike a per-record failure it concerns every later request to that source (the
+    fallback URL on the same host, the next record), so :class:`CrawlService` stops the
+    crawl instead of moving on. Part of the ``SourceCrawler`` contract.
+    """
+
+    def __init__(self, message: str, *, retry_after_s: float | None = None):
+        super().__init__(message)
+        self.retry_after_s = retry_after_s  # the pause still owed, if the server named one

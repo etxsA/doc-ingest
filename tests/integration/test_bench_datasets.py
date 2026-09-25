@@ -84,6 +84,49 @@ def test_synthetic_suite_scores_outputs_per_level(two_page_source, tmp_path):
     assert sc["absent"].metrics["cer"].mean is None and sc["absent"].errors
 
 
+@pytest.fixture
+def paper_with_furniture(tmp_path):
+    """Four pages: a running header on top, a page number at the bottom, like a paper."""
+    import pypdfium2 as pdfium
+
+    header = "Language Agents Achieve Superhuman Synthesis"
+    bodies = [
+        "Retrieval augmented agents answer questions about the scientific literature.",
+        "They cite their sources and refuse to answer when evidence is missing.",
+        "Contradiction detection compares every claim against related papers.",
+        "Human experts were outperformed on precision while matching recall.",
+    ]
+    doc = pdfium.PdfDocument.new()
+    for i, body in enumerate(bodies):
+        page = text_pdf(tmp_path / f"page{i}.pdf", header, body, str(i + 1))
+        doc.import_pages(pdfium.PdfDocument(page))
+    doc.save(tmp_path / "paper.pdf")
+    return tmp_path / "paper.pdf", header, bodies
+
+
+def test_synthetic_scoring_strips_page_furniture_and_clusters_levels(
+    paper_with_furniture, tmp_path
+):
+    src, header, bodies = paper_with_furniture
+    suite = SyntheticSuite([(src, [0, 1, 2, 3])], levels=["clean", "heavy"], min_ref_chars=40)
+    samples = suite.samples()
+    assert len(samples) == 8 and header in (samples[0].reference or "")  # samples unchanged
+    run = tmp_path / "run"
+    for s in samples:  # follows "omit page headers/footers": only the body
+        body = bodies[int(s.extra["page"])]
+        for cand, text in (("follows", body), ("copies", s.reference or "")):
+            out = suite.output_path(run, cand, s)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(text)
+    scores = suite.score(run, ["follows", "copies"])
+    # Old: the prompt-following candidate lost ~0.4 CER per page to header + page number.
+    for sc in scores.values():
+        assert sc.metrics["cer"].mean == 0.0 and sc.scoring_version == 2
+    follows = scores["follows"]
+    assert follows.unit_clusters["paper_p001_clean"] == follows.unit_clusters["paper_p001_heavy"]
+    assert follows.details["n_clusters"] == 4 and len(set(follows.unit_clusters.values())) == 4
+
+
 def test_plain_text_drops_markup_a_text_layer_cannot_contain():
     md = (
         "<!-- Table tag --><table><tr><td colspan='3'>BLEU &amp; F1</td></tr></table>\n"
@@ -182,7 +225,12 @@ def test_olmocr_score_runs_the_scorer_and_builds_per_test_units(subset, tmp_path
 
     t = scores["textlayer"]
     assert t.primary == "pass_rate" and t.higher_is_better and not t.errors
-    assert t.metrics["pass_rate"].mean == 0.196 and t.metrics["pass_rate"].low == 0.098
+    # The pass rate is the scorer's; the CI resamples PDFs (ours), the scorer's is kept.
+    est = t.metrics["pass_rate"]
+    assert est.mean == 0.196 and est.low is not None and est.high is not None
+    assert est.low < 0.196 < est.high and (est.low, est.high) != (0.098, 0.292)
+    assert t.details["official_ci"] == [0.098, 0.292] and t.details["n_clusters"] == 7
+    assert t.scoring_version == 2 and scores["notrun"].scoring_version == 2
     assert t.by_category["old_scans"]["pass_rate"].mean == pytest.approx(2 / 6, abs=1e-4)
     assert len(t.units) == 56 and set(t.unit_groups.values()) == {*CATEGORIES, "baseline"}
     assert t.details["warnings"] == [] and t.details["olmocr"] == "0.4.27"

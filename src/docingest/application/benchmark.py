@@ -5,8 +5,10 @@ A run directory (``data/bench/runs/<run-id>/``) is self-describing::
     manifest.json                     suites (fingerprint + settings), candidate specs,
                                       library versions, machine
     <suite outputs>                   wherever ``suite.output_path`` puts them
-    telemetry/<suite>/<cand>.jsonl    one JSON line per transcription attempt
-    scores/<suite>.json               ``SuiteScore`` per candidate (``score_run``)
+    telemetry/<suite>/<cand>.jsonl    one JSON line per transcription (with the engine's
+                                      retry ladder: attempts, first finish, all tokens)
+    scores/<suite>.json               ``SuiteScore`` per candidate (``score_run``), stamped
+                                      with the telemetry it saw and the scoring version
     summary.json, report.md           (``write_report``)
 
 Resumable: a sample whose output file exists is skipped, so an interrupted run picks
@@ -35,7 +37,7 @@ from typing import Any
 
 from ..ports import BenchmarkSuite, CandidateSpec, OcrEngine, Sample, SuiteScore
 from .ingest import PIPELINE_VERSION
-from .stats import PairedResult, paired_bootstrap, quantile
+from .stats import MIN_CLUSTERS, PairedResult, paired_bootstrap, quantile
 
 Log = Callable[[str], None]
 EngineFactory = Callable[[CandidateSpec], OcrEngine]
@@ -145,14 +147,51 @@ def latest_by_sample(records: Iterable[Mapping[str, Any]]) -> dict[str, Mapping[
     return {r["sample_id"]: r for r in records}
 
 
+def _rate(hits: int, total: int) -> float | None:
+    return _num(hits / total) if total else None
+
+
+def _gen_speed(ok: Sequence[Mapping[str, Any]]) -> tuple[float | None, str | None]:
+    """Generated tokens per second and what the time measured.
+
+    ``decode``: every attempt's tokens over its decode time (the engine measured it).
+    ``end-to-end``: every attempt's tokens over page time, prefill included (HTTP
+    engines). ``legacy``: telemetry from before retries were recorded, i.e. the final
+    attempt's tokens over the time of all attempts; a retried page makes it far too low.
+    The last two are lower bounds on decode speed.
+    """
+    if not ok:
+        return None, None
+    if all(r.get("gen_seconds") is not None for r in ok):
+        secs = sum(r["gen_seconds"] for r in ok)
+        tokens = sum(r.get("total_gen_tokens") or 0 for r in ok)
+        return (round(tokens / secs, 1) if secs else None), "decode"
+    timed = [r for r in ok if r.get("seconds") and r.get("gen_tokens") is not None]
+    secs = sum(r["seconds"] for r in timed)
+    if not secs:
+        return None, None
+    tokens = sum(r.get("total_gen_tokens") or r["gen_tokens"] for r in timed)
+    basis = "legacy" if any("attempts" not in r for r in timed) else "end-to-end"
+    return round(tokens / secs, 1), basis
+
+
 def throughput(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    """Speed and failure-mode statistics over the latest attempt of each sample."""
+    """Speed and failure-mode statistics over the latest record of each sample.
+
+    Truncation is reported twice: ``first_truncation_rate`` (the first attempt hit
+    max_tokens, i.e. the model looped, even if a retry then finished) and
+    ``truncation_rate`` (the scored text is still cut off). Records written before the
+    retry ladder was recorded carry no ``attempts``: for them only final truncations are
+    visible, so ``first_truncation_rate`` and ``retried_rate`` become lower bounds
+    (``lower_bound``: True; ``retried_rate`` None when no record says).
+    """
     recs = list(latest_by_sample(records).values())
     ok = [r for r in recs if not r.get("error")]
     secs = [r["seconds"] for r in ok if r.get("seconds") is not None]
-    timed = [r for r in ok if r.get("seconds") and r.get("gen_tokens") is not None]
-    tok_time = sum(r["seconds"] for r in timed)
     peaks = [r["peak_memory_gb"] for r in ok if r.get("peak_memory_gb") is not None]
+    known = [r for r in ok if "attempts" in r]  # the rest: written by an older runner
+    first = sum(r.get("first_finish_reason", r.get("finish_reason")) == "length" for r in ok)
+    speed, basis = _gen_speed(ok)
     return {
         "pages": len(recs),
         "ok": len(ok),
@@ -160,12 +199,16 @@ def throughput(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "median_s": _num(quantile(secs, 0.5), 3),
         "p90_s": _num(quantile(secs, 0.9), 3),
         "total_s": round(sum(secs), 1),
-        "gen_tok_s": round(sum(r["gen_tokens"] for r in timed) / tok_time, 1) if tok_time else None,
+        "gen_tok_s": speed,
+        "gen_tok_s_basis": basis,
         "peak_memory_gb": round(max(peaks), 2) if peaks else None,
-        "truncation_rate": _num(
-            sum(r.get("finish_reason") == "length" for r in ok) / len(ok) if ok else math.nan
-        ),
-        "empty_rate": _num(sum(bool(r.get("empty")) for r in ok) / len(ok) if ok else math.nan),
+        "first_truncation_rate": _rate(first, len(ok)),
+        "truncation_rate": _rate(sum(r.get("finish_reason") == "length" for r in ok), len(ok)),
+        "retried_rate": _rate(sum((r.get("attempts") or 1) > 1 for r in known), len(ok))
+        if known
+        else None,
+        "lower_bound": len(known) < len(ok),
+        "empty_rate": _rate(sum(bool(r.get("empty")) for r in ok), len(ok)),
     }
 
 
@@ -324,6 +367,12 @@ class BenchmarkRunner:
             "wall_seconds": round(wall, 3),
             "gen_tokens": res.gen_tokens if res is not None else None,
             "finish_reason": res.finish_reason if res is not None else None,
+            # The engine's retry ladder: a first attempt that hit max_tokens stays visible
+            # even when a retry finished, and tok/s counts every generated token.
+            "attempts": res.attempts if res is not None else None,
+            "first_finish_reason": res.first_finish_reason if res is not None else None,
+            "total_gen_tokens": res.total_gen_tokens if res is not None else None,
+            "gen_seconds": _num(res.gen_seconds, 3) if res is not None else None,
             "peak_memory_gb": res.peak_memory_gb if res is not None else None,
             "chars": len(text),
             "empty": not text.strip(),
@@ -397,7 +446,12 @@ def score_run(
     if entry["fingerprint"] != suite.fingerprint:
         raise RunMismatchError(f"suite {suite.name!r} changed since run {run_dir.name!r}")
     names = list(candidates) if candidates else entry["candidates"]
+    # Stamped *before* scoring: a transcription landing while the scorer runs makes the
+    # stamp stale, so the next report scores the candidate again.
+    stamps = {c: telemetry_stamp(run_dir, suite.name, c) for c in names}
     scores = suite.score(run_dir, names)
+    for name, s in scores.items():
+        s.stamp = {"telemetry": stamps.get(name)}
     path = run_dir / SCORES_DIR / f"{suite.name}.json"
     merged = _read_json(path) or {}
     merged.update({name: s.to_dict() for name, s in scores.items()})
@@ -405,18 +459,44 @@ def score_run(
     return scores
 
 
-def needs_scoring(run_dir: Path, suite: str) -> list[str]:
-    """Candidates of ``suite`` without scores, or transcribed again since they were scored."""
+def telemetry_stamp(run_dir: Path, suite: str, candidate: str) -> dict[str, int] | None:
+    """Size, mtime and record count of a candidate's telemetry (None: never transcribed)."""
+    path = telemetry_path(run_dir, suite, candidate)
+    try:
+        st = path.stat()
+        lines = sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    except FileNotFoundError:
+        return None
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "records": lines}
+
+
+def _stale(saved: Mapping[str, Any], current: dict[str, int] | None, version: int | None) -> bool:
+    """A saved score that does not describe the candidate's current outputs."""
+    if saved.get("errors") or saved.get("n_outputs", 0) < saved.get("n_samples", 0):
+        return True  # partial or failed (scorer missing, crashed): the cause may be gone now
+    if (saved.get("metrics", {}).get(saved.get("primary"), {}) or {}).get("mean") is None:
+        return True
+    if version is not None and saved.get("scoring_version") != version:
+        return True  # scored under older rules
+    stamp = saved.get("stamp") or {}
+    return "telemetry" not in stamp or stamp["telemetry"] != current
+
+
+def needs_scoring(run_dir: Path, suite: str, *, scoring_version: int | None = None) -> list[str]:
+    """Candidates of ``suite`` whose saved score is missing or stale.
+
+    Stale: the telemetry changed since the score was taken (compared with the stamp
+    ``score_run`` saved, not with file times, which another candidate's scoring moves),
+    the score has errors, is incomplete or has no primary metric, or ``scoring_version``
+    (the suite's current rules) differs from the one the score was made with.
+    """
     entry = read_manifest(run_dir)["suites"][suite]
-    path = run_dir / SCORES_DIR / f"{suite}.json"
-    scored = _read_json(path) or {}
-    stamp = path.stat().st_mtime if path.exists() else 0.0
-    out = []
-    for c in entry["candidates"]:
-        tele = telemetry_path(run_dir, suite, c)
-        if c not in scored or (tele.exists() and tele.stat().st_mtime > stamp):
-            out.append(c)
-    return out
+    scored = _read_json(run_dir / SCORES_DIR / f"{suite}.json") or {}
+    return [
+        c
+        for c in entry["candidates"]
+        if c not in scored or _stale(scored[c], telemetry_stamp(run_dir, suite, c), scoring_version)
+    ]
 
 
 def load_scores(run_dir: Path, suite: str) -> dict[str, SuiteScore]:
@@ -444,16 +524,27 @@ def rank(scores: Mapping[str, SuiteScore]) -> list[str]:
 
 
 def compare(a: SuiteScore, b: SuiteScore, *, n: int = 10_000, seed: int = 0) -> PairedResult:
-    """Paired bootstrap of a - b on the primary metric over the units both scored."""
+    """Paired cluster bootstrap and sign-flip test of a - b on the primary metric, over the
+    units both scored (clusters, groups and strata as the suite defined them)."""
     metric = a.primary
     common = sorted(set(a.units) & set(b.units))
     xs = [a.units[u].get(metric) for u in common]
     ys = [b.units[u].get(metric) for u in common]
     groups = [a.unit_groups.get(u, "") for u in common] if a.unit_groups else None
-    return paired_bootstrap(xs, ys, groups=groups, n=n, seed=seed)
+    clusters = [a.unit_clusters.get(u, u) for u in common] if a.unit_clusters else None
+    strata = None
+    if clusters is not None and a.cluster_strata:
+        strata = [a.cluster_strata.get(c, "") for c in clusters]
+    return paired_bootstrap(xs, ys, groups=groups, clusters=clusters, strata=strata, n=n, seed=seed)
 
 
 # --------------------------------------------------------------------------- report
+
+
+def _paired_dict(r: PairedResult) -> dict[str, Any]:
+    d = {k: None if isinstance(v, float) and math.isnan(v) else v for k, v in asdict(r).items()}
+    d["significant"] = r.significant if d["p_value"] is not None else None
+    return d
 
 
 def build_summary(run_dir: Path, *, n_boot: int = 10_000, seed: int = 0) -> dict[str, Any]:
@@ -464,10 +555,7 @@ def build_summary(run_dir: Path, *, n_boot: int = 10_000, seed: int = 0) -> dict
         ranking = rank(scores)
         best = ranking[0] if ranking and _primary_mean(scores[ranking[0]]) is not None else None
         paired = {
-            c: {
-                k: None if isinstance(v, float) and math.isnan(v) else v
-                for k, v in asdict(compare(scores[c], scores[best], n=n_boot, seed=seed)).items()
-            }
+            c: _paired_dict(compare(scores[c], scores[best], n=n_boot, seed=seed))
             for c in ranking
             if best is not None and c != best and _primary_mean(scores[c]) is not None
         }
@@ -478,14 +566,15 @@ def build_summary(run_dir: Path, *, n_boot: int = 10_000, seed: int = 0) -> dict
         compact = {}
         for c, s in scores.items():
             d = s.to_dict()
-            d.pop("units")  # per-unit scores stay in scores/<suite>.json
-            d.pop("unit_groups")
+            for key in ("units", "unit_groups", "unit_clusters", "cluster_strata"):
+                d.pop(key)  # per-unit data stays in scores/<suite>.json
             compact[c] = d
         suites[name] = {
             "fingerprint": entry["fingerprint"],
             "n_samples": entry["n_samples"],
             "candidates": entry["candidates"],
             "unscored": sorted(set(entry["candidates"]) - set(scores)),
+            "scoring_versions": sorted({s.scoring_version or 1 for s in scores.values()}),
             "ranking": ranking,
             "best": best,
             "scores": compact,
@@ -501,17 +590,17 @@ def build_summary(run_dir: Path, *, n_boot: int = 10_000, seed: int = 0) -> dict
     }
 
 
+def _num_text(x: float, pct: bool, sign: str = "") -> str:
+    scale, digits = (100.0, 1) if pct else (1.0, 3)
+    return f"{x * scale:{sign}.{digits}f}"
+
+
 def _fmt(est: Mapping[str, Any] | None, pct: bool, *, signed: bool = False) -> str:
     if not est or est.get("mean") is None:
         return "–"
-    scale, unit, digits = (100.0, "%", 1) if pct else (1.0, "", 3)
-
-    def f(x: float, sign: str = "") -> str:
-        return f"{x * scale:{sign}.{digits}f}"
-
-    out = f(est["mean"], "+" if signed else "") + unit
+    out = _num_text(est["mean"], pct, "+" if signed else "") + ("%" if pct else "")
     if est.get("low") is not None and est.get("high") is not None:
-        out += f" [{f(est['low'])}, {f(est['high'])}]"
+        out += f" [{_num_text(est['low'], pct)}, {_num_text(est['high'], pct)}]"
     return out
 
 
@@ -534,6 +623,84 @@ def _pvalue(p: float | None, n_boot: int) -> str | None:
     return f"<{1 / n_boot:g}" if p == 0 else f"{p:.4f}"
 
 
+def _at_least(text: str | None, lower_bound: bool) -> str | None:
+    return f"≥{text}" if text is not None and lower_bound else text
+
+
+def _significance(p: Mapping[str, Any]) -> str | None:
+    if "significant" in p:  # decided by the sign-flip test
+        sig = p["significant"]
+        return None if sig is None else ("yes" if sig else "no")
+    if p["low"] is None or p["high"] is None:
+        return None
+    return "yes" if not p["low"] <= 0 <= p["high"] else "no"
+
+
+def _throughput_section(tp: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    out = ["", "### Throughput and failure modes", ""]
+    rows = []
+    for c, t in tp.items():
+        basis, lower = t.get("gen_tok_s_basis"), bool(t.get("lower_bound"))
+        speed = None if t["gen_tok_s"] is None else str(t["gen_tok_s"])
+        retried = _pct(t.get("retried_rate"))
+        rows.append(
+            [
+                c,
+                t["pages"],
+                t["median_s"],
+                t["p90_s"],
+                _at_least(speed, basis not in (None, "decode")),
+                t["peak_memory_gb"],
+                _at_least(_pct(t.get("first_truncation_rate")), lower),
+                _pct(t["truncation_rate"]),
+                "n/a" if retried is None and t.get("ok") else _at_least(retried, lower),
+                _pct(t["empty_rate"]),
+                t["errors"],
+            ]
+        )
+    header = ["candidate", "pages", "median s/page", "p90 s/page", "gen tok/s", "peak GB"]
+    header += ["truncated 1st try", "truncated final", "retried", "empty", "errors"]
+    out += _table(header, rows)
+    notes = []
+    if any(t.get("gen_tok_s_basis") in ("legacy", "end-to-end") for t in tp.values()):
+        notes.append(
+            "≥ tok/s: decode time was not measured, so this is generated tokens over the "
+            "whole page time (prefill included; for older telemetry, only the final "
+            "attempt's tokens over the time of every attempt): a lower bound."
+        )
+    if any(t.get("lower_bound") for t in tp.values()):
+        notes.append(
+            "≥ / n/a: telemetry written before the retry ladder was recorded. A page whose "
+            "first attempt hit max_tokens and whose retry finished looks clean there, so "
+            "first-try truncation is a lower bound and retries are unknown."
+        )
+    if notes:
+        out += ["", *(f"_{n}_" for n in notes)]
+    return out
+
+
+def _cluster_notes(scores: Mapping[str, Any], ranking: Sequence[str], pct: bool) -> list[str]:
+    """What the CIs resample, and the official scorer's own interval where there is one."""
+    out = []
+    details = [scores[c]["details"] for c in ranking]
+    clustered = next((d for d in details if d.get("n_clusters")), None)
+    if clustered is not None:
+        what = clustered.get("clusters") or "a group of correlated units"
+        out += ["", f"One cluster = {what}; {clustered['n_clusters']} clusters."]
+    official = [c for c in ranking if (scores[c]["details"].get("official_ci") or [None])[0]]
+    if official:
+        method = scores[official[0]]["details"].get("official_ci_method") or "the scorer's"
+        out += ["", f"Official scorer CI, to compare with the leaderboard's ±: {method}.", ""]
+        rows = []
+        for c in official:
+            lo, hi = scores[c]["details"]["official_ci"]
+            half = scores[c]["details"].get("half_width")
+            ci = f"[{_num_text(lo, pct)}, {_num_text(hi, pct)}]"
+            rows.append([c, ci, _pct(half) if pct and half is not None else half])
+        out += _table(["candidate", "official CI", "official ±"], rows)
+    return out
+
+
 def render_report(summary: Mapping[str, Any]) -> str:
     m = summary["manifest"]
     n_boot = summary["bootstrap"]["paired_resamples"]
@@ -545,9 +712,14 @@ def render_report(summary: Mapping[str, Any]) -> str:
         f"(pipeline {v.get('pipeline')}) · mlx-vlm {v.get('mlx-vlm')} · "
         f"{mach.get('cpu')}, {mach.get('ram_gb')} GB RAM · {mach.get('platform')}",
         "",
-        "Intervals are 95% bootstrap CIs. Paired comparisons resample the units both "
-        f"candidates scored ({summary['bootstrap']['paired_resamples']} resamples, "
-        f"seed {summary['bootstrap']['seed']}).",
+        "Intervals are 95% percentile bootstrap CIs that resample independent clusters, "
+        "not single units: a synthetic page with all its degradation levels, an "
+        "olmOCR-bench PDF with all its tests (within its category). Paired comparisons "
+        "take the units both candidates scored: a cluster bootstrap CI "
+        f"({n_boot} resamples, seed {summary['bootstrap']['seed']}) and a two-sided "
+        "sign-flip test over clusters (every pattern up to 16 clusters, else "
+        f"{n_boot} random ones); *significant* means p < 0.05. With k clusters the "
+        "smallest attainable p is 2/2^k.",
         "",
         "## Candidates",
         "",
@@ -569,7 +741,11 @@ def render_report(summary: Mapping[str, Any]) -> str:
     )
     for name, s in summary["suites"].items():
         out += ["", f"## Suite `{name}`", ""]
-        out.append(f"Fingerprint `{s['fingerprint'][:12]}`, {s['n_samples']} samples.")
+        versions = ", ".join(map(str, s.get("scoring_versions") or [])) or "–"
+        out.append(
+            f"Fingerprint `{s['fingerprint'][:12]}`, {s['n_samples']} samples, "
+            f"scoring version {versions}."
+        )
         scores = s["scores"]
         if not scores:
             out += ["", "_Not scored yet: run `docingest bench score`._"]
@@ -593,6 +769,7 @@ def render_report(summary: Mapping[str, Any]) -> str:
                     for i, c in enumerate(s["ranking"], 1)
                 ),
             )
+            out += _cluster_notes(scores, s["ranking"], pct)
             cats = sorted({k for c in scores.values() for k in c["by_category"]})
             if cats:
                 out += ["", f"### By category ({primary})", ""]
@@ -614,12 +791,15 @@ def render_report(summary: Mapping[str, Any]) -> str:
                 rows = []
                 for c, p in s["paired_vs_best"].items():
                     ci = {"mean": p["diff"], "low": p["low"], "high": p["high"]}
-                    if p["low"] is None or p["high"] is None:
-                        sig = None
-                    else:
-                        sig = "yes" if not p["low"] <= 0 <= p["high"] else "no"
                     rows.append(
-                        [c, _fmt(ci, pct, signed=True), _pvalue(p["p_value"], n_boot), sig, p["n"]]
+                        [
+                            c,
+                            _fmt(ci, pct, signed=True),
+                            _pvalue(p["p_value"], n_boot),
+                            _significance(p),
+                            p["n"],
+                            p.get("n_clusters"),
+                        ]
                     )
                 out += _table(
                     [
@@ -628,37 +808,19 @@ def render_report(summary: Mapping[str, Any]) -> str:
                         "p",
                         "significant",
                         "pairs",
+                        "clusters",
                     ],
                     rows,
                 )
-        out += ["", "### Throughput and failure modes", ""]
-        out += _table(
-            [
-                "candidate",
-                "pages",
-                "median s/page",
-                "p90 s/page",
-                "gen tok/s",
-                "peak GB",
-                "truncated",
-                "empty",
-                "errors",
-            ],
-            (
-                [
-                    c,
-                    t["pages"],
-                    t["median_s"],
-                    t["p90_s"],
-                    t["gen_tok_s"],
-                    t["peak_memory_gb"],
-                    _pct(t["truncation_rate"]),
-                    _pct(t["empty_rate"]),
-                    t["errors"],
-                ]
-                for c, t in s["throughput"].items()
-            ),
-        )
+                few = [p for p in s["paired_vs_best"].values() if p.get("n_clusters")]
+                if any(p["n_clusters"] < MIN_CLUSTERS for p in few):
+                    out += [
+                        "",
+                        f"_Fewer than {MIN_CLUSTERS} clusters: the bootstrap CI is too narrow to "
+                        "rely on; significance comes from the sign-flip test, which cannot go "
+                        "below p = 2/2^k with k clusters._",
+                    ]
+        out += _throughput_section(s["throughput"])
         issues = [f"`{c}`: {e}" for c, sc in scores.items() for e in sc["errors"]]
         issues += [f"`{c}`: not scored" for c in s["unscored"]]
         if issues:

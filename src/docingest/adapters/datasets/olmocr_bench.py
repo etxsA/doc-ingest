@@ -12,13 +12,20 @@ after KaTeX rendering, a baseline sanity check). We
 * run ``olmocr.bench.benchmark`` from its own venv (scripts/setup_bench_scorer.sh) and
   parse its stdout.
 
-Reimplementing the tests here would silently drift from the published leaderboard.
+Reimplementing the tests here would silently drift from the published leaderboard. The
+pass rates are the scorer's; the confidence intervals are ours. The scorer's own CI
+(``calculate_bootstrap_ci`` in ``olmocr/bench/utils.py``) resamples individual tests
+within each jsonl file, unseeded, as if the ~8 tests of one PDF were independent; they
+share one transcription, so that interval is too narrow. We resample whole PDFs within
+their category instead (seeded) and keep the scorer's interval in ``details`` for
+comparison with the leaderboard's "±".
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -34,7 +41,7 @@ from pathlib import Path
 import pypdfium2 as pdfium
 from PIL import Image
 
-from ...application.metrics import bootstrap_ci
+from ...application.stats import cluster_bootstrap_ci
 from ...domain.errors import DocumentOpenError, SourceUnavailableError
 from ...ports import Estimate, Sample, SuiteScore
 
@@ -52,6 +59,13 @@ CATEGORIES = (
 SUBSET_META = "subset.json"  # written last: marks a complete subset directory
 BASELINE = "baseline"  # the scorer's extra per-PDF sanity test group
 METRIC = "pass_rate"
+CI_RESAMPLES = 2000
+# How scorer results become scores. Not part of the fingerprint: a change re-scores a
+# finished run, it never forces a re-transcription.
+#   1: overall CI = the scorer's test-level bootstrap; per-category CIs resample tests.
+#   2: overall and per-category CIs resample PDFs (all their tests together) within
+#      their category; the scorer's CI moves to details["official_ci"].
+SCORING_VERSION = 2
 
 Log = Callable[[str], None]
 
@@ -257,6 +271,11 @@ class ScorerConfig:
     skip_baseline: bool = False
 
 
+def _round(x: float) -> float | None:
+    """4 decimals; NaN (an interval one PDF cannot give) -> None."""
+    return None if math.isnan(x) else round(x, 4)
+
+
 def render_first_page(path: Path, long_side: int) -> Image.Image:
     try:
         pdf = pdfium.PdfDocument(path)
@@ -280,6 +299,7 @@ class _Test:
 
 class OlmOcrBenchSuite:
     name = "olmocr-bench"
+    scoring_version = SCORING_VERSION
 
     def __init__(
         self,
@@ -416,6 +436,7 @@ class OlmOcrBenchSuite:
                 n_outputs=done,
                 n_samples=len(samples),
                 details={"olmocr": olmocr},
+                scoring_version=SCORING_VERSION,
             )
             out[cand] = base
             if done < len(samples):
@@ -457,9 +478,15 @@ class OlmOcrBenchSuite:
             t.id: {METRIC: 0.0 if t.id in failed else 1.0} for t in tests
         }
         groups = {t.id: t.group for t in tests}
+        # A PDF's tests (its baseline test included) share one transcription: one cluster,
+        # resampled within the category the PDF was sampled from.
+        clusters = {t.id: t.pdf for t in tests}
+        category = {str(s.extra["pdf"]): s.category for s in self.samples()}
+        strata = {pdf: category.get(pdf, "") for pdf in clusters.values()}
         by_cat, warnings = {}, []
         for group, (passed, total) in sorted(r.by_jsonl.items()):
-            vals = [float(units[t][METRIC] or 0.0) for t in units if groups[t] == group]
+            ids = [t for t in units if groups[t] == group]
+            vals = [float(units[t][METRIC] or 0.0) for t in ids]
             if len(vals) != total or sum(vals) != passed:  # parser / layout drift guard
                 warnings.append(
                     f"{group}: scorer reports {passed}/{total}, "
@@ -467,13 +494,35 @@ class OlmOcrBenchSuite:
                 )
             lo = hi = None
             if vals:
-                _, lo, hi = (round(x, 4) for x in bootstrap_ci(vals))
+                ci = cluster_bootstrap_ci(vals, clusters=[clusters[t] for t in ids], n=CI_RESAMPLES)
+                _, lo, hi = (_round(x) for x in ci)
             by_cat[group] = {METRIC: Estimate(round(passed / total, 4), lo, hi, total)}
-        base.metrics = {METRIC: Estimate(r.overall, r.ci_low, r.ci_high, r.n_tests or len(units))}
+        ids = list(units)
+        _, lo, hi = cluster_bootstrap_ci(
+            [units[t][METRIC] for t in ids],
+            groups=[groups[t] for t in ids],
+            clusters=[clusters[t] for t in ids],
+            strata=[strata[clusters[t]] for t in ids],
+            n=CI_RESAMPLES,
+        )
+        base.metrics = {
+            METRIC: Estimate(r.overall, _round(lo), _round(hi), r.n_tests or len(units))
+        }
         base.by_category = by_cat
         base.units, base.unit_groups = units, groups
+        base.unit_clusters, base.cluster_strata = clusters, strata
         base.details.update(
             half_width=r.half_width,
+            official_ci=[r.ci_low, r.ci_high],
+            official_ci_method=(
+                "olmocr.bench: tests resampled within each jsonl file, unseeded; treats the "
+                "tests of one PDF as independent, so it is narrower than ours"
+            ),
+            ci_method=(
+                f"PDFs resampled whole within their category ({CI_RESAMPLES} resamples, seed 0)"
+            ),
+            clusters="a PDF with all its tests, drawn within its category",
+            n_clusters=len(strata),
             by_type={t: {"rate": rate, "n": n} for t, (rate, n) in sorted(r.by_type.items())},
             failed_tests=len(failed),
             warnings=warnings,

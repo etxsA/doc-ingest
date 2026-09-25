@@ -45,7 +45,15 @@ def test_stratified_paired_bootstrap_averages_group_means():
     plain = paired_bootstrap(a, b, n=500)
     strat = paired_bootstrap(a, b, groups=["x", "y", "y", "y"], n=500)
     assert plain.diff == pytest.approx(0.25)
-    assert strat.diff == pytest.approx(0.5) and strat.low == strat.high == pytest.approx(0.5)
+    assert strat.diff == pytest.approx(0.5)
+    # One unit cannot show how much group "x" varies: its stratum is merged, not taken as
+    # certain (resampling 1 unit out of 1 used to give a zero-width CI).
+    assert strat.low < 0.5 <= strat.high and not strat.significant
+    # With two units per group, units are resampled within their group: constant groups
+    # give a constant statistic.
+    a2, b2 = [1.0, 1.0, 0.0, 0.0, 0.0], [0.0] * 5
+    strat2 = paired_bootstrap(a2, b2, groups=["x", "x", "y", "y", "y"], n=500)
+    assert strat2.diff == strat2.low == strat2.high == pytest.approx(0.5)
 
 
 def test_quantile_matches_numpy_linear_interpolation():

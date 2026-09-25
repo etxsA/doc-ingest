@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import random
 import zlib
 from collections.abc import Sequence
@@ -23,8 +24,9 @@ import pypdfium2 as pdfium
 from PIL import Image, ImageFilter
 
 from ...application.ingest import sha256_file
-from ...application.metrics import bootstrap_ci, plain_text
+from ...application.metrics import plain_text, running_lines, strip_furniture
 from ...application.metrics import score as score_text
+from ...application.stats import cluster_bootstrap_ci
 from ...domain.errors import DocumentOpenError
 from ...domain.text import clean_text_layer, text_vocabulary
 from ...ports import Estimate, Sample, SuiteScore
@@ -99,6 +101,14 @@ def make_scan(src: Path, out_pdf: Path, pages: list[int], dpi: int = 150, seed: 
 
 LEVELS = ("clean", "light", "heavy")
 DEGRADE_VERSION = 1  # bump when degrade() / degrade_heavy() change: invalidates runs
+# How outputs are scored. Not part of the fingerprint: a change here re-scores a finished
+# run (``bench report`` does it automatically), it never forces a re-transcription.
+#   1: metrics of plain_text(output) vs the page's cleaned text layer; units bootstrapped
+#      independently.
+#   2: page furniture (running headers, bare page numbers, arXiv margin stamps) removed
+#      from reference and output; <img> descriptions dropped and LaTeX math normalized
+#      (metrics.normalize); CIs and paired tests resample pages, all levels together.
+SCORING_VERSION = 2
 METRICS = ("cer", "wer", "word_f1", "char3_f1")
 HIGHER_IS_BETTER = {"cer": False, "wer": False, "word_f1": True, "char3_f1": True}
 
@@ -137,15 +147,20 @@ def _sample_seed(seed: int, *parts: object) -> int:
     return zlib.crc32(":".join(map(str, (seed, *parts))).encode())
 
 
-def _estimates(rows: list[dict[str, float | None]]) -> dict[str, Estimate]:
+def _round(x: float) -> float | None:
+    """4 decimals; NaN (no estimable interval: a single page) -> None."""
+    return None if math.isnan(x) else round(x, 4)
+
+
+def _estimates(rows: list[tuple[str, dict[str, float | None]]]) -> dict[str, Estimate]:
+    """Per-metric mean and CI of (cluster, unit scores) rows; clusters are resampled whole."""
     out = {}
     for m in METRICS:
-        vals = [v for r in rows if (v := r.get(m)) is not None]
-        mean, lo, hi = bootstrap_ci(vals)
+        kept = [(c, v) for c, r in rows if (v := r.get(m)) is not None]
+        vals = [v for _, v in kept]
+        mean, lo, hi = cluster_bootstrap_ci(vals, clusters=[c for c, _ in kept])
         out[m] = (
-            Estimate(round(mean, 4), round(lo, 4), round(hi, 4), len(vals))
-            if vals
-            else Estimate(None)
+            Estimate(_round(mean), _round(lo), _round(hi), len(vals)) if vals else Estimate(None)
         )
     return out
 
@@ -154,10 +169,14 @@ class SyntheticSuite:
     """Born-digital pages, rasterized at a fixed dpi and degraded deterministically.
 
     Reference = the page's cleaned text layer (pages with too little text are skipped).
-    Every page appears at every level, so levels are directly comparable.
+    Every page appears at every level, so levels are directly comparable, and the levels
+    of one page form one cluster for the statistics: they are not independent evidence.
+    Page furniture is removed from reference and output at scoring time (``strip_furniture``):
+    the prompts disagree on whether to transcribe it, and the text layer always has it.
     """
 
     name = "synthetic"
+    scoring_version = SCORING_VERSION
 
     def __init__(
         self,
@@ -212,6 +231,9 @@ class SyntheticSuite:
             finally:
                 pdf.close()
             vocab = text_vocabulary(*raws)
+            # Running headers / footers recur across the document: found on every page,
+            # stripped when scoring (sample ids, references and the fingerprint unchanged).
+            running = running_lines([clean_text_layer(raw, vocab) for raw in raws])
             for page in pages:
                 if not 0 <= page < len(raws):
                     self.skipped.append(f"{path.name} page {page}: out of range ({len(raws)})")
@@ -227,7 +249,12 @@ class SyntheticSuite:
                             category=level,
                             load_image=partial(self.render, path, page, level),
                             reference=ref,
-                            extra={"pdf": path.name, "page": page, "level": level},
+                            extra={
+                                "pdf": path.name,
+                                "page": page,
+                                "level": level,
+                                "running": running,
+                            },
                         )
                     )
         return samples
@@ -243,33 +270,57 @@ class SyntheticSuite:
     def output_path(self, run_dir: Path, candidate: str, sample: Sample) -> Path:
         return run_dir / self.name / candidate / f"{sample.id}.md"
 
+    @staticmethod
+    def cluster(sample: Sample) -> str:
+        """The page a sample shows: every degradation level of it is one cluster."""
+        return f"{sample.extra['pdf']}#p{int(sample.extra['page']) + 1:03d}"
+
     def score(self, run_dir: Path, candidates: list[str]) -> dict[str, SuiteScore]:
         samples = self.samples()
+        clusters = {s.id: self.cluster(s) for s in samples}
         out = {}
         for cand in candidates:
             units: dict[str, dict[str, float | None]] = {}
             for s in samples:
                 p = self.output_path(run_dir, cand, s)
                 if p.exists():
-                    hyp = plain_text(p.read_text(encoding="utf-8"))
-                    sc = score_text(s.reference or "", hyp)
+                    ref, hyp = strip_furniture(
+                        s.reference or "",
+                        plain_text(p.read_text(encoding="utf-8")),
+                        s.extra.get("running", ()),
+                    )
+                    sc = score_text(ref, hyp)
                     units[s.id] = {m: sc[m] for m in METRICS}
             by_level = {
-                lv: _estimates([units[s.id] for s in samples if s.category == lv and s.id in units])
+                lv: _estimates(
+                    [
+                        (clusters[s.id], units[s.id])
+                        for s in samples
+                        if s.category == lv and s.id in units
+                    ]
+                )
                 for lv in self.levels
             }
             missing = len(samples) - len(units)
             out[cand] = SuiteScore(
                 primary=self.primary_metric,
                 higher_is_better=HIGHER_IS_BETTER[self.primary_metric],
-                metrics=_estimates(list(units.values())),
+                metrics=_estimates([(clusters[u], units[u]) for u in units]),
                 by_category=by_level,
                 units=units,
+                unit_clusters={u: clusters[u] for u in units},
                 n_outputs=len(units),
                 n_samples=len(samples),
                 errors=[f"{missing} of {len(samples)} samples have no output yet"]
                 if missing
                 else [],
-                details={"skipped_pages": self.skipped, "hypothesis": "plain_text()"},
+                details={
+                    "skipped_pages": self.skipped,
+                    "hypothesis": "plain_text() minus page furniture",
+                    "reference": "cleaned text layer minus page furniture",
+                    "clusters": "a page with all its degradation levels",
+                    "n_clusters": len({clusters[u] for u in units}),
+                },
+                scoring_version=SCORING_VERSION,
             )
         return out

@@ -1,6 +1,7 @@
 import gzip
 import io
 import tarfile
+from pathlib import Path
 
 import pytest
 from builders import LONG, text_pdf
@@ -69,7 +70,70 @@ def test_latex_inputs(tmp_path):
     archive = tmp_path / "2401.00002.tar.gz"
     archive.write_bytes(buf.getvalue())
     assert detect(archive) == (SourceKind.LATEX, "application/gzip")
-    other = tmp_path / "data.gz"
-    other.write_bytes(gzip.compress(b"just some numbers 1 2 3"))
-    with pytest.raises(UnsupportedInputError):
-        detect(other)
+    for payload in (b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n", b"%!PS-Adobe-3.0\n", b"<!DOCTYPE html>"):
+        other = tmp_path / "not_tex.gz"  # gzipped PDF / PostScript / HTML: not a source
+        other.write_bytes(gzip.compress(payload))
+        with pytest.raises(UnsupportedInputError):
+            detect(other)
+
+
+def _v7_tar(path: Path, tex: bytes) -> bytes:
+    """A pre-POSIX tar: no "ustar" magic, which tarfile (and the crawler) still accept."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+        info = tarfile.TarInfo("main.tex")
+        info.size = len(tex)
+        tar.addfile(info, io.BytesIO(tex))
+    raw = bytearray(buf.getvalue())
+    raw[257:265] = b"\0" * 8  # drop magic + version
+    raw[148:156] = b" " * 8
+    raw[148:156] = b"%06o\0 " % sum(raw[:512])
+    path.write_bytes(bytes(raw))
+    with tarfile.open(path) as tar:
+        assert tar.getnames() == ["main.tex"]
+    return bytes(raw)
+
+
+def test_whatever_the_arxiv_crawler_saves_as_latex_is_latex(tmp_path):
+    """The crawler keeps these files (and reuses them on every later crawl), so the
+    detector refusing them would make those papers impossible to ingest."""
+    from docingest.adapters.sources.arxiv import classify
+
+    doc = b"\\documentclass{article}\\begin{document}\\section{Intro}Hi\\end{document}\n"
+    samples = {
+        # ~5 KB of comment header before \documentclass
+        "long.tex.gz": gzip.compress((b"% " + b"x" * 70 + b"\n") * 75 + doc),
+        "plain.tex.gz": gzip.compress(b"\\input harvmac\n\\Title{}{A paper}\n\\bye\n"),  # plain TeX
+        "numbers.tex.gz": gzip.compress(b"just some numbers 1 2 3"),
+    }
+    for name, payload in samples.items():
+        (tmp_path / name).write_bytes(payload)
+    v7 = tmp_path / "v7.tar"
+    raw = _v7_tar(v7, doc)
+    (tmp_path / "v7.tar.gz").write_bytes(gzip.compress(raw))
+    for path in sorted(tmp_path.iterdir()):
+        assert classify(path) is not None, path.name  # the crawler would save it
+        assert detect(path)[0] == SourceKind.LATEX, path.name
+
+
+def test_truncated_gzip_is_unsupported_input(tmp_path):
+    full = gzip.compress(b"\\documentclass{article}\n" + b"a" * 10000)
+    trunc = tmp_path / "trunc.tex.gz"
+    trunc.write_bytes(full[:40])
+    with pytest.raises(UnsupportedInputError, match="corrupt gzip"):
+        detect(trunc)
+
+
+def test_text_starting_with_a_pdf_comment_is_not_a_pdf(tmp_path):
+    thesis = tmp_path / "thesis.tex"
+    thesis.write_text("%PDF-A compliant thesis template\n\\documentclass{article}\n")
+    assert detect(thesis)[0] == SourceKind.LATEX
+    notes = tmp_path / "notes.txt"
+    notes.write_text("%PDF-1.4 is the version used here.\n")
+    assert detect(notes)[0] == SourceKind.TEXT
+    # Extensions lie: a real PDF (binary comment on line 2, as pdfTeX / Word / Acrobat
+    # write it) named .txt is still a PDF.
+    body = text_pdf(tmp_path / "a.pdf", LONG).read_bytes().removeprefix(b"%PDF-1.4\n")
+    mislabeled = tmp_path / "actually_pdf.txt"
+    mislabeled.write_bytes(b"%PDF-1.5\n%\xe2\xe3\xcf\xd3\n" + body)
+    assert detect(mislabeled)[0] == SourceKind.PDF

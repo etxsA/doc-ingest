@@ -171,8 +171,8 @@ def paper():
 
 # ------------------------------------------------------------------------ parsing
 def test_parse_feed_reads_the_recorded_entry():
-    records, total = parse_feed(fixture("api_query.xml"))
-    assert total == 2 and len(records) == 2
+    records, total, entries = parse_feed(fixture("api_query.xml"))
+    assert total == 2 and len(records) == 2 and entries == 2
     r = records[0]
     m = r.metadata
     assert r.key == "2409.13740v2"

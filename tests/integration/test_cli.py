@@ -34,3 +34,36 @@ def test_adapters_command_lists_ports():
         and "mlx-vlm" in result.output
         and "openai-compatible" in result.output
     )
+
+
+def test_a_missing_explicit_config_is_an_error_not_the_defaults(tmp_path):
+    typo = tmp_path / "remote-ocr.tmol"
+    wide = {"COLUMNS": "300"}  # keep rich's error panel on one line per message
+    result = CliRunner().invoke(app, ["adapters", "--config", str(typo)], env=wide)
+    assert result.exit_code == 2 and "does not exist" in result.output
+    result = CliRunner().invoke(app, ["ingest", str(tmp_path), "--config", str(typo)], env=wide)
+    assert result.exit_code == 2 and "does not exist" in result.output
+
+
+def test_adapters_command_lists_a_broken_plugin_instead_of_crashing(monkeypatch, tmp_path):
+    class BrokenEP:
+        name = "fancy-ocr"
+        value = "brokenplug_mod:factory"
+
+        @staticmethod
+        def load():
+            raise ModuleNotFoundError("No module named 'some_optional_gpu_lib'")
+
+    monkeypatch.setattr(
+        "docingest.bootstrap.entry_points",
+        lambda group: [BrokenEP] if group == "docingest.ocr" else [],
+    )
+    runner = CliRunner(env={"COLUMNS": "200"})  # keep table cells on one line
+    result = runner.invoke(app, ["adapters"])
+    assert result.exit_code == 0, result.output
+    assert "fancy-ocr (plugin)" in result.output and "broken" not in result.output
+    cfg_path = tmp_path / "cfg.toml"
+    cfg_path.write_text('[adapters]\nocr = "fancy-ocr"\n')
+    result = runner.invoke(app, ["adapters", "--config", str(cfg_path)])
+    assert result.exit_code == 0, result.output
+    assert "fancy-ocr (broken: ModuleNotFoundError" in result.output

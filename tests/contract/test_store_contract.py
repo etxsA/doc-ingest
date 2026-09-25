@@ -4,7 +4,13 @@ import pytest
 from fakes import InMemoryStore
 
 from docingest.adapters.store.filesystem import FilesystemStore
-from docingest.domain.models import DocumentManifest, PageMethod, PageRecord, SourceKind
+from docingest.domain.models import (
+    DocumentManifest,
+    PageMethod,
+    PageRecord,
+    SourceKind,
+    SourceMetadata,
+)
 
 
 @pytest.fixture(params=["memory", "filesystem"])
@@ -67,5 +73,42 @@ def test_corpus_prefers_canonical_and_warns_on_partial_only(store):
     docs, warnings = store.corpus()
     assert len(docs) == 1 and not docs[0].canonical and warnings
     store.save(manifest(), "# full\n")
+    docs, warnings = store.corpus()
+    assert len(docs) == 1 and docs[0].canonical and not warnings
+
+
+def test_saving_the_same_run_again_replaces_it_in_place(store):
+    """IngestService refreshes metadata on a cache hit by saving the result again."""
+    first = store.save(manifest(), "# a\n")
+    updated = manifest().model_copy(
+        update={"title": "New", "metadata": SourceMetadata(title="New", year=2017)}
+    )
+    second = store.save(updated, "# New\n")
+    assert second.location == first.location and second.canonical
+    hit = store.lookup("d" * 64, "h1", max_pages=None, ocr_all=False)
+    assert hit and hit.manifest.metadata == updated.metadata and store.markdown(hit) == "# New\n"
+    docs, _ = store.corpus()
+    assert [d.manifest.title for d in docs] == ["New"]
+
+
+def test_degraded_result_is_kept_but_never_canonical_nor_served(store):
+    saved = store.save(manifest(), "# fallback\n", degraded=True)
+    assert not saved.canonical and store.markdown(saved) == "# fallback\n"
+    assert store.lookup("d" * 64, "h1", max_pages=None, ocr_all=False) is None
+    assert store.lookup("d" * 64, "h1", max_pages=2, ocr_all=False) is None
+    docs, warnings = store.corpus()  # the corpus still has the document, with a warning
+    assert len(docs) == 1 and not docs[0].canonical
+    assert len(warnings) == 1 and "degraded" in warnings[0]
+
+
+def test_degraded_result_never_replaces_a_stored_one(store):
+    store.save(manifest(n_pages=1, max_pages=1), "# part\n")
+    store.save(manifest(n_pages=1, max_pages=1), "# fallback part\n", degraded=True)
+    part = store.lookup("d" * 64, "h1", max_pages=1, ocr_all=False)
+    assert part and store.markdown(part) == "# part\n"
+    store.save(manifest(), "# good\n")
+    store.save(manifest(), "# fallback\n", degraded=True)
+    full = store.lookup("d" * 64, "h1", max_pages=None, ocr_all=False)
+    assert full and store.markdown(full) == "# good\n"
     docs, warnings = store.corpus()
     assert len(docs) == 1 and docs[0].canonical and not warnings

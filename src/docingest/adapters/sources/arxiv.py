@@ -13,7 +13,11 @@
   and a User-Agent naming docingest (plus ``mailto:`` when ``contact`` is set).
 
 Downloads are streamed to a hidden temp file in ``dest_dir`` and renamed into place,
-so a file named ``<id><version>.<ext>`` is always complete and is reused as-is.
+so a file named ``<id><version>.<ext>`` is always complete and is reused as-is. The one
+exception: a lower-preference file saved because the preferred one failed transiently
+(5xx / network, after all retries) gets a hidden ``.<id><version>.fallback`` marker, and
+the next fetch tries the preferred format again before reusing it. A rate limit is not a
+reason to fall back (the PDF lives on the same host): it stops the crawl.
 """
 
 from __future__ import annotations
@@ -30,14 +34,23 @@ import zlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from ... import __version__
+from ...application.ingest import SIDECAR_SUFFIX
 from ...config import ArxivConfig
-from ...domain.errors import SourceUnavailableError
+from ...domain.errors import RateLimitedError, SourceUnavailableError
 from ...domain.models import SourceMetadata
 from ...ports import FetchedSource, SourceRecord
-from .http import Clock, HttpResult, HttpStatusError, PoliteClient, Sleep, Transport
+from .http import (
+    Clock,
+    HttpResult,
+    HttpStatusError,
+    PoliteClient,
+    RetriesExhaustedError,
+    Sleep,
+    Transport,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +60,8 @@ OPENSEARCH = "{http://a9.com/-/spec/opensearch/1.1/}"
 OAI = "{http://www.openarchives.org/OAI/2.0/}"
 
 MAX_PAGE = 2000  # arXiv API: max_results per request
+EMPTY_PAGE_RETRIES = 3  # the API sometimes answers a page inside totalResults with nothing
+FALLBACK_SUFFIX = ".fallback"  # marker: the saved format is a stopgap, retry the preferred
 FORMATS = ("latex", "pdf")  # accepted values of [arxiv].prefer
 # Saved suffix -> FetchedSource.format; order = reuse preference within one choice.
 SUFFIXES: dict[str, tuple[tuple[str, str], ...]] = {
@@ -58,6 +73,7 @@ SUFFIXES: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "pdf": ((".pdf", "pdf"),),
 }
+CHOICE = {fmt: choice for choice, pairs in SUFFIXES.items() for _, fmt in pairs}
 _VERSION = re.compile(r"^(?P<id>.+?)(?P<version>v\d+)?$")
 _ID_PREFIX = re.compile(r"^(?:arxiv:|https?://(?:export\.)?arxiv\.org/(?:abs|pdf|src)/)", re.I)
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -126,9 +142,29 @@ def _text(el: ET.Element | None) -> str | None:
     return " ".join(el.text.split()) or None
 
 
+class Feed(NamedTuple):
+    """One API page: its usable records, totalResults and how many entries it held.
+
+    ``entries`` includes the skipped ones: pagination advances by it, not by
+    ``len(records)``, or the entries after a skipped one would be requested twice.
+    """
+
+    records: list[SourceRecord]
+    total: int | None  # opensearch:totalResults
+    entries: int
+
+
+def _abs_id(entry: ET.Element) -> str | None:
+    """``2401.00001v1`` from ``<id>http://arxiv.org/abs/2401.00001v1</id>``, else None."""
+    _, sep, tail = (_text(entry.find(f"{ATOM}id")) or "").rpartition("/abs/")
+    return (tail.strip() or None) if sep else None
+
+
 def parse_entry(entry: ET.Element) -> SourceRecord:
-    entry_id = _text(entry.find(f"{ATOM}id")) or ""
-    arxiv_id, version = split_version(entry_id.rsplit("/abs/", 1)[-1])
+    abs_id = _abs_id(entry)
+    if abs_id is None:  # no key to name, fetch or deduplicate it by
+        raise SourceUnavailableError("Atom entry without an arXiv id (<id>.../abs/<id>)")
+    arxiv_id, version = split_version(abs_id)
     published = _text(entry.find(f"{ATOM}published")) or _text(entry.find(f"{ATOM}updated"))
     primary = entry.find(f"{ARXIV}primary_category")
     terms = [primary.get("term")] if primary is not None else []
@@ -152,20 +188,27 @@ def parse_entry(entry: ET.Element) -> SourceRecord:
     return SourceRecord(key=key, metadata=metadata)
 
 
-def parse_feed(xml: bytes) -> tuple[list[SourceRecord], int | None]:
-    """Atom feed -> (records, totalResults). API errors come back as an entry."""
+def parse_feed(xml: bytes) -> Feed:
+    """Atom feed -> (records, totalResults, entries). API errors come back as an entry.
+
+    Entries without an arXiv id are skipped (``entries`` still counts them), like other
+    arXiv clients do: they would otherwise take a slot of the limit and fail at fetch.
+    """
     try:
         root = ET.fromstring(xml)
     except ET.ParseError as e:
         raise SourceUnavailableError(f"arXiv API returned malformed XML: {e}") from e
     records = []
+    entries = 0
     for entry in root.iter(f"{ATOM}entry"):
         if "/api/errors" in (_text(entry.find(f"{ATOM}id")) or ""):
             detail = _text(entry.find(f"{ATOM}summary")) or "unknown error"
             raise SourceUnavailableError(f"arXiv API error: {detail}")
-        records.append(parse_entry(entry))
+        entries += 1
+        if _abs_id(entry) is not None:
+            records.append(parse_entry(entry))
     total = _text(root.find(f"{OPENSEARCH}totalResults"))
-    return records, int(total) if total and total.isdigit() else None
+    return Feed(records, int(total) if total and total.isdigit() else None, entries)
 
 
 def parse_oai_license(xml: bytes) -> str | None:
@@ -313,29 +356,50 @@ class ArxivCrawler:
         records = self._search_ids(ids[:limit]) if ids else self._search_query(query, limit)
         return list({r.key: r for r in records}.values())[:limit]
 
-    def _page(
-        self, params: dict[str, str], start: int, n: int
-    ) -> tuple[list[SourceRecord], int | None]:
+    def _page(self, params: dict[str, str], start: int, n: int) -> Feed:
         res = self.http.get(
             self.cfg.api_url, {**params, "start": start, "max_results": n}, ok=(200, 400)
         )
-        page, total = parse_feed(res.body)  # a 400 carries an error entry -> raises
+        feed = parse_feed(res.body)  # a 400 carries an error entry -> raises
         if res.status != 200:
             raise SourceUnavailableError(f"arXiv API HTTP {res.status} for {params}")
-        return page, total
+        if skipped := feed.entries - len(feed.records):
+            self.warn(f"arXiv API: skipped {skipped} entry(ies) without an arXiv id at {start=}")
+        return feed
 
     def _search_query(self, query: str, limit: int) -> list[SourceRecord]:
+        """Pages until ``limit`` records or totalResults.
+
+        An empty page before totalResults is a known transient API quirk: it is asked for
+        again (``EMPTY_PAGE_RETRIES``, spaced by the client's delay), then reported, as an
+        error when nothing was found (not "0 records"), as a warning after partial results.
+        """
         params = query_params(query)
         records: list[SourceRecord] = []
         start = 0
+        empty = 0
         while len(records) < limit:
             n = min(limit - len(records), self.page_size)
-            page, total = self._page(params, start, n)
-            records += page
-            start += len(page)
-            if not page or (total is not None and start >= total):
+            feed = self._page(params, start, n)
+            if not feed.entries and feed.total is not None and start < feed.total:
+                if empty < EMPTY_PAGE_RETRIES:
+                    empty += 1
+                    self.warn(
+                        f"arXiv API: empty page at {start=} of {feed.total} results;"
+                        f" asking again ({empty}/{EMPTY_PAGE_RETRIES})"
+                    )
+                    continue
+                problem = f"arXiv API: page at {start=} stayed empty, yet {feed.total} results"
+                if not records:
+                    raise SourceUnavailableError(problem)
+                self.warn(f"{problem}; continuing with the first {len(records)} record(s)")
                 break
-            if total is None and len(page) < n:
+            empty = 0
+            records += feed.records
+            start += feed.entries
+            if not feed.entries or (feed.total is not None and start >= feed.total):
+                break
+            if feed.total is None and feed.entries < n:
                 break
         return records
 
@@ -351,7 +415,7 @@ class ArxivCrawler:
         for i in range(0, len(ids), self.page_size):
             batch = ids[i : i + self.page_size]
             try:
-                records += self._page(id_params(batch), 0, len(batch))[0]
+                records += self._page(id_params(batch), 0, len(batch)).records
                 continue
             except HttpStatusError as e:
                 if e.status != 406 or len(batch) == 1:
@@ -359,7 +423,7 @@ class ArxivCrawler:
             self.warn(f"arXiv API refused {len(batch)} ids in one request (406); one by one")
             for one in batch:
                 try:
-                    records += self._page(id_params([one]), 0, 1)[0]
+                    records += self._page(id_params([one]), 0, 1).records
                 except HttpStatusError as e:
                     if e.status != 406:
                         raise
@@ -373,30 +437,85 @@ class ArxivCrawler:
     def fetch(self, record: SourceRecord, dest_dir: Path) -> ArxivFetch:
         dest_dir.mkdir(parents=True, exist_ok=True)
         stem = safe_filename(record.key)
-        fetched = self._existing(record, dest_dir, stem) or self._download(record, dest_dir, stem)
+        found = self._existing(record, dest_dir, stem)
+        if found is None:
+            fetched = self._download(record, dest_dir, stem)
+        elif self._marker(dest_dir, stem).exists():
+            fetched = self._upgrade(record, dest_dir, stem, found)
+        else:
+            self.log(f"{record.key}: reusing {found.path.name}")
+            fetched = found
         return dataclasses.replace(fetched, record=self._with_license(record))
 
     def _existing(self, record: SourceRecord, dest_dir: Path, stem: str) -> ArxivFetch | None:
         for choice in self.cfg.prefer:
             for suffix, fmt in SUFFIXES[choice]:
                 path = dest_dir / f"{stem}{suffix}"
-                if path.is_file() and path.stat().st_size > 0:
-                    self.log(f"{record.key}: reusing {path.name}")
-                    size = path.stat().st_size
+                if path.is_file() and (size := path.stat().st_size) > 0:
                     return ArxivFetch(path, record, fmt, size_bytes=size, reused=True)
         return None
 
     def _download(self, record: SourceRecord, dest_dir: Path, stem: str) -> ArxivFetch:
+        fetched, reasons, transient = self._try(record, dest_dir, stem, self.cfg.prefer)
+        if fetched is None:
+            raise SourceUnavailableError(
+                f"{record.key}: nothing downloadable ({'; '.join(reasons)})"
+            )
+        self._mark(dest_dir, stem, reasons if transient else None)
+        return fetched
+
+    def _upgrade(
+        self, record: SourceRecord, dest_dir: Path, stem: str, found: ArxivFetch
+    ) -> ArxivFetch:
+        """``found`` was a transient fallback: try the formats preferred to it once more.
+
+        On success the stopgap file is replaced (its sidecar carries over); a permanent
+        failure (404, HTML, PDF-only) makes it the final answer; a transient one keeps it
+        as a stopgap for the next crawl.
+        """
+        better = self.cfg.prefer[: self.cfg.prefer.index(CHOICE[found.format])]
+        if not better:  # already the preferred format ([arxiv].prefer changed since)
+            self._mark(dest_dir, stem, None)
+            return found
+        self.log(f"{record.key}: {found.path.name} was a fallback; trying {'/'.join(better)}")
+        fetched, reasons, transient = self._try(record, dest_dir, stem, better)
+        if fetched is None:
+            why = "; ".join(reasons)
+            if transient:
+                self.warn(f"{record.key}: still unavailable ({why}); reusing {found.path.name}")
+            else:
+                self._mark(dest_dir, stem, None)
+                self.log(f"{record.key}: {why}; {found.path.name} is the best there is")
+            return found
+        if fetched.path != found.path:
+            _supersede(found.path, fetched.path)
+            self.log(f"{record.key}: {fetched.path.name} replaces {found.path.name}")
+        self._mark(dest_dir, stem, reasons if transient else None)
+        return fetched
+
+    def _try(
+        self, record: SourceRecord, dest_dir: Path, stem: str, choices: list[str]
+    ) -> tuple[ArxivFetch | None, list[str], bool]:
+        """The first of ``choices`` that downloads as an acceptable file.
+
+        Returns (fetch or None, reasons the earlier choices failed, whether any of them
+        failed transiently). A :class:`RateLimitedError` propagates: the next choice is on
+        the same host, and the server just asked us to stay away.
+        """
         reasons: list[str] = []
+        transient = False
         tmp = dest_dir / f".{stem}.{os.getpid()}.part"  # hidden: never picked up as input
         try:
-            for choice in self.cfg.prefer:
+            for choice in choices:
                 src = self.cfg.src_url or self.cfg.eprint_url
                 url = (src if choice == "latex" else self.cfg.pdf_url).format(id=record.key)
                 try:
                     res = self.http.download(url, tmp)
+                except RateLimitedError:
+                    raise
                 except SourceUnavailableError as e:
                     reasons.append(f"{choice}: {e}")
+                    transient = transient or isinstance(e, RetriesExhaustedError)
                     continue
                 kind = self._accept(choice, tmp, res, reasons)
                 if kind is None:
@@ -405,7 +524,7 @@ class ArxivCrawler:
                 path = dest_dir / f"{stem}{suffix}"
                 os.replace(tmp, path)
                 self.log(f"{record.key}: {fmt}, {res.size} B in {res.seconds:.1f}s -> {path.name}")
-                return ArxivFetch(
+                fetched = ArxivFetch(
                     path,
                     record,
                     fmt,
@@ -414,9 +533,22 @@ class ArxivCrawler:
                     size_bytes=res.size,
                     seconds=res.seconds,
                 )
+                return fetched, reasons, transient  # reasons: why earlier choices failed
         finally:
             tmp.unlink(missing_ok=True)
-        raise SourceUnavailableError(f"{record.key}: nothing downloadable ({'; '.join(reasons)})")
+        return None, reasons, transient
+
+    @staticmethod
+    def _marker(dest_dir: Path, stem: str) -> Path:
+        return dest_dir / f".{stem}{FALLBACK_SUFFIX}"  # hidden: never picked up as input
+
+    def _mark(self, dest_dir: Path, stem: str, reasons: list[str] | None) -> None:
+        """Record why the saved file is a stopgap (``reasons``), or clear the marker."""
+        marker = self._marker(dest_dir, stem)
+        if reasons:
+            marker.write_text("\n".join(reasons) + "\n")
+        else:
+            marker.unlink(missing_ok=True)
 
     def _accept(
         self, choice: str, tmp: Path, res: HttpResult, reasons: list[str]
@@ -452,6 +584,7 @@ class ArxivCrawler:
             res = self.http.get(self.cfg.oai_url, params)
             license_url = parse_oai_license(res.body)
         except SourceUnavailableError as e:  # the paper is still usable; say why it's unknown
+            # A rate limit too: the paper is on disk, and the next download stops the crawl.
             self.warn(f"{record.key}: license unknown ({e})")
             return record
         self.log(f"{record.key}: license {license_url or 'not stated in the OAI-PMH record'}")
@@ -459,3 +592,13 @@ class ArxivCrawler:
             return record
         meta = meta.model_copy(update={"license": license_url})
         return dataclasses.replace(record, metadata=meta)
+
+
+def _supersede(old: Path, new: Path) -> None:
+    """Remove the stopgap ``old`` download; its metadata sidecar moves to ``new``."""
+    old_meta = old.with_name(old.name + SIDECAR_SUFFIX)
+    new_meta = new.with_name(new.name + SIDECAR_SUFFIX)
+    if old_meta.exists() and not new_meta.exists():
+        os.replace(old_meta, new_meta)  # same record: its license must not be lost
+    old_meta.unlink(missing_ok=True)
+    old.unlink(missing_ok=True)

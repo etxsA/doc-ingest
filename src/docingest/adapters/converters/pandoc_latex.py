@@ -8,7 +8,9 @@ heap cap, then splits the Markdown into one segment per section (``split_level``
 
 When pandoc fails, times out or returns suspiciously little text, pylatexenc produces
 plain text instead (``PageMethod.LATEX_PLAINTEXT``) and the Conversion says so in its
-warnings. Title, authors and abstract come from pandoc's metadata (``$meta-json$``).
+warnings; it is also marked ``degraded`` when the cause was the machine (a timeout, a
+crash, no pandoc binary) rather than the document, so it is not cached as the result.
+Title, authors and abstract come from pandoc's metadata (``$meta-json$``).
 """
 
 from __future__ import annotations
@@ -20,26 +22,32 @@ import subprocess
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from functools import cached_property
+from functools import cache, cached_property
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import Any
 
 from ...config import LatexConfig
 from ...domain.errors import ConversionError
 from ...domain.models import PageMethod, SourceMetadata
 from ...ports import Conversion, Segment
 from .latex_source import (
+    FI,
+    IFFALSE,
     approx_text_length,
     document_body,
     find_main,
     flatten,
     match_brace,
     prepare_for_pandoc,
+    regions,
     split_sections,
+    sub_regions,
     unpack,
+    verbatim_parts,
 )
 
-REVISION = 1  # bump when this adapter's output changes for the same pandoc / pylatexenc
+REVISION = 2  # bump when this adapter's output changes for the same pandoc / pylatexenc
 # Markdown that keeps $math$, $$display$$, pipe tables and [@citations], without raw
 # HTML/TeX or attribute syntax (gfm would drop the citations).
 _DISABLED = (
@@ -76,6 +84,19 @@ class _Attempt:
     @property
     def n_chars(self) -> int:
         return sum(len(s.text) for s in self.segments)
+
+
+@dataclass(frozen=True)
+class _Failure:
+    reason: str
+    environmental: bool = False  # the machine, not the document: a later run may succeed
+
+
+def _environmental(returncode: int) -> bool:
+    """pandoc's own error exits (1-99; 64 is a parse error, 91 a macro loop) are about
+    the document and recur on every run. A signal (negative: the OOM killer, a kill) or
+    a GHC runtime abort (251: heap exhausted under ``PANDOC_HEAP``) is the machine's."""
+    return not 0 < returncode < 100
 
 
 class PandocLatexConverter:
@@ -144,16 +165,19 @@ class PandocLatexConverter:
             return self._convert_latex(latex, work, warnings, path.name)
 
     def _convert_latex(self, latex: str, work: Path, warnings: list[str], name: str) -> Conversion:
-        attempt, problem = self._pandoc(latex, work)
+        attempt, failure = self._pandoc(latex, work)
         if attempt is not None:
             expected = approx_text_length(latex)
             if attempt.n_chars == 0:
-                problem = "pandoc produced no text"
+                failure = _Failure("pandoc produced no text")
             elif attempt.n_chars < MIN_TEXT_RATIO * expected:
-                problem = f"pandoc kept {attempt.n_chars} chars of ~{expected} in the source"
+                failure = _Failure(
+                    f"pandoc kept {attempt.n_chars} chars of ~{expected} in the source"
+                )
             else:
                 return _conversion(attempt, PageMethod.LATEX, self.engine, warnings)
-        assert problem is not None
+        assert failure is not None
+        problem = failure.reason
         got = attempt.n_chars if attempt else 0
         if self.cfg.fallback:
             try:
@@ -164,16 +188,22 @@ class PandocLatexConverter:
             if plain is not None and plain.n_chars > got:
                 engine = f"pylatexenc {_pylatexenc_version()}"
                 note = f"{problem}; used the pylatexenc plain-text fallback"
-                return _conversion(plain, PageMethod.LATEX_PLAINTEXT, engine, [*warnings, note])
+                return _conversion(
+                    plain,
+                    PageMethod.LATEX_PLAINTEXT,
+                    engine,
+                    [*warnings, note],
+                    degraded=failure.environmental,
+                )
         if attempt is not None and got:
             return _conversion(attempt, PageMethod.LATEX, self.engine, [*warnings, problem])
         context = f" ({'; '.join(warnings)})" if warnings else ""
         raise ConversionError(f"{name}: {problem}{context}")
 
     # --------------------------------------------------------------- pandoc
-    def _pandoc(self, latex: str, work: Path) -> tuple[_Attempt | None, str | None]:
+    def _pandoc(self, latex: str, work: Path) -> tuple[_Attempt | None, _Failure | None]:
         if not self.pandoc_path:
-            return None, "pandoc not found"
+            return None, _Failure("pandoc not found", environmental=True)
         template = work / "docingest-template.md"
         template.write_text(_TEMPLATE)
         cmd = [self.pandoc_path, *PANDOC_HEAP.split(), *PANDOC_ARGS, f"--template={template}"]
@@ -186,14 +216,17 @@ class PandocLatexConverter:
                 timeout=self.cfg.timeout_s,
                 check=False,
             )
-        except subprocess.TimeoutExpired:
-            return None, f"pandoc timed out after {self.cfg.timeout_s}s"
+        except subprocess.TimeoutExpired:  # a loaded machine, or a document pandoc loops on
+            return None, _Failure(
+                f"pandoc timed out after {self.cfg.timeout_s}s", environmental=True
+            )
         except OSError as e:
-            return None, f"pandoc could not run: {e}"
+            return None, _Failure(f"pandoc could not run: {e}", environmental=True)
         stderr = proc.stderr.decode("utf-8", errors="replace")
         if proc.returncode != 0:
             detail = " ".join(stderr.split())[:300]
-            return None, f"pandoc exited with code {proc.returncode}: {detail}"
+            reason = f"pandoc exited with code {proc.returncode}: {detail}"
+            return None, _Failure(reason, environmental=_environmental(proc.returncode))
         meta_json, _, body = proc.stdout.decode("utf-8", errors="replace").partition(_BODY_MARK)
         try:
             meta = json.loads(meta_json)
@@ -208,7 +241,7 @@ class PandocLatexConverter:
     def _plaintext(self, latex: str) -> _Attempt:
         from pylatexenc.latex2text import LatexNodes2Text
 
-        l2t = LatexNodes2Text(math_mode="verbatim")
+        l2t = LatexNodes2Text(latex_context=_text_context(), math_mode="verbatim")
         crude: list[str] = []
 
         def text(fragment: str) -> str:
@@ -224,9 +257,10 @@ class PandocLatexConverter:
         authors = _without_thanks(_braced_arg(latex, "author"))
         body = document_body(latex)
         abstract = None
-        if m := re.search(r"\\begin\s*\{abstract\}(.*?)\\end\s*\{abstract\}", body, re.S):
-            abstract = text(m.group(1)).strip() or None
-            body = body[: m.start()] + body[m.end() :]
+        if found := next(regions(body, _ABSTRACT_BEGIN, _ABSTRACT_END), None):
+            begin, end = found
+            abstract = text(body[begin.end() : end.start()]).strip() or None
+            body = body[: begin.start()] + body[end.end() :]
         parts = []
         for level, head, content in split_sections(body, self.cfg.split_level):
             heading = inline_text(text(head)) if head is not None else None
@@ -246,7 +280,12 @@ class PandocLatexConverter:
 
 
 def _conversion(
-    attempt: _Attempt, method: PageMethod, engine: str, warnings: list[str]
+    attempt: _Attempt,
+    method: PageMethod,
+    engine: str,
+    warnings: list[str],
+    *,
+    degraded: bool = False,
 ) -> Conversion:
     meta = attempt.metadata
     return Conversion(
@@ -256,13 +295,13 @@ def _conversion(
         title=meta.title if meta else None,
         metadata=meta,
         warnings=[*warnings, *attempt.warnings],
+        degraded=degraded,
     )
 
 
 # ------------------------------------------------------------ pure helpers
 _ATX = re.compile(r"^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$")
 _FENCE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
-_DISPLAY_MATH = re.compile(r"(?<!\\)\$\$")
 _FOOTNOTE_REF = re.compile(r"\[\^[^\]]*\]")
 
 
@@ -278,26 +317,30 @@ def split_markdown(md: str, max_level: int) -> list[tuple[int, str | None, str, 
     """Cut Markdown at ATX headings of level <= ``max_level``.
 
     Returns ``(level, title, heading line, content)``; content before the first heading
-    comes first (level 0, no title). ``#`` lines inside code fences or ``$$`` display
-    math are content, not headings.
+    comes first (level 0, no title). As in pandoc's reader (``blank_before_header``), a
+    ``#`` line is a heading only at the start or after a blank line, and never inside a
+    code fence. pandoc writes every heading that way, and ``$$`` display math cannot
+    hold a blank line (TeX forbids it), so a ``#`` line in math is never taken for one.
+    Counting ``$$`` per line does not work: pandoc writes adjacent inline maths
+    (``$3$$\\times 10^{-4}$``) with a single ``$$``.
     """
     max_level = max(1, max_level)
     parts: list[tuple[int, str | None, str, list[str]]] = [(0, None, "", [])]
     fence: re.Pattern[str] | None = None
-    in_math = False
+    blank = True  # the start of the document counts as a blank line
     for line in md.split("\n"):
         if fence is not None:
             if fence.match(line):
                 fence = None
-        elif not in_math and (f := _FENCE.match(line)):
+        elif f := _FENCE.match(line):
             char, n = f.group(1)[0], len(f.group(1))
             fence = re.compile(rf"^[ \t]{{0,3}}{re.escape(char)}{{{n},}}[ \t]*$")
-        elif not in_math and (h := _ATX.match(line)) and len(h.group(1)) <= max_level:
+        elif blank and (h := _ATX.match(line)) and len(h.group(1)) <= max_level:
             parts.append((len(h.group(1)), inline_text(h.group(2)), line, []))
+            blank = False
             continue
-        elif len(_DISPLAY_MATH.findall(line)) % 2:
-            in_math = not in_math
         parts[-1][3].append(line)
+        blank = not line.strip()
     return [(lvl, title, head, "\n".join(lines)) for lvl, title, head, lines in parts]
 
 
@@ -417,8 +460,71 @@ def _escape_url(url: str) -> str:
     return re.sub(r"([%#_&$])", r"\\\1", url.strip())
 
 
+_ABSTRACT_BEGIN = re.compile(r"\\begin\s*\{abstract\}")
+_ABSTRACT_END = re.compile(r"\\end\s*\{abstract\}")
+_VERB_MARK = "\ue000"  # private-use character: the delimiter of a rewritten \verb
+_MINTED_ARGS = re.compile(r"\A[ \t]*(?:\[[^\]\n]*\])?[ \t]*\{[^{}\n]*\}")  # [opts]{language}
+_LISTING_OPTS = re.compile(r"\A[ \t]*\[[^\]\n]*\]")  # lstlisting / fancyvrb [options]
+
+
+def _verbatim_text(node: Any) -> str:
+    """The text of a ``\\verb`` or ``verbatim`` node, exactly as written."""
+    return getattr(node.nodeargd, "verbatim_text", "") or ""
+
+
+@cache
+def _text_context() -> Any:
+    """pylatexenc's defaults, plus the text they silently drop: the argument of
+    ``\\texttt``, ``\\textsf``, ``\\textup``, ``\\textmd``, ``\\mbox`` and ``\\verb`` and
+    the body of ``verbatim`` (model, dataset and code names vanished from the text)."""
+    from pylatexenc.latex2text import (
+        EnvironmentTextSpec,
+        MacroTextSpec,
+        get_default_latex_context_db,
+    )
+
+    db = get_default_latex_context_db()
+    db.add_context_category(
+        "docingest",
+        prepend=True,
+        macros=[
+            *(
+                MacroTextSpec(name, discard=False)  # discard=None drops the argument
+                for name in ("texttt", "textsf", "textup", "textmd", "mbox")
+            ),
+            MacroTextSpec("verb", simplify_repl=_verbatim_text),
+        ],
+        environments=[EnvironmentTextSpec("verbatim", simplify_repl=_verbatim_text)],
+    )
+    return db
+
+
+def _plain_verbatim(latex: str) -> str:
+    """Every verbatim construct as the two pylatexenc reads verbatim, ``\\verb`` and the
+    ``verbatim`` environment (it takes the ``%`` in ``\\lstinline!n % 2!`` for a comment
+    and prints the language of ``minted``); comment and filecontents bodies dropped."""
+    parts: list[str] = []
+    pos = 0
+    for v in verbatim_parts(latex):
+        parts.append(latex[pos : v.start])
+        pos = v.end
+        if v.env is None:
+            parts.append(f"\\verb{_VERB_MARK}{v.body.replace(_VERB_MARK, '')}{_VERB_MARK}")
+        elif v.env != "comment" and not v.env.startswith("filecontents"):
+            body = v.body
+            if v.env == "minted":
+                body = _MINTED_ARGS.sub("", body)
+            elif not v.env.startswith("verbatim"):
+                body = _LISTING_OPTS.sub("", body)
+            parts.append(f"\\begin{{verbatim}}{body}\\end{{verbatim}}")
+    parts.append(latex[pos:])
+    return "".join(parts)
+
+
 def _plain_friendly(latex: str) -> str:
-    """Rewrites so pylatexenc's text keeps citations, references and links readable."""
+    """Rewrites so pylatexenc's text keeps citations, references, links and verbatim
+    text readable."""
+    latex = _plain_verbatim(latex)
     latex = re.sub(
         r"\\href\s*\{([^{}]*)\}\s*\{([^{}]*)\}",
         lambda m: (
@@ -427,8 +533,7 @@ def _plain_friendly(latex: str) -> str:
         latex,
     )
     latex = re.sub(r"\\url\s*\{([^{}]*)\}", lambda m: _escape_url(m[1]), latex)
-    latex = re.sub(r"\\iffalse\b.*?\\fi\b", "", latex, flags=re.S)
-    latex = re.sub(r"\\begin\{comment\}.*?\\end\{comment\}", "", latex, flags=re.S)
+    latex = sub_regions(latex, IFFALSE, FI, lambda _: "")  # linear, unlike \\iffalse.*?\\fi
     latex = re.sub(r"\\(?:maketitle|tableofcontents)\b", "", latex)
     latex = _CITE.sub(
         lambda m: "[" + "; ".join(f"@{k.strip()}" for k in m[1].split(",")) + "]", latex

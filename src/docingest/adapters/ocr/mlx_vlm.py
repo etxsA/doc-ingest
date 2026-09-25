@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import zlib
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
@@ -27,6 +28,15 @@ def fit_image(img: Image.Image, max_side: int) -> Image.Image:
             (round(img.width * scale), round(img.height * scale)), Image.Resampling.LANCZOS
         )
     return img
+
+
+def _decode_seconds(res: Any) -> float | None:
+    """Decode time of one mlx-vlm generation (its tokens / its tokens per second)."""
+    tps = getattr(res, "generation_tps", None)
+    tokens = getattr(res, "generation_tokens", None)
+    if not tps or tokens is None:
+        return 0.0 if tokens == 0 else None
+    return tokens / tps
 
 
 def _mlx_vlm_version() -> str:
@@ -129,16 +139,30 @@ class MlxVlmOcr:
         import mlx.core as mx
 
         mx.reset_peak_memory()  # per-page peak, not the process-wide high-water mark
+        # Sampled attempts are seeded from the page itself: rerunning the benchmark
+        # reproduces a retried page's text instead of drawing a new one.
+        seed = zlib.crc32(img.tobytes())
         t0 = time.perf_counter()
-        res = None
+        res, first_finish = None, None
+        attempts, total_tokens = 0, 0
+        decode_s: float | None = 0.0
         for temperature, penalty in self._attempts():
             kwargs: dict = {"max_tokens": self.max_tokens, "temperature": temperature}
             if penalty:
                 kwargs["repetition_penalty"] = penalty
+            if temperature > 0:
+                mx.random.seed(seed + attempts)
             images: Any = [img]  # mlx-vlm accepts PIL images; its hint says paths only
             res = generate(
                 self._model, self._processor, prompt, image=images, verbose=False, **kwargs
             )
+            # Every attempt counts: a max_tokens loop that a retry fixed is still a
+            # truncation, and its tokens and time are real work.
+            attempts += 1
+            first_finish = res.finish_reason if first_finish is None else first_finish
+            total_tokens += res.generation_tokens
+            step = _decode_seconds(res)
+            decode_s = None if decode_s is None or step is None else decode_s + step
             if res.finish_reason != "length":
                 break
         assert res is not None
@@ -148,4 +172,8 @@ class MlxVlmOcr:
             gen_tokens=res.generation_tokens,
             finish_reason=res.finish_reason,
             peak_memory_gb=getattr(res, "peak_memory", None),
+            attempts=attempts,
+            first_finish_reason=first_finish,
+            total_gen_tokens=total_tokens,
+            gen_seconds=decode_s,
         )

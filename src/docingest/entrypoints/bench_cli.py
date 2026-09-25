@@ -49,6 +49,12 @@ from ..ports import BenchmarkSuite, CandidateSpec, OcrEngine, SuiteScore
 
 DEFAULT_BENCH_CONFIG = Path(__file__).resolve().parents[3] / "config" / "benchmark.toml"
 SUITES = ("synthetic", "olmocr-bench")
+# Current scoring rules per suite: a saved score made under other rules is re-scored by
+# ``bench report`` (read from the classes: no suite data is needed to know it).
+SCORING_VERSIONS: dict[str, int] = {
+    SyntheticSuite.name: SyntheticSuite.scoring_version,
+    OlmOcrBenchSuite.name: OlmOcrBenchSuite.scoring_version,
+}
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 bench_app = typer.Typer(
@@ -440,12 +446,18 @@ def report(
     seed: int = 0,
     config: ConfigOpt = DEFAULT_BENCH_CONFIG,
 ) -> None:
-    """Write <run>/summary.json and <run>/report.md (scores new or re-run candidates first)."""
+    """Write <run>/summary.json and <run>/report.md (scores new, changed, incomplete or
+    failed candidates first, and scores made under older scoring rules)."""
     bc, _ = load_bench_config(config)
     run_dir = _run_dir(bc, run_id)
     manifest = read_manifest(run_dir)
     for name, entry in manifest["suites"].items():
-        todo = entry["candidates"] if rescore else needs_scoring(run_dir, name)
+        version = SCORING_VERSIONS.get(name)
+        todo = (
+            entry["candidates"]
+            if rescore
+            else needs_scoring(run_dir, name, scoring_version=version)
+        )
         if todo:
             s = _suite_from_manifest(name, manifest, bc)
             score_run(s, run_dir, todo)

@@ -13,7 +13,7 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
-from ...config import AppConfig
+from ...config import DEFAULT_LLM_BASE, AppConfig
 from ...domain.text import split_pages
 from ...ports import StoredDocument
 from ..models.huggingface import resolve
@@ -39,18 +39,41 @@ def embedding_path(cfg: AppConfig) -> str:
     return resolve(cfg.qa.embedding_repo_id, cfg.qa.embedding_revision)
 
 
+def llm_params(cfg: AppConfig) -> dict:
+    """litellm parameters of the QA LLM.
+
+    The default model is the pinned local snapshot served by scripts/serve_llm.sh (which
+    loads the same snapshot path, so the request's model id matches what it serves and
+    nothing is fetched from `main`): the local server's address and a placeholder key.
+    Any other model goes to ``llm_base`` if set, else to its provider's own endpoint,
+    with the provider's key from the environment as litellm reads it. The placeholder is
+    used only for an ``openai/`` model when ``OPENAI_API_KEY`` is unset: a keyless local
+    OpenAI-compatible server (LM Studio, vLLM) still needs a non-empty key in the client,
+    but a real key must never be overridden.
+    """
+    q = cfg.qa
+    custom = os.environ.get("DOCINGEST_LLM") or q.llm
+    if custom is None:
+        return {
+            "model": f"openai/{llm_path(cfg)}",
+            "api_base": q.llm_base or DEFAULT_LLM_BASE,
+            "api_key": "sk-local",  # mlx_vlm.server checks no key
+            "max_tokens": 1024,
+        }
+    params: dict = {"model": custom, "max_tokens": 1024}
+    if q.llm_base:
+        params["api_base"] = q.llm_base
+    if custom.startswith("openai/") and not os.environ.get("OPENAI_API_KEY"):
+        params["api_key"] = "sk-local"
+    return params
+
+
 def local_settings(cfg: AppConfig):
     from paperqa import Settings
 
     _quiet_litellm()
     q = cfg.qa
-    # The server (scripts/serve_llm.sh) loads the same pinned local snapshot path, so the
-    # request's model id matches what it serves and nothing is fetched from `main`.
-    llm = os.environ.get("DOCINGEST_LLM") or q.llm or f"openai/{llm_path(cfg)}"
-    params: dict = {"model": llm, "api_base": q.llm_base, "max_tokens": 1024}
-    if llm.startswith("openai/"):
-        params["api_key"] = "sk-local"
-    llm_cfg = {"model_list": [{"model_name": "local", "litellm_params": params}]}
+    llm_cfg = {"model_list": [{"model_name": "local", "litellm_params": llm_params(cfg)}]}
     embedding = os.environ.get("DOCINGEST_EMBEDDING") or q.embedding or f"st-{embedding_path(cfg)}"
     s = Settings(
         llm="local",
