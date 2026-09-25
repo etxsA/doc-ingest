@@ -71,6 +71,10 @@ per_category = 1
 [presets.screen.suites.olmocr-bench]
 per_category = 6
 
+# Second round: top candidates on a larger olmOCR-bench sample (contains the screen one).
+[presets.deep.suites.olmocr-bench]
+per_category = 20
+
 # Candidates: model x profile x settings. Revisions are Hugging Face commit shas.
 # Optional per candidate: ocr (adapter, default "mlx-vlm"), max_side, max_tokens, dpi,
 # prompt, temperature, repetition_penalty (unset -> the profile's model-card defaults).
@@ -128,3 +132,12 @@ name = "paddleocr-vl"
 repo_id = "mlx-community/PaddleOCR-VL-1.6-4bit"
 revision = "c8987b277bdd8aaec8bd265d154f391bd03ad165"
 profile = "paddleocr-vl"
+
+# Mixture-of-experts: 30B parameters, ~3B active per token. 18.3 GB of weights: needs
+# the GPU wired-memory limit raised above the ~19 GB default, e.g.
+#   sudo sysctl iogpu.wired_limit_mb=21504     (resets on reboot; =0 restores the default)
+[[candidates]]
+name = "qwen3-vl-30b-a3b"
+repo_id = "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit"
+revision = "0555d34cb1ed80c0e61a5635194c70027b4c2ff3"
+profile = "markdown"
