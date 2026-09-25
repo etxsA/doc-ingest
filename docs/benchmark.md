@@ -152,7 +152,7 @@ Throughput is wall-clock seconds per page (median and p90), decode tokens per se
 
 ### Reproduce
 
-The `olmocr-2-7b` row was transcribed with the first olmOCR-2 adapter. At the current code the `olmocr` profile runs the way `olmocr-2-7b-v2` did, so reproducing that row needs commit `855d011`, the last one with the image-first, token-cap-only adapter. Its stored outputs are re-cleaned by the current clean-up at report time; the run's `manifest.json` records every such change under `changes`.
+The `olmocr-2-7b` row was transcribed with the first olmOCR-2 adapter. At the current code the `olmocr` profile runs the way `olmocr-2-7b-v2` did, so reproducing that row needs commit [`696515c`](https://github.com/etxsA/doc-ingest/commit/696515cbe92faebc52e63133d0307c78c4257ade), the last one with the image-first, token-cap-only adapter. Its stored outputs are re-cleaned by the current clean-up at report time; the run's `manifest.json` records every such change under `changes`.
 
 ```bash
 ./scripts/setup_bench_scorer.sh
