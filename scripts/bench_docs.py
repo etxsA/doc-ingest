@@ -182,7 +182,7 @@ def synthetic_table(summary: dict, run: str) -> list[str]:
     return out
 
 
-# How candidates are named in the technical report (ids stay in docs/benchmark.md).
+# Display names for print-style charts (ids stay in docs/benchmark.md).
 DISPLAY = {
     "qwen3.5-9b": "Qwen3.5-9B",
     "qwen3.5-4b": "Qwen3.5-4B",
@@ -579,7 +579,7 @@ def _variant(screen: dict) -> list[str]:
 
 
 def observations(screen: dict | None, deep: dict | None) -> list[str]:
-    """Data-driven comparison statements (Markdown bold), shared with the PDF builder.
+    """Data-driven comparison statements (Markdown bold), reusable outside docs/benchmark.md.
     Every number is computed from the run summaries and scores; none of them picks a model."""
     items = [
         _separation(screen, "olmocr-bench", "pass_rate", "olmOCR-Bench, screening"),

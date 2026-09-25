@@ -1,14 +1,14 @@
 """Charts for a benchmark run: quality vs speed, olmOCR-Bench categories, synthetic CER.
 
     uv run python scripts/bench_charts.py data/bench/runs/screen docs/benchmark
-    uv run python scripts/bench_charts.py data/bench/runs/screen docs/report/figures --paper
+    uv run python scripts/bench_charts.py data/bench/runs/screen out/figures --paper
 
 Reads <run>/summary.json (written by `docingest bench report`) and writes PNGs.
 Colors follow a validated palette (scripts: dataviz validator): three family hues
 (all-pairs CVD-safe) with direct labels on every point, and a one-hue blue ramp for
-magnitudes and ordered levels. --paper writes print-style vector PDFs for the LaTeX
-report: black and white, Computer Modern type, families told apart by marker shape, no
-titles (the report captions them), display names instead of candidate ids.
+magnitudes and ordered levels. --paper writes print-style vector PDFs for papers: black
+and white, Computer Modern type, families told apart by marker shape, no titles (the
+document captions them), display names instead of candidate ids.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ NAMES: dict[str, str] = {}  # candidate id -> label shown (paper mode)
 
 
 def use_paper_style() -> None:
-    """Monochrome, serif, print-style variant (for the technical report)."""
+    """Monochrome, serif, print-style variant (for papers and printed documents)."""
     global SURFACE, TEXT, TEXT_2, GRID, FAMILY, RAMP, LEVELS, MARKER, EDGE, PAPER, NAMES, EXT  # noqa: PLW0603
     from bench_docs import DISPLAY
 
@@ -68,11 +68,11 @@ def use_paper_style() -> None:
     LEVELS = {"clean": "#ffffff", "light": "#8c8c8c", "heavy": "#000000"}
     EDGE = "#000000"
     NAMES = DISPLAY
-    EXT = "pdf"  # vector, for LaTeX
+    EXT = "pdf"  # vector, for papers
     matplotlib.rcParams.update(
         {
             "font.family": "serif",
-            "font.serif": ["cmr10"],  # Computer Modern, like the LaTeX text around it
+            "font.serif": ["cmr10"],  # Computer Modern, like LaTeX body text
             "mathtext.fontset": "cm",
             "axes.unicode_minus": False,  # cmr10 has no Unicode minus
             "axes.formatter.use_mathtext": True,
@@ -137,7 +137,7 @@ def figure(w: float, h: float):
 
 def title(ax, text: str, sub: str) -> None:
     if PAPER:
-        return  # the report's caption carries the title
+        return  # the document's caption carries the title
     ax.set_title(text, loc="left", fontsize=12, color=TEXT, fontweight="bold", pad=22)
     ax.text(0, 1.02, sub, transform=ax.transAxes, fontsize=8.5, color=TEXT_2, va="bottom")
 

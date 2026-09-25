@@ -14,3 +14,19 @@ data/samples/*.html
 # Benchmark scorer venv and downloaded benchmark data
 .bench-venv/
 data/bench/
+
+# Tool caches and coverage data
+.coverage
+.ruff_cache/
+.import_linter_cache/
+.claude/
+
+# Local-only: generated technical report and its builder (not published)
+docs/docingest_report.pdf
+docs/docingest_overview.pdf
+docs/report/
+scripts/build_report.py
+
+# Regenerable sample renders (scripts/fetch_samples.sh, docingest make-scan)
+data/samples/*.png
+data/samples/*.truth.json
