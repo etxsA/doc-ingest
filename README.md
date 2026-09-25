@@ -37,6 +37,7 @@ Package: `docingest` 0.3.1, Python 3.12, managed with [uv](https://docs.astral.s
 - [Reproducibility](#reproducibility)
 - [Documentation index](#documentation-index)
 - [Version history](#version-history)
+- [License](#license)
 
 ## What docingest is and why
 
@@ -429,7 +430,7 @@ Model weights are downloaded into the Hugging Face cache the first time they are
 1. Clone and install. The extras are `mlx` (Apple Silicon OCR), `qa` (PaperQA2) and `office` (Docling).
 
    ```bash
-   git clone <repository-url> doc-ingest
+   git clone https://github.com/etxsA/doc-ingest.git
    cd doc-ingest
    uv sync --locked --all-extras
    ```
@@ -818,3 +819,7 @@ pytest runs with `--strict-markers`; the markers are `model`, `network` and `slo
 - **v0.1:** first prototype: PDF text layer plus Qwen3-VL OCR, with PaperQA2 integration.
 - **v0.2:** 26 defects found by adversarial review and fixed (pdfium hyphen markers, cache variants, token windows, pinning, and more).
 - **v0.3:** hexagonal architecture, LaTeX ingestion and the arXiv crawler, the OpenAI-compatible OCR adapter, the benchmark harness, and quality gates. The current version is 0.3.1.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE). Model weights, datasets and papers used by the pipeline and the benchmark keep their own licenses.

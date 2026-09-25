@@ -2,6 +2,8 @@
 name = "docingest"
 version = "0.3.1"
 description = "Normalize any research document (PDF, scanned PDF, images, office) into Markdown + provenance manifest, with local Qwen-VL OCR on MLX"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "etxsA", email = "93368439+etxsA@users.noreply.github.com" }
 ]
