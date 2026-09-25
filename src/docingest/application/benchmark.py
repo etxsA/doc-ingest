@@ -762,15 +762,14 @@ def render_report(summary: Mapping[str, Any]) -> str:
             out += ["", f"Primary metric: **{primary}** ({direction} is better).", ""]
             out += ["### Overall", ""]
             out += _table(
-                ["#", "candidate", *metrics, "outputs"],
+                ["candidate", *metrics, "outputs"],
                 (
                     [
-                        i,
                         c,
                         *(_fmt(scores[c]["metrics"].get(k), pct) for k in metrics),
                         f"{scores[c]['n_outputs']}/{scores[c]['n_samples']}",
                     ]
-                    for i, c in enumerate(s["ranking"], 1)
+                    for c in s["ranking"]
                 ),
             )
             out += _cluster_notes(scores, s["ranking"], pct)

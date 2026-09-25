@@ -108,7 +108,7 @@ Five **import-linter contracts** enforce these layers in CI (`uv run lint-import
 
 ## OCR models and benchmark
 
-The OCR model is one config line. Every model below is pinned by commit in `config/benchmark.toml`, uses a **per-model profile** (prompt, image size, clean-up and generation defaults, all taken from the model cards) and has been benchmarked on this machine:
+The OCR model is one config line. Every model below is pinned by commit in `config/benchmark.toml`, uses a **per-model profile**: image size, clean-up and generation defaults from the model card or official repository. The OCR-specialized models get their model-card prompt; the Qwen models get this project's Markdown prompt, which also asks them to omit page headers and footers. and has been benchmarked on this machine:
 
 | Candidate | Profile | Size |
 |---|---|---|

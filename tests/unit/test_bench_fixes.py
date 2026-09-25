@@ -150,7 +150,7 @@ def test_report_labels_the_official_olmocr_ci_separately(tmp_path):
     )
     (tmp_path / "scores" / "mem.json").write_text(json.dumps({"a": sc.to_dict()}))
     md = render_report(build_summary(tmp_path, n_boot=100))
-    assert "| 1 | a | 19.6% [9.5, 37.1] |" in md  # the headline CI is the clustered one
+    assert "| a | 19.6% [9.5, 37.1] |" in md  # the headline CI is the clustered one
     assert "One cluster = a PDF with all its tests, drawn within its category; 7 clusters." in md
     assert "Official scorer CI" in md and "| a | [9.8, 29.2] | 9.7% |" in md
 

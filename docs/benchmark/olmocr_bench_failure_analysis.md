@@ -8,18 +8,34 @@ and to the extra candidate `olmocr-2-7b-v2`.
 ## Follow-up, 2026-09-25: olmocr-2-7b-v2 measured
 
 Same weights and the same 42 PDFs, run closer to the authors' pipeline: prompt before the image,
-their temperature ladder, and a retry until the output has front matter followed by page text.
+their temperature ladder (0.1 up to 1.0), and a retry until the output has front matter followed
+by page text.
 
 | | olmocr-2-7b | olmocr-2-7b-v2 |
 |---|---|---|
 | pass rate [95% CI] | 64.4 [52.4, 74.8] | 76.7 [67.8, 84.6] |
 | outputs with no page text | 9 of 42 | 0 of 42 |
-| median s/page | 20.0 | 30.9 (36% of pages retried at least once) |
+| failed tests | 93 | 61 |
+| median / p90 s per page | 20.0 / 44.4 | 30.9 / 182.9 (15 of 42 pages retried, up to 8 attempts) |
+| arXiv math, old scans math, tables, old scans | 83, 71, 53, 38 | 81, 84, 88, 56 |
+| headers/footers, multi-column, tiny text | 72, 47, 72 | 100, 67, 44 |
 
-- **Paired difference:** +12.3 pts [+2.0, +23.2], sign-flip p = 0.061.
-- **Against the estimate below:** the measured 76.7 is inside the 73.9–76.8 range estimated from other models' results on the header-only pages.
-- **Remaining gap to the published 82.4:** v2 still differs from the official pipeline (no strict front-matter parse, no rotation retries, no text-layer fallback), and it runs 4-bit on MLX.
-- **Sources:** numbers from `data/bench/runs/screen/summary.json`; the generated comparison is in [../benchmark.md](../benchmark.md).
+- **Paired difference:** +12.3 pts [+2.0, +23.2]; sign-flip p = 0.061, so the two are **not distinguished at the 5% level**. The test decides, even though the bootstrap interval excludes 0.
+- **Where the change comes from:** the score is linear in the test results, so it splits exactly.
+  - **The 9 header-only pages:** v2 passes 32 of their 51 tests (the first adapter passed 5). Swapping only these in gives 73.2, +8.8 pts.
+  - **The other 33 pages:** v2 fails 42 tests against 47. Swapping only these in gives +3.5 pts.
+  - **The estimate below:** it predicted 73.9–76.8 from other models' results on the header-only pages. v2's own result on those pages alone (73.2) falls short of that range. The 76.7 total landing inside the range is therefore a coincidence of the two parts, not a confirmation of the estimate.
+- **Cost and trade-offs:** the retries make v2 the slowest candidate (p90 183 s/page). Tiny text drops from 72 to 44. Two pages that the first adapter failed and this analysis attributes to the model (8dd368, headers/footers, and cefac431, tables) pass completely with v2. See the notes in "Model behaviour" below.
+- **Published 82.4:** it lies inside v2's 95% CI [67.8, 84.6], so this 42-PDF subset cannot show a gap to it. v2 still differs from the official pipeline in these ways:
+  - no strict front-matter parse;
+  - header-only answers are retried rather than accepted as blank pages, which favours v2;
+  - no rotation retries;
+  - no text-layer fallback;
+  - it runs 4-bit on MLX.
+
+  None of these differences is measured here.
+- **Sources:** numbers from `data/bench/runs/screen/summary.json` and `scores/olmocr-bench.json`; the generated comparison is in [../benchmark.md](../benchmark.md).
+- **Numbers in the rest of this document** are as analysed. When pipeline 0.3.1 re-applied the clean-up, nanonets-ocr2-3b moved from 69.6 to 71.1: 90 failed tests instead of 93, and 17 headers/footers fails instead of 20. The other models' figures did not change.
 
 # olmOCR-Bench screen: failure-mode synthesis
 
@@ -51,7 +67,7 @@ Category codes used below:
 - MC: multi_column
 - LT: long_tiny_text
 
-Every model fails 13–20 OS tests (handwriting and scan misreads). 12 of these tests fail for all top four models, including the "gropings" ground-truth error.
+Every model fails 13–20 OS tests (handwriting and scan misreads). 12 of these tests fail for all four of qwen3.5-9b, qwen3.5-4b, qwen3-vl-8b and glm-ocr, including the "gropings" ground-truth error.
 
 **qwen3.5-9b** (83.0; 43 fails)
 | Mode | Fails |
@@ -88,7 +104,7 @@ Every model fails 13–20 OS tests (handwriting and scan misreads). 12 of these 
 | Math symbol slips | AM 13, OSM 12 |
 | Checkbox column merged (cefac431) | TB 6 |
 
-**nanonets-ocr2-3b** (69.6; 93)
+**nanonets-ocr2-3b** (69.6; 93 as analysed; 71.1 and 90 after the 0.3.1 clean-up)
 | Mode | Fails |
 |---|---|
 | Math as undelimited text (3 pages) | OSM 37 of 44 |
@@ -124,7 +140,7 @@ Every model fails 13–20 OS tests (handwriting and scan misreads). 12 of these 
   - 66.9 if only the 8 baseline tests on those pages pass.
   - 73.9–76.8 if we substitute each other model's results on those pages (their average gives 75.3).
   - 80.3 at most, if every test on those pages passes.
-- **Image-first prompt order.** The official setup puts the text first. This plausibly causes the format drift: all 18 saved raw outputs start with a code fence or "# Primary language". Impact not quantified.
+- **Image-first prompt order.** The official setup puts the text first. This was thought to cause the format drift. v2 tested it: with the prompt first, all 42 accepted outputs are still wrapped in a code fence, 10 of 42 do not use `---` front matter, and 15 of 42 pages needed retries, so prompt order alone does not remove the drift. The original evidence: all 18 saved raw outputs start with a code fence or "# Primary language". Impact not quantified.
 - **Clean-up misses ```json fences.** The regex `_OPEN_FENCE` has no `json` case, so 4 pages keep the header. The analyst simulated stripping it: the score drops to 64.1.
 - **First-attempt temperature.** Ours is 0.0, the official one is 0.1. Impact not quantified.
 
@@ -134,6 +150,7 @@ Every model fails 13–20 OS tests (handwriting and scan misreads). 12 of these 
 - Page c8cdd4 took 205 s for 1470 tokens against a median of about 40 tok/s, which implies a retry that telemetry doesn't show. It still fails 3 table tests.
 
 **Model behaviour**
+- **Adapter dependence (measured later):** with the v2 adapter, the same weights pass every test on 8dd368 (10 of 10; the first adapter passed 3) and on cefac431 (8 of 8, against 1). Failures on those pages depend on the adapter and decoding, so they are not established as fixed model behaviour, and the "about 7 points" residual below is an upper estimate.
 - 47 fails are on pages that did produce text. 28 of them are also failed by at least 5 of the 8 other models, 16 by 2–4, and 3 only by olmocr.
 - None of the 42 outputs contains an HTML table.
 - About 7 points would remain after the pipeline fixes. That can't be separated from 4-bit loss and subset noise (per-PDF bootstrap CI [52.4, 74.8]).
@@ -208,6 +225,7 @@ Where the 93 failures are:
 - **Unchanged:** image size (1288 px; ours is downscaled from a 2048 px render instead of rendered directly), max tokens 8000, repetition penalty 1.05 from the model's settings, and figure-tag handling (kept on both sides, 0 tests).
 
 **(c) Genuine model behaviour (47 failures on pages with text)**
+- **Note, measured later:** v2, with the same weights and a different adapter, passes all tests on 8dd368 and cefac431. Failures there depend on the adapter and decoding and are not fixed model behaviour.
 - **Headers/footers, page 8dd368:** 7 failures; it copies the document-control box ("issued: 2019-04-17", "Revision 2"). 6 of the 8 other models fail it too. This single page accounts for the whole headers/footers drop (72.0 vs 96.1 published).
 - **Order tests (36%, 9 of 25 pass):** 16 failures.
   - 7 are on empty pages.
@@ -234,7 +252,7 @@ Everything is in `<local scratch dir>/olmfail/olmocr27b/`:
 
 ### categories
 
-**Top-group gaps on the olmOCR-bench subset (qwen3.5-9b, qwen3.5-4b, qwen3-vl-8b, glm-ocr)**
+**Gaps among qwen3.5-9b, qwen3.5-4b, qwen3-vl-8b and glm-ocr on the olmOCR-bench subset**
 
 I ran the official scorer's test classes on the scored outputs for these four candidates and got per-test results with the scorer's explanations. Every category score matches `report.md`. Only olmocr-2-7b has files under `raw_outputs`, so the later clean-up fix did not change any of these four.
 

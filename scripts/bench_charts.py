@@ -188,7 +188,7 @@ def quality_vs_speed(summary: dict, out: Path) -> Path | None:
     title(
         ax,
         "Quality vs speed",
-        "Higher and further left is better; bars are 95% CIs (PDFs resampled within categories).",
+        "Up: higher pass rate. Left: faster. Bars are 95% CIs (PDFs resampled within categories).",
     )
     ax.legend(
         frameon=False,
@@ -248,7 +248,7 @@ def categories(summary: dict, out: Path) -> Path | None:
     title(
         ax,
         "olmOCR-Bench pass rate by category (%)",
-        "Rows ranked by overall score; each cell is one category's test pass rate.",
+        "Rows ordered by mean pass rate; each cell is one category's test pass rate.",
     )
     fig.tight_layout()
     path = out / "olmocr_categories.png"
@@ -262,6 +262,9 @@ def synthetic(summary: dict, out: Path) -> Path | None:
     if not suite:
         return None
     rows = [n for n in suite.get("ranking", []) if n in suite["scores"]]
+    first = suite["scores"][rows[0]]
+    n_sep = len(first["details"].get("reported_separately", {}))
+    n_pages = (first["metrics"]["cer"].get("n") or first["n_samples"]) // len(LEVELS)
     fig, ax = figure(7.2, 1.6 + 0.36 * len(rows))
     for i, name in enumerate(rows):
         bc = suite["scores"][name]["by_category"]
@@ -285,13 +288,15 @@ def synthetic(summary: dict, out: Path) -> Path | None:
                     label=lv if i == 0 else None,
                 )
     ax.set_yticks(range(len(rows)), rows, fontsize=8.5)
-    ax.set_ylim(len(rows) - 0.5, -0.5)  # ranked best first, with breathing room
+    ax.set_ylim(len(rows) - 0.5, -0.5)  # in summary order, with breathing room
     ax.set_xlabel("character error rate (%) - lower is better", color=TEXT_2, fontsize=9)
     ax.grid(axis="y", visible=False)
     title(
         ax,
         "Synthetic degraded scans: CER by degradation level",
-        "12 born-digital pages x 3 levels; reference = text layer minus page furniture.",
+        f"{n_pages} born-digital pages x 3 levels"
+        + (f" (+{n_sep} reported separately)" if n_sep else "")
+        + "; reference: text layer minus furniture.",
     )
     ax.legend(
         frameon=False,
