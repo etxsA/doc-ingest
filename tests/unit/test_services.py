@@ -44,6 +44,7 @@ def test_crawl_fetches_writes_sidecar_ingests_and_survives_failures(tmp_path):
     ).run("cat:cs.CL", limit=5)
     assert len(report.fetched) == 1 and len(report.ingested) == 1
     assert report.failures[0][0] == "2401.00002"
+    assert report.stopped is None  # an ordinary failure does not stop the crawl
     assert (tmp_path / "2401.00001.tex.meta.json").exists()
     assert report.ingested[0].manifest.metadata.arxiv_id == "2401.00001"
 

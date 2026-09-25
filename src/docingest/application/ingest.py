@@ -62,6 +62,19 @@ def read_sidecar(path: Path) -> SourceMetadata | None:
     return SourceMetadata.model_validate_json(sidecar.read_text())
 
 
+def retitle_markdown(markdown: str, old: str | None, new: str | None) -> str | None:
+    """Swap the ``# title`` line :func:`render_markdown` wrote; page text is kept as is.
+
+    Same output as rendering the pages again under ``new``. None when ``markdown`` does
+    not start with the line rendered for ``old`` (edited by hand, another writer).
+    """
+    head = f"# {old}\n" if old else ""
+    if not markdown.startswith(head):
+        return None
+    body = markdown[len(head) :].lstrip("\n")
+    return "\n".join([f"# {new}\n" if new else "", body]).strip() + "\n"
+
+
 class IngestService:
     def __init__(
         self,
@@ -117,17 +130,25 @@ class IngestService:
             )
             if cached:
                 self.log(f"[cache] {path.name} -> {cached.location} (config {config_hash})")
-                return cached
+                if metadata is None or metadata == cached.manifest.metadata:
+                    return cached
+                refreshed = self._refresh_metadata(cached, metadata)
+                if refreshed is not None:
+                    return refreshed
+                self.log("  stored Markdown is not what this pipeline wrote: re-processing")
 
         t0 = time.perf_counter()
         title = None
+        degraded = False
         match kind:
             case SourceKind.PDF:
                 records, texts, title, source_pages = self._pdf(path, options)
             case SourceKind.IMAGE:
                 records, texts, source_pages = self._image(path, options)
             case _:
-                records, texts, title, source_pages, conv_meta = self._convert(path, kind, options)
+                records, texts, title, source_pages, conv_meta, degraded = self._convert(
+                    path, kind, options
+                )
                 metadata = metadata or conv_meta
 
         uses_ocr = any(r.method == PageMethod.VLM_OCR for r in records)
@@ -150,7 +171,37 @@ class IngestService:
             metadata=metadata,
             total_seconds=round(time.perf_counter() - t0, 2),
         )
-        return self.store.save(manifest, render_markdown(manifest, texts))
+        if degraded:
+            self.log(
+                "  warning: degraded fallback conversion (timeout / crash): stored outside the"
+                " cache, the next run retries the converter"
+            )
+        return self.store.save(manifest, render_markdown(manifest, texts), degraded=degraded)
+
+    def _refresh_metadata(
+        self, cached: StoredDocument, metadata: SourceMetadata
+    ) -> StoredDocument | None:
+        """Put new bibliographic metadata on a cached result without re-processing it.
+
+        doc_id and config_hash cover only the bytes and the adapters, so a sidecar
+        written or edited later, or a crawl that has since learned the license, would
+        otherwise never reach the manifest short of ``--force``, which re-runs OCR or
+        pandoc. Only the manifest's metadata and title, the Markdown's ``# title`` line
+        and (through ``save``) the store's catalog change. A new title comes from the
+        new metadata; without one the stored title is kept, since the converter's own
+        title is not known without converting again. None: re-process instead.
+        """
+        old = cached.manifest
+        title = metadata.title or old.title
+        try:
+            markdown = retitle_markdown(self.store.markdown(cached), old.title, title)
+        except OSError:  # the manifest survived but its Markdown did not
+            return None
+        if markdown is None:
+            return None
+        self.log("  metadata changed: manifest and title updated, not re-processed")
+        manifest = old.model_copy(update={"metadata": metadata, "title": title})
+        return self.store.save(manifest, markdown)
 
     # --------------------------------------------------------------- handlers
     def _converter(self, kind: SourceKind) -> DocumentConverter:
@@ -217,7 +268,9 @@ class IngestService:
             texts.append(text)
         return records, texts, total
 
-    def _convert(self, path: Path, kind: SourceKind, options: IngestOptions):
+    def _convert(
+        self, path: Path, kind: SourceKind, options: IngestOptions
+    ) -> tuple[list[PageRecord], list[str], str | None, int, SourceMetadata | None, bool]:
         t0 = time.perf_counter()
         conv = self._converter(kind).convert(path)
         for w in conv.warnings:
@@ -239,7 +292,8 @@ class IngestService:
             for i, s in enumerate(segments)
         ]
         self.log(f"  {conv.method.value}: {len(segments)} segment(s) via {conv.engine}")
-        return records, [s.text for s in segments], conv.title, total, conv.metadata
+        texts = [s.text for s in segments]
+        return records, texts, conv.title, total, conv.metadata, conv.degraded
 
     def _ocr_record(self, i: int, image, probe) -> tuple[PageRecord, str]:
         res = self.ocr.transcribe(image)

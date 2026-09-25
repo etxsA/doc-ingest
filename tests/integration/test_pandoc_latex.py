@@ -82,6 +82,7 @@ def test_fixture_paper(tmp_path, form):
     conv = CONVERTER.convert(src)
 
     assert conv.method == PageMethod.LATEX and conv.engine == CONVERTER.engine
+    assert not conv.degraded
     assert [s.title for s in conv.segments] == TITLES
     assert conv.title == "Sparse Attention for Tiny Transformers"
     assert conv.metadata is not None
@@ -171,6 +172,7 @@ def test_timeout_falls_back_to_plain_text(tmp_path):
     assert conv.method == PageMethod.LATEX_PLAINTEXT
     assert conv.engine.startswith("pylatexenc ")
     assert "pandoc timed out after 1s; used the pylatexenc plain-text fallback" in conv.warnings
+    assert conv.degraded  # a busy machine: must not be cached as the paper's conversion
     assert [s.title for s in conv.segments] == TITLES
     assert conv.metadata is not None and conv.metadata.authors == ["Ada Lovelace", "Alan Turing"]
     text = text_of(conv)
@@ -185,6 +187,24 @@ def test_suspiciously_short_output_falls_back(tmp_path):
     )
     assert conv.method == PageMethod.LATEX_PLAINTEXT
     assert any("pandoc kept" in w for w in conv.warnings)
+    assert not conv.degraded  # the same document gives the same output next time
+
+
+@pytest.mark.skipif(os.name != "posix", reason="shell-script stand-in for pandoc")
+@pytest.mark.parametrize(
+    ("script", "degraded"),
+    [
+        ("echo 'pandoc: Heap exhausted;' >&2; exit 251", True),  # GHC runtime, +RTS -M cap
+        ("kill -9 $$", True),  # a signal: the OOM killer, a user's kill
+        ("echo 'Error at (line 3, column 1): unexpected end of input' >&2; exit 64", False),
+        ("echo 'Error: macro loop' >&2; exit 91", False),
+    ],
+)
+def test_fallback_is_degraded_only_when_the_machine_failed(tmp_path, script, degraded):
+    cfg = LatexConfig(pandoc_path=fake_pandoc(tmp_path, script))
+    conv = PandocLatexConverter(cfg).convert(PAPER / "main.tex")
+    assert conv.method == PageMethod.LATEX_PLAINTEXT
+    assert conv.degraded is degraded
 
 
 def test_fallback_survives_pylatexenc_crashes(tmp_path, monkeypatch):
@@ -217,6 +237,7 @@ def test_malformed_latex(tmp_path):
     assert conv.method == PageMethod.LATEX_PLAINTEXT
     assert [s.title for s in conv.segments] == ["Broken"]
     assert "pandoc exited with code 64" in conv.warnings[0]
+    assert not conv.degraded  # the input itself: cache the fallback
     with pytest.raises(ConversionError, match="code 64"):
         PandocLatexConverter(LatexConfig(fallback=False)).convert(FIXTURES / "malformed.tex")
 
@@ -228,6 +249,7 @@ def test_missing_pandoc(tmp_path):
     conv = converter.convert(PAPER / "main.tex")
     assert conv.method == PageMethod.LATEX_PLAINTEXT and conv.title is not None
     assert any("pandoc could not run" in w for w in conv.warnings)
+    assert conv.degraded
     with pytest.raises(ConversionError, match="could not run"):
         PandocLatexConverter(conv_cfg.model_copy(update={"fallback": False})).convert(
             PAPER / "main.tex"
@@ -245,6 +267,56 @@ def test_unreadable_include_is_a_conversion_error(tmp_path):
             CONVERTER.convert(tmp_path / "main.tex")
     finally:
         locked.chmod(0o644)
+
+
+@needs_pandoc
+@pytest.mark.parametrize(
+    "tex",
+    [  # each used to lose the document after an \endinput TeX never executes
+        "\\begin{filecontents*}{notation.sty}\n\\ProvidesPackage{notation}\n"
+        "\\newcommand{\\R}{\\mathbb{R}}\n\\endinput\n\\end{filecontents*}\n"
+        "\\documentclass{article}\n\\title{A Real Paper}\n\\begin{document}\n\\maketitle\n"
+        "\\section{Intro}\nWe study $\\R^n$.\n\\section{Results}\nImportant results.\n"
+        "\\end{document}\n",
+        DOC % "\\section{Intro}\nEnd a package with \\verb|\\endinput| always.\n"
+        "\\section{Results}\nImportant results.",
+        "\\documentclass{article}\n\\newcommand{\\stopreading}{\\endinput}\n\\begin{document}\n"
+        "\\section{Intro}\nText.\n\\section{Results}\nImportant results.\n\\end{document}\n",
+    ],
+)
+def test_endinput_tex_does_not_execute_keeps_the_document(tmp_path, tex):
+    (tmp_path / "paper.tex").write_text(tex)
+    conv = CONVERTER.convert(tmp_path / "paper.tex")
+    assert conv.method == PageMethod.LATEX and conv.warnings == []
+    assert [s.title for s in conv.segments] == ["Intro", "Results"]
+    assert "Important results." in text_of(conv)
+
+
+@needs_pandoc
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "We use a learning rate of $3$$\\times 10^{-4}$.",
+        "Accuracy is $91.2$$\\pm$$0.3$ on the test set, i.e. $x$$^2$.",
+    ],
+)
+def test_adjacent_inline_math_does_not_merge_sections(tmp_path, sentence):
+    body = f"\\section{{Intro}}\n{sentence}\n\\section{{Method}}\nM.\n\\section{{Results}}\nR."
+    (tmp_path / "main.tex").write_text(DOC % body)
+    conv = CONVERTER.convert(tmp_path / "main.tex")
+    assert [s.title for s in conv.segments] == ["Intro", "Method", "Results"]
+
+
+@needs_pandoc
+def test_percent_in_inline_code_is_not_a_comment(tmp_path):
+    body = (
+        "\\section{Parity}\nWe test parity with \\lstinline!n % 2 == 0! in the inner loop.\n"
+        "\\section{Results}\nResults text."
+    )
+    (tmp_path / "main.tex").write_text("\\usepackage{listings}\n" + DOC % body)
+    conv = CONVERTER.convert(tmp_path / "main.tex")
+    assert conv.method == PageMethod.LATEX and conv.warnings == []
+    assert "We test parity with `n % 2 == 0` in the inner loop." in text_of(conv)
 
 
 @needs_pandoc
@@ -317,6 +389,6 @@ def test_real_arxiv_sources(name, title, min_segments):
     t0 = time.perf_counter()
     conv = CONVERTER.convert(src)
     assert time.perf_counter() - t0 < 30
-    assert conv.method == PageMethod.LATEX and conv.title == title
+    assert conv.method == PageMethod.LATEX and conv.title == title and not conv.degraded
     assert len(conv.segments) >= min_segments
     assert text_of(conv).count("$") >= 20  # math survives as $...$

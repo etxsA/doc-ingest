@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import cached_property
-from importlib.metadata import entry_points
+from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -121,20 +121,41 @@ REGISTRY: dict[str, dict[str, Factory]] = {
 }
 
 
-def available(port: str) -> dict[str, Factory]:
-    """Built-in adapters for a port plus any installed entry-point plugins."""
-    found = dict(REGISTRY[port])
+def plugins(port: str) -> dict[str, EntryPoint]:
+    """Installed entry-point plugins for a port, by name, *not* imported.
+
+    Importing a plugin runs its module and its optional (often heavy) dependencies, so
+    one broken plugin must not break a port whose selected adapter is another one: only
+    the selected plugin is ever loaded, by :func:`factory`.
+    """
+    found: dict[str, EntryPoint] = {}
     for ep in entry_points(group=f"docingest.{port}"):
-        found.setdefault(ep.name, ep.load())
+        found.setdefault(ep.name, ep)
     return found
 
 
+def available(port: str) -> list[str]:
+    """Names of the built-in adapters of a port plus its installed plugins (none loaded)."""
+    return sorted({*REGISTRY[port], *plugins(port)})
+
+
+def factory(port: str, name: str) -> Factory:
+    """The factory for adapter ``name``: a built-in (which wins a name clash), else that
+    one plugin, imported now. A plugin's import error keeps its type, with a note."""
+    if name in REGISTRY[port]:
+        return REGISTRY[port][name]
+    eps = plugins(port)
+    if name not in eps:
+        raise ValueError(f"unknown {port} adapter {name!r}; available: {available(port)}")
+    try:
+        return eps[name].load()
+    except Exception as e:
+        e.add_note(f"while loading the {port} adapter plugin {name!r} ({eps[name].value})")
+        raise
+
+
 def build(port: str, cfg: AppConfig) -> Any:
-    name = getattr(cfg.adapters, port)
-    factories = available(port)
-    if name not in factories:
-        raise ValueError(f"unknown {port} adapter {name!r}; available: {sorted(factories)}")
-    return factories[name](cfg)
+    return factory(port, getattr(cfg.adapters, port))(cfg)
 
 
 class Container:

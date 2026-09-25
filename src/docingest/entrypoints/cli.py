@@ -14,7 +14,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from ..application.ingest import SIDECAR_SUFFIX, IngestOptions
-from ..bootstrap import REGISTRY, Container, available
+from ..bootstrap import REGISTRY, Container, available, factory, plugins
 from ..config import load_config
 from ..domain.text import split_pages
 from ..ports import StoredDocument
@@ -24,7 +24,11 @@ app = typer.Typer(add_completion=False, help="Normalize any research document to
 app.add_typer(bench_app, name="bench")
 console = Console()
 
-ConfigOpt = Annotated[Path | None, typer.Option("--config", "-c", help="pipeline.toml")]
+# exists=True: a mistyped --config is an error, never a silent switch to the defaults.
+ConfigOpt = Annotated[
+    Path | None,
+    typer.Option("--config", "-c", help="pipeline.toml", exists=True, dir_okay=False),
+]
 
 
 def _log(msg: str) -> None:
@@ -120,6 +124,8 @@ def crawl(
     if report.ingested:
         _summary(report.ingested)
     console.print(f"fetched {len(report.fetched)}, ingested {len(report.ingested)}")
+    if report.stopped:
+        console.print(f"[yellow]crawl stopped early[/]: {escape(report.stopped)}")
     if report.failures:
         _failures(report.failures)
         raise typer.Exit(1)
@@ -199,6 +205,22 @@ def ask(question: str, config: ConfigOpt = None) -> None:
     console.print(answer, markup=False, highlight=False)  # LLM text may contain [brackets]
 
 
+def _selected_status(port: str, name: str) -> str:
+    """The selected adapter's name, flagged if it is unknown or a plugin that fails to load.
+
+    Only the selected plugin is imported (as a run would): listing never imports one.
+    """
+    if name in REGISTRY[port]:
+        return name
+    if name not in plugins(port):
+        return f"{name} (unknown)"
+    try:
+        factory(port, name)
+    except Exception as e:  # show a broken plugin instead of crashing the listing
+        return f"{name} (broken: {type(e).__name__}: {e})"
+    return f"{name} (plugin)"
+
+
 @app.command()
 def adapters(config: ConfigOpt = None) -> None:
     """List the adapters available for each port and which one is selected."""
@@ -207,7 +229,15 @@ def adapters(config: ConfigOpt = None) -> None:
     for col in ("port", "selected", "available"):
         table.add_column(col)
     for port in REGISTRY:
-        table.add_row(port, getattr(cfg.adapters, port), ", ".join(sorted(available(port))))
+        found = plugins(port)
+        names = [
+            f"{name} (plugin{', shadowed by the built-in' if name in REGISTRY[port] else ''})"
+            if name in found
+            else name
+            for name in available(port)
+        ]
+        selected = _selected_status(port, getattr(cfg.adapters, port))
+        table.add_row(port, escape(selected), escape(", ".join(names)))
     console.print(table)
 
 

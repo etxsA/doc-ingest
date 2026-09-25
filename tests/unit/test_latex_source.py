@@ -414,9 +414,10 @@ def test_split_sections_levels():
 
 # ------------------------------------------------ Markdown helpers (pandoc_latex)
 def test_split_markdown_ignores_math_and_code():
+    # Shaped like pandoc's output: blocks separated by blank lines, $$ math in a paragraph.
     md = (
-        "intro\n# One\ntext\n$$\n# not a heading\n$$\n```\n# code\n```\n"
-        "## One.a\nx\n### deep stays\n# Two {#sec}\n"
+        "\nintro\n\n# One\n\ntext $$\n# not a heading\n$$\n\n```\n\n# code\n```\n\n"
+        "## One.a\n\nx\n# not after a blank line\n\n### deep stays\n\n# Two {#sec}\n"
     )
     parts = split_markdown(md, 2)
     assert [(lvl, title) for lvl, title, _, _ in parts] == [
@@ -426,7 +427,8 @@ def test_split_markdown_ignores_math_and_code():
         (1, "Two {#sec}"),
     ]
     assert "# not a heading" in parts[1][3] and "# code" in parts[1][3]
-    assert "### deep stays" in parts[2][3]
+    assert "# not after a blank line" in parts[2][3] and "### deep stays" in parts[2][3]
+    assert [title for _, title, _, _ in split_markdown("# First\n\nx", 1)] == [None, "First"]
 
 
 def test_assemble_paths_and_heading_only_sections():

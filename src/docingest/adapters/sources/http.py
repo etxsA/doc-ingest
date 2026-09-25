@@ -4,9 +4,10 @@ Open-access archives ask crawlers for the same things: a minimum interval betwee
 requests, a single connection at a time, an identifying User-Agent, and backing off
 when told to (429 / 503 + ``Retry-After``). :class:`PoliteClient` enforces all of it in
 one place, so every request an adapter makes (search, download, license lookup) draws
-on one shared budget. The network sits behind a tiny :class:`Transport` callable and
-the clock is injectable, so unit tests replay recorded responses without sockets or
-real sleeping.
+on one shared budget, and a pause the server asks for holds all of them, not only the
+retries of the URL that was refused. The network sits behind a tiny :class:`Transport`
+callable and the clock is injectable, so unit tests replay recorded responses without
+sockets or real sleeping.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
-from ...domain.errors import DocingestError, SourceUnavailableError
+from ...domain.errors import DocingestError, RateLimitedError, SourceUnavailableError
 
 log = logging.getLogger(__name__)
 
@@ -128,24 +129,45 @@ class HttpStatusError(SourceUnavailableError):
         self.status = status
 
 
+class RetriesExhaustedError(SourceUnavailableError):
+    """Every attempt failed transiently (5xx, network errors, cut bodies): may clear up."""
+
+
 class RateLimiter:
-    """Minimum interval between request *starts*. One instance = one shared budget."""
+    """Minimum interval between request *starts*, plus any pause the server asked for.
+
+    One instance = one shared budget: a ``Retry-After`` recorded with :meth:`defer`
+    holds every later request, whatever its URL.
+    """
 
     def __init__(self, interval_s: float, clock: Clock = time.monotonic, sleep: Sleep = time.sleep):
         self.interval_s = interval_s
         self._clock = clock
         self._sleep = sleep
         self._last: float | None = None
+        self._not_before = float("-inf")
+
+    def defer(self, seconds: float) -> None:
+        """Start no request before ``seconds`` from now; never shortens a longer pause."""
+        self._not_before = max(self._not_before, self._clock() + seconds)
+
+    def paused_s(self) -> float:
+        """Seconds left of the pause set by :meth:`defer` (0 when there is none)."""
+        return max(self._not_before - self._clock(), 0.0)
 
     def wait(self) -> float:
         """Block until a request may start, mark it started; return the seconds waited."""
         waited = 0.0
-        if self._last is not None:
-            while (remaining := self._last + self.interval_s - self._clock()) > 0:
-                self._sleep(remaining)
-                waited += remaining
+        while (remaining := self._ready_at() - self._clock()) > 0:
+            self._sleep(remaining)
+            waited += remaining
         self._last = self._clock()
         return waited
+
+    def _ready_at(self) -> float:
+        if self._last is None:
+            return self._not_before
+        return max(self._not_before, self._last + self.interval_s)
 
 
 def retry_after_seconds(value: str | None, now: datetime | None = None) -> float | None:
@@ -178,7 +200,11 @@ class PoliteClient:
     * one request in flight at a time (a lock held until its body is fully read);
     * ``retries`` extra attempts on 429 / 5xx / network errors / truncated bodies, with
       exponential backoff (``max(delay_s, 1) * 2**attempt``) or the server's
-      ``Retry-After``; a ``Retry-After`` longer than ``max_retry_after_s`` fails fast.
+      ``Retry-After``, which also pauses the shared limiter for every later request;
+    * :class:`RateLimitedError` when the server keeps us out: a ``Retry-After`` longer
+      than ``max_retry_after_s`` (fails fast, and so does every request until that pause
+      is over), or retries exhausted while still told to back off (429 / ``Retry-After``).
+      Other exhausted retries raise :class:`RetriesExhaustedError`.
     """
 
     def __init__(
@@ -229,11 +255,18 @@ class PoliteClient:
         headers = {**self.headers, "Accept": accept}  # curl-like; urllib sends none
         attempts = self.retries + 1
         last_error = ""
+        throttled = False  # the last attempt was told to back off (429 / Retry-After)
         with self._lock:  # a single connection at a time
+            if (paused := self.limiter.paused_s()) > self.max_retry_after_s:
+                raise RateLimitedError(
+                    f"{url}: not sent, the server asked for {paused:.0f}s more without requests",
+                    retry_after_s=paused,
+                )
             for attempt in range(attempts):
                 self.limiter.wait()
                 self.requests += 1
                 t0 = self._clock()
+                throttled = False
                 try:
                     resp = self.transport(url, headers, self.timeout_s)
                 except TRANSIENT_ERRORS as e:
@@ -255,7 +288,7 @@ class PoliteClient:
                         if resp.status not in RETRYABLE_STATUS:
                             raise HttpStatusError(url, resp.status, _snippet(resp.body))
                         last_error = f"HTTP {resp.status}"
-                        delay = self._retry_delay(url, resp, attempt)
+                        delay, throttled = self._retry_delay(url, resp, attempt)
                     except TRANSIENT_ERRORS as e:  # the body failed mid-read
                         last_error = f"{type(e).__name__}: {e}"
                         delay = self._backoff(attempt)
@@ -271,18 +304,30 @@ class PoliteClient:
                         delay,
                     )
                     self._sleep(delay)
-        raise SourceUnavailableError(f"{url}: gave up after {attempts} attempt(s) ({last_error})")
+        message = f"{url}: gave up after {attempts} attempt(s) ({last_error})"
+        if throttled:  # still refused: the next URL on this host would be refused too
+            raise RateLimitedError(message, retry_after_s=self.limiter.paused_s())
+        raise RetriesExhaustedError(message)
 
     def _backoff(self, attempt: int) -> float:
         return self.backoff_s * 2**attempt
 
-    def _retry_delay(self, url: str, resp: RawResponse, attempt: int) -> float:
+    def _retry_delay(self, url: str, resp: RawResponse, attempt: int) -> tuple[float, bool]:
+        """Seconds before retrying a 429 / 5xx, and whether the server said to back off.
+
+        A ``Retry-After`` also pauses the shared limiter: it is about us, not this URL, so
+        the PDF fallback, the license lookup and the next record wait for it as well.
+        """
         wait = retry_after_seconds(resp.headers.get("retry-after"))
         if wait is None:
-            return self._backoff(attempt)
+            return self._backoff(attempt), resp.status == 429
+        self.limiter.defer(wait)
         if wait > self.max_retry_after_s:
-            raise HttpStatusError(url, resp.status, f"server asks to retry after {wait:.0f}s")
-        return wait
+            raise RateLimitedError(
+                f"HTTP {resp.status} for {url}: server asks to retry after {wait:.0f}s",
+                retry_after_s=wait,
+            )
+        return wait, resp.status == 429 or wait > 0
 
     def _read(self, resp: RawResponse, path: Path | None) -> tuple[bytes, int]:
         size = 0

@@ -13,12 +13,14 @@ Pure functions over paths and strings: no pandoc, no pylatexenc.
 
 from __future__ import annotations
 
+import codecs
 import gzip
+import io
 import json
 import re
 import tarfile
 import zlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,6 +30,7 @@ TEX_SUFFIXES = frozenset({".tex", ".ltx"})
 MAIN_NAMES = ("main", "ms", "paper", "article")  # tie-break between several main files
 MAX_DEPTH = 20  # nested \input levels
 MAX_MEMBERS = 20_000  # files in one archive
+MAX_TAR_HEADER = 2**20  # bytes of headers (pax, GNU long name) for one archive member
 MAX_MACRO_BODY = 20_000  # chars; longer "definitions" are unbalanced braces, not macros
 
 # Never needed to produce text: not extracted (faster, and a smaller zip-bomb surface).
@@ -60,23 +63,79 @@ STRUCTURAL = frozenset(
 
 
 # ------------------------------------------------------------------ decoding
+def _legacy_char(byte: int) -> str:
+    try:
+        return bytes([byte]).decode("cp1252")
+    except UnicodeDecodeError:  # 0x81, 0x8d, 0x8f, 0x90, 0x9d: undefined in cp1252
+        return chr(byte)  # latin-1
+
+
+_LEGACY = [_legacy_char(b) for b in range(256)]
+
+
+def _legacy_bytes(err: UnicodeError) -> tuple[str, int]:
+    """Decode error handler: the bytes that are not UTF-8 are cp1252 (else latin-1)."""
+    if not isinstance(err, UnicodeDecodeError):
+        raise err
+    return "".join(_LEGACY[b] for b in err.object[err.start : err.end]), err.end
+
+
+codecs.register_error("docingest-legacy", _legacy_bytes)
+
+
 def decode_tex(data: bytes) -> str:
-    """UTF-8, else cp1252, else latin-1 (never fails); normalized newlines."""
+    """UTF-8, cp1252 or latin-1, decided per byte where needed (never fails); normalized
+    newlines.
+
+    A UTF-8 file with one pasted latin-1 byte (a no-break space) must not have every
+    accented letter garbled, so only the bytes that are not UTF-8 are read as cp1252.
+    A file without a single multi-byte UTF-8 sequence is a legacy file: cp1252, or
+    latin-1 if it uses a byte that cp1252 leaves undefined.
+    """
     if data.startswith(b"\xef\xbb\xbf"):
         data = data[3:]
-    for encoding in ("utf-8", "cp1252"):
-        try:
-            text = data.decode(encoding)
-            break
-        except UnicodeDecodeError:
-            continue
-    else:
-        text = data.decode("latin-1")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        if not data.decode("utf-8", errors="ignore").isascii():  # some real UTF-8
+            text = data.decode("utf-8", errors="docingest-legacy")
+        else:
+            try:
+                text = data.decode("cp1252")
+            except UnicodeDecodeError:
+                text = data.decode("latin-1")
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+# Inline commands whose argument LaTeX reads verbatim, like \verb|...|: a % or an
+# \endinput in there is text. \verb's delimiter can be any character, even a brace;
+# the others also accept a balanced {...}. TikZ's \path[...] (...) is not url's \path.
+_INLINE_VERB = (
+    r"\\(?:(?P<verb>verb)\*?(?=[^a-zA-Z\s*])"
+    r"|(?:lstinline|Verb\*?)(?![a-zA-Z@])[ \t]*(?:\[[^\]\n]*\][ \t]*)?(?=[^a-zA-Z\s])"
+    r"|mintinline(?![a-zA-Z@])[ \t]*(?:\[[^\]\n]*\][ \t]*)?\{[^{}\n]*\}[ \t]*(?=[^a-zA-Z\s])"
+    r"|path(?![a-zA-Z@])[ \t]*(?=[^a-zA-Z\s(\[]))"
+)
+_INLINE_VERB_MAX = 1000  # chars; bounds the scan, so a line of stray heads stays linear
+_VERB_GROUP = re.compile(r"\{(?:[^{}\n]|\{(?:[^{}\n]|\{[^{}\n]*\})*\})*\}")  # 3 levels deep
+
+
+def _inline_verb_end(text: str, m: re.Match[str]) -> int | None:
+    """Index just past the verbatim argument whose command ``m`` matched (an
+    ``_INLINE_VERB`` head); None when it does not close on its line, as TeX requires."""
+    i = m.end()
+    stop = min(len(text), i + _INLINE_VERB_MAX)
+    if (nl := text.find("\n", i, stop)) >= 0:
+        stop = nl
+    if text[i] == "{" and m.group("verb") is None:
+        group = _VERB_GROUP.match(text, i, stop)
+        return group.end() if group else None
+    close = text.find(text[i], i + 1, stop)
+    return close + 1 if close >= 0 else None
+
+
 _SCAN = re.compile(
-    r"\\verb\*?(?P<delim>[^a-zA-Z\s*])"  # \verb|...| : any delimiter
+    rf"(?P<inline>{_INLINE_VERB})"  # \verb|...|, \lstinline!...!, ...
     rf"|\\begin\s*\{{(?P<env>{_VERBATIM_ENVS})\}}"
     r"|\\(?:url|href)\s*\{[^{}\n]*\}"  # a % inside a URL is not a comment
     r"|\\."  # escaped char: \%, \\, \{ ...
@@ -88,11 +147,100 @@ def _end_env(env: str) -> re.Pattern[str]:
     return re.compile(rf"\\end\s*\{{{re.escape(env)}\}}")
 
 
+@dataclass(frozen=True)
+class Verbatim:
+    start: int
+    end: int
+    body: str  # what LaTeX reads verbatim; an environment's [options]{args} included
+    env: str | None  # None for a \verb-like inline command
+
+
+# filecontents is written out verbatim, never typeset: nothing in it is a command either.
+_VERBATIM_START = re.compile(
+    rf"\\begin\s*\{{(?P<env>{_VERBATIM_ENVS}|filecontents\*?)\}}|(?P<inline>{_INLINE_VERB})"
+)
+
+
+def verbatim_parts(text: str, start: int = 0) -> Iterator[Verbatim]:
+    """The verbatim regions of ``text[start:]``, in order: verbatim-like environments
+    (an unclosed one runs to the end, as in TeX) and ``\\verb``-like arguments.
+
+    Linear: the regex ``\\begin{verbatim}.*?\\end{verbatim}`` rescans the rest of the
+    text for every unclosed begin, which takes minutes on a few hundred KB of them.
+    """
+    pos = start
+    while m := _VERBATIM_START.search(text, pos):
+        if env := m.group("env"):
+            end = _end_env(env).search(text, m.end())
+            if end is None:
+                yield Verbatim(m.start(), len(text), text[m.end() :], env)
+                return
+            yield Verbatim(m.start(), end.end(), text[m.end() : end.start()], env)
+            pos = end.end()
+        elif (end := _inline_verb_end(text, m)) is not None:
+            yield Verbatim(m.start(), end, text[m.end() + 1 : end - 1], None)
+            pos = end
+        else:
+            pos = m.end()
+
+
+def _outside_verbatim(text: str, start: int = 0) -> Iterator[tuple[int, int]]:
+    """``(start, end)`` of the stretches between the ``verbatim_parts``, in order."""
+    pos = start
+    for v in verbatim_parts(text, start):
+        yield pos, v.start
+        pos = v.end
+    yield pos, len(text)
+
+
+def regions(
+    text: str,
+    begin: re.Pattern[str],
+    end: re.Pattern[str] | Callable[[re.Match[str]], re.Pattern[str]],
+) -> Iterator[tuple[re.Match[str], re.Match[str]]]:
+    """Non-overlapping ``(begin, end)`` match pairs, the ones ``begin.*?end`` (DOTALL)
+    would find, in linear time: that regex rescans the rest of the text for every
+    begin without an end. ``end`` may depend on the begin match (an environment's
+    name); an end that is missing after one begin is missing after every later one.
+    """
+    pos = 0
+    unclosed: set[str] = set()
+    for b in begin.finditer(text):
+        if b.start() < pos:
+            continue
+        stop = end(b) if callable(end) else end
+        if stop.pattern in unclosed:
+            continue
+        if (e := stop.search(text, b.end())) is None:
+            unclosed.add(stop.pattern)
+            continue
+        yield b, e
+        pos = e.end()
+
+
+def sub_regions(
+    text: str,
+    begin: re.Pattern[str],
+    end: re.Pattern[str] | Callable[[re.Match[str]], re.Pattern[str]],
+    repl: Callable[[str], str],
+) -> str:
+    """``text`` with every ``regions`` pair, and what is between, replaced by
+    ``repl(what is between)``."""
+    parts: list[str] = []
+    pos = 0
+    for b, e in regions(text, begin, end):
+        parts += (text[pos : b.start()], repl(text[b.end() : e.start()]))
+        pos = e.end()
+    parts.append(text[pos:])
+    return "".join(parts)
+
+
 def strip_comments(text: str) -> str:
     """Drop ``%`` comments like TeX does, except inside verbatim-like environments.
 
     A comment-only line disappears entirely; a trailing comment keeps its ``%`` so the
-    "no space at end of line" meaning survives. ``\\%`` and ``\\verb|%|`` are text.
+    "no space at end of line" meaning survives. ``\\%`` is text, and so is a ``%`` in
+    ``\\verb|%|``, ``\\lstinline!%!``, ``\\Verb``, ``\\mintinline`` or ``\\path``.
     """
     out: list[str] = []
     env: str | None = None
@@ -112,11 +260,11 @@ def _strip_line(line: str) -> tuple[str | None, str | None]:
     """(line without its comment, or None to drop it; verbatim env left open)."""
     pos = 0
     while m := _SCAN.search(line, pos):
-        if delim := m.group("delim"):
-            close = line.find(delim, m.end())
-            if close < 0:
+        if m.group("inline") is not None:
+            end = _inline_verb_end(line, m)
+            if end is None:
                 return line, None
-            pos = close + 1
+            pos = end
         elif env := m.group("env"):
             end = _end_env(env).search(line, m.end())
             if end is None:
@@ -162,6 +310,33 @@ def match_brace(text: str, i: int, limit: int = MAX_MACRO_BODY) -> int | None:
     return None
 
 
+def brace_pairs(text: str) -> dict[int, int]:
+    """Map each ``{`` index to the index just past its matching ``}``, in one linear pass.
+
+    Same matching as :func:`match_brace` (``\\`` escapes the next char), but computed once
+    per text: scanning a window per candidate went quadratic on unbalanced sources.
+    """
+    pairs: dict[int, int] = {}
+    stack: list[int] = []
+    j, n = 0, len(text)
+    while j < n:
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "{":
+            stack.append(j)
+        elif c == "}" and stack:
+            pairs[stack.pop()] = j + 1
+        j += 1
+    return pairs
+
+
+def _matched(pairs: dict[int, int], i: int, limit: int = MAX_MACRO_BODY) -> int | None:
+    end = pairs.get(i)
+    return end if end is not None and end - i <= limit else None
+
+
 # ------------------------------------------------------------ macro hygiene
 _DEF_HEAD = re.compile(
     r"\\(?P<kind>(?:re)?newcommand|providecommand|DeclareRobustCommand|DeclareMathOperator)"
@@ -190,8 +365,9 @@ class MacroDef:
 def macro_definitions(text: str) -> Iterator[MacroDef]:
     """Top-level ``\\newcommand``-style and ``\\def`` definitions with a braced body."""
     pos = 0
+    pairs = brace_pairs(text)
     while m := _DEF_HEAD.search(text, pos):
-        end = match_brace(text, m.end())
+        end = _matched(pairs, m.end())
         if end is None:
             pos = m.end()
             continue
@@ -237,10 +413,8 @@ def package_macros(sty: str) -> str:
     return "\n".join(keep)
 
 
-_THEBIB = re.compile(
-    r"\\begin\s*\{thebibliography\}\s*(?:\{[^{}]*\})?(?P<body>.*?)\\end\s*\{thebibliography\}",
-    re.DOTALL,
-)
+_THEBIB_BEGIN = re.compile(r"\\begin\s*\{thebibliography\}\s*(?:\{[^{}]*\})?")
+_THEBIB_END = re.compile(r"\\end\s*\{thebibliography\}")
 _BIBITEM = re.compile(r"\\bibitem\s*(?:\[[^\]]*\])?\s*\{(?P<key>[^{}]*)\}")
 
 
@@ -252,8 +426,8 @@ def rewrite_bibliography(text: str) -> str:
     item starts with its key as a citation, so ``[@key]`` in the text can be matched.
     """
 
-    def _rewrite(m: re.Match[str]) -> str:
-        body = m.group("body").replace("\\newblock", " ")
+    def _rewrite(body: str) -> str:
+        body = body.replace("\\newblock", " ")
         first = _BIBITEM.search(body)
         if first is None:
             return ""
@@ -272,7 +446,7 @@ def rewrite_bibliography(text: str) -> str:
             f"{head}\n\\section*{{References}}\n\\begin{{enumerate}}\n{items}\n\\end{{enumerate}}\n"
         )
 
-    return _THEBIB.sub(_rewrite, text)
+    return sub_regions(text, _THEBIB_BEGIN, _THEBIB_END, _rewrite)
 
 
 def prepare_for_pandoc(text: str) -> tuple[str, list[str]]:
@@ -297,19 +471,59 @@ class Flattened:
     warnings: list[str] = field(default_factory=list)
 
 
+# Applied outside verbatim regions only (see _Flattener._expand).
 _FLATTEN = re.compile(
-    rf"(?P<verbatim>\\begin\s*\{{(?P<venv>{_VERBATIM_ENVS})\}}.*?\\end\s*\{{(?P=venv)\}})"
-    r"|(?P<verb>\\verb\*?(?P<vd>[^a-zA-Z\s*])[^\n]*?(?P=vd))"
-    rf"|\\(?P<input>input|include|subfile|expandableinput){_NOT_LETTER}\s*"
+    rf"\\(?P<input>input|include|subfile|expandableinput){_NOT_LETTER}\s*"
     r"(?:\{(?P<arg>[^{}]*)\}|(?P<bare>[^\s{}\\%]+))"
     r"|\\(?P<imp>(?:sub)?(?:import|inputfrom|includefrom))\*?\s*"
     r"\{(?P<dir>[^{}]*)\}\s*\{(?P<file>[^{}]*)\}"
     rf"|\\(?:usepackage|RequirePackage){_NOT_LETTER}\s*(?P<opts>\[[^\]]*\])?\s*"
     r"\{(?P<pkgs>[^{}]*)\}"
-    rf"|(?P<bib>\\bibliography{_NOT_LETTER}\s*\{{[^{{}}]*\}})",
-    re.DOTALL,
+    rf"|(?P<bib>\\bibliography{_NOT_LETTER}\s*\{{[^{{}}]*\}})"
 )
 _ENDINPUT = re.compile(rf"\\endinput{_NOT_LETTER}")
+_ENDINPUT_TOKEN = re.compile(rf"(?P<endinput>\\endinput{_NOT_LETTER})|\\.|(?P<brace>[{{}}])")
+_END_DOCUMENT = re.compile(r"\\end\s*\{document\}")
+# An \endinput TeX does not execute on a first read: an include guard closed on the same
+# line (\ifx\loaded\undefined\else\endinput\fi) or the operand of \let, \ifx, ...
+_GUARDED = re.compile(rf"[^\n]{{0,200}}?\\fi{_NOT_LETTER}")
+_OPERAND = re.compile(
+    r"\\(?:(?:future)?let\s*\\[a-zA-Z@]+\s*=?|ifx(?:\s*\\[a-zA-Z@]+)?|noexpand|string|meaning|show)"
+    r"\s*\Z"
+)
+
+
+def _executed(text: str, m: re.Match[str]) -> bool:
+    return not (
+        _GUARDED.match(text, m.end()) or _OPERAND.search(text, max(0, m.start() - 80), m.start())
+    )
+
+
+def cut_at_endinput(text: str, *, main: bool = False) -> str:
+    """``text`` as far as TeX reads it: to the end of the line holding the first
+    ``\\endinput`` TeX executes (the rest of that line is still read). The command
+    itself is dropped: pandoc would stop reading the whole flattened document there.
+
+    Only an ``\\endinput`` at brace depth 0 counts, outside verbatim and filecontents
+    environments and ``\\verb``-like arguments: one in a macro body, as a ``\\let``
+    operand or in an include guard is not executed. LaTeX has to reach
+    ``\\end{document}`` in the main file, so there only one after it counts.
+    """
+    start = 0
+    if main and (ends := [m.end() for m in _END_DOCUMENT.finditer(text)]):
+        start = ends[-1]
+    if not _ENDINPUT.search(text, start):
+        return text
+    depth = 0
+    for a, b in _outside_verbatim(text, start):
+        for m in _ENDINPUT_TOKEN.finditer(text, a, b):
+            if brace := m.group("brace"):
+                depth = depth + 1 if brace == "{" else max(depth - 1, 0)
+            elif m.group("endinput") and depth == 0 and _executed(text, m):
+                eol = text.find("\n", m.end())
+                eol = len(text) if eol < 0 else eol + 1
+                return text[: m.start()] + text[m.end() : eol]
+    return text
 
 
 class _Flattener:
@@ -340,9 +554,7 @@ class _Flattener:
         if self.size > self.max_chars:
             raise ConversionError(f"LaTeX source exceeds {_size(self.max_chars)} (max_archive_mb)")
         text = strip_comments(decode_tex(path.read_bytes()))
-        if endinput and (m := _ENDINPUT.search(text)):
-            text = text[: m.start()]  # TeX stops reading the file there
-        return text
+        return cut_at_endinput(text, main=path == self.main) if endinput else text
 
     def _resolve(self, name: str, dirs: list[Path], suffix: str, always: bool) -> Path | str:
         """The file for ``name``, or why there is none."""
@@ -368,11 +580,16 @@ class _Flattener:
 
     # -- expansion
     def _expand(self, text: str, current: Path, base: Path, stack: tuple[Path, ...]) -> str:
-        return _FLATTEN.sub(lambda m: self._replace(m, current, base, stack), text)
+        """Inline the includes of ``text``; verbatim regions are copied untouched."""
+        parts: list[str] = []
+        pos = 0
+        for a, b in _outside_verbatim(text):
+            chunk = _FLATTEN.sub(lambda m: self._replace(m, current, base, stack), text[a:b])
+            parts += (text[pos:a], chunk)
+            pos = b
+        return "".join(parts)
 
     def _replace(self, m: re.Match[str], current: Path, base: Path, stack: tuple[Path, ...]) -> str:
-        if m.group("verbatim") or m.group("verb"):
-            return m.group()
         nl = m.string[m.end() : m.end() + 1] == "\n"
         if cmd := m.group("input"):
             name = m.group("arg") if m.group("arg") is not None else m.group("bare")
@@ -562,7 +779,16 @@ class Unpacked:
 
 
 def _is_tar(block: bytes) -> bool:
-    return len(block) > 262 and block[257:262] == b"ustar"
+    """A valid first tar header: ustar or pre-POSIX (v7) without the magic.
+
+    Checks the header checksum on this one block, like the detector does, so every
+    archive the detector routes here is unpacked as an archive.
+    """
+    try:
+        tarfile.TarInfo.frombuf(block[: tarfile.BLOCKSIZE], tarfile.ENCODING, "surrogateescape")
+    except tarfile.HeaderError:
+        return False
+    return True
 
 
 def unpack(path: Path, dest: Path, *, max_bytes: int) -> Unpacked:
@@ -581,13 +807,13 @@ def unpack(path: Path, dest: Path, *, max_bytes: int) -> Unpacked:
         except (OSError, EOFError, zlib.error) as e:
             raise ConversionError(f"corrupt gzip file {path.name}: {e}") from e
         if _is_tar(block):
-            return _untar(path, "r:gz", dest, max_bytes)
+            return _untar(path, dest, max_bytes, gzipped=True)
         dest.mkdir(parents=True, exist_ok=True)
         main = dest / "main.tex"
         _gunzip(path, main, max_bytes)
         return Unpacked(dest, main)
     if _is_tar(head):
-        return _untar(path, "r:", dest, max_bytes)
+        return _untar(path, dest, max_bytes, gzipped=False)
     return Unpacked(path.parent, path)
 
 
@@ -612,28 +838,73 @@ def _gunzip(src: Path, dst: Path, max_bytes: int) -> None:
         raise ConversionError(f"corrupt gzip file {src.name}: {e}") from e
 
 
-def _untar(path: Path, mode: str, dest: Path, max_bytes: int) -> Unpacked:
+class _CappedReader:
+    """The archive stream tarfile reads through, handing out at most ``room`` more bytes.
+
+    tarfile reads a pax or GNU long-name header into memory whole, inside ``next()``,
+    before the loop in ``_untar`` sees the member it belongs to: 150 KB of gzip make a
+    150 MB "header" and several times that in memory, so ``max_archive_mb`` alone bounds
+    nothing. A read that would exceed the room is refused before it decompresses or
+    allocates anything. Seeking (skipping member data) is not reading: the loop caps it.
+    """
+
+    def __init__(self, raw: io.BufferedIOBase, label: str):
+        self.raw = raw
+        self.label = label
+        self.room = MAX_TAR_HEADER
+
+    def read(self, size: int = -1, /) -> bytes:
+        if size < 0 or size > self.room:
+            what = _size(size) if size >= 0 else "the rest"
+            raise ConversionError(
+                f"cannot unpack {self.label}: refusing to read {what} of tar headers "
+                f"at once (limit {_size(MAX_TAR_HEADER)}; a pax or GNU long-name bomb?)"
+            )
+        data = self.raw.read(size)
+        self.room -= len(data)
+        return data
+
+    def seek(self, pos: int, whence: int = io.SEEK_SET, /) -> int:
+        return self.raw.seek(pos, whence)
+
+    def tell(self) -> int:
+        return self.raw.tell()
+
+    def write(self, b: bytes, /) -> int:
+        raise io.UnsupportedOperation("read-only archive stream")
+
+    def close(self) -> None:
+        self.raw.close()
+
+
+def _untar(path: Path, dest: Path, max_bytes: int, *, gzipped: bool) -> Unpacked:
     dest.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
     wanted: list[tarfile.TarInfo] = []
     total = 0
     try:
-        with tarfile.open(path, mode) as tar:  # type: ignore[call-overload]
-            for i, member in enumerate(tar):  # headers are read lazily: abort early
-                if i >= MAX_MEMBERS:
-                    raise ConversionError(f"{path.name} has more than {MAX_MEMBERS} files")
-                total += max(member.size, 0)
-                if total > max_bytes:
-                    raise _too_big(path.name, max_bytes)
-                if not member.isfile() or Path(member.name).suffix.lower() in _MEDIA_SUFFIXES:
-                    continue  # links, devices, figures: never needed for text
-                try:
-                    tarfile.data_filter(member, str(dest))
-                except tarfile.FilterError as e:
-                    warnings.append(f"skipped unsafe archive member {member.name!r}: {e}")
-                    continue
-                wanted.append(member)
-            tar.extractall(dest, members=wanted, filter="data")
+        with gzip.open(path) if gzipped else path.open("rb") as raw:
+            reader = _CappedReader(raw, path.name)
+            with tarfile.open(fileobj=reader, mode="r:") as tar:
+                for i, member in enumerate(tar):  # headers are read lazily: abort early
+                    reader.room = MAX_TAR_HEADER  # for the headers of the next member
+                    if i >= MAX_MEMBERS:
+                        raise ConversionError(f"{path.name} has more than {MAX_MEMBERS} files")
+                    total += max(member.size, 0)
+                    if total > max_bytes:
+                        raise _too_big(path.name, max_bytes)
+                    if not member.isfile() or Path(member.name).suffix.lower() in _MEDIA_SUFFIXES:
+                        continue  # links, devices, figures: never needed for text
+                    try:
+                        tarfile.data_filter(member, str(dest))
+                    except tarfile.FilterError as e:
+                        warnings.append(f"skipped unsafe archive member {member.name!r}: {e}")
+                        continue
+                    wanted.append(member)
+                reader.room = sum(m.size for m in wanted)  # extracting reads exactly that
+                tar.extractall(dest, members=wanted, filter="data")
+    except MemoryError as e:  # a last resort: any allocation above must not kill the run
+        raise ConversionError(f"cannot unpack {path.name}: out of memory") from e
     except (tarfile.TarError, OSError, EOFError, zlib.error) as e:
         raise ConversionError(f"cannot unpack {path.name}: {e}") from e
     return Unpacked(dest, None, warnings)
@@ -641,13 +912,16 @@ def _untar(path: Path, mode: str, dest: Path, max_bytes: int) -> Unpacked:
 
 # ----------------------------------------------------------------- measures
 _UNTEXT_ENVS = r"tikzpicture|pgfpicture|axis|filecontents\*?|comment"
+_UNTEXT_BEGIN = re.compile(rf"\\begin\{{({_UNTEXT_ENVS})\}}")
+IFFALSE = re.compile(r"\\iffalse\b")
+FI = re.compile(r"\\fi\b")
 
 
 def approx_text_length(latex: str) -> int:
     """Rough count of the readable characters in a document, to sanity-check output."""
     body = document_body(latex)
-    body = re.sub(rf"\\begin\{{({_UNTEXT_ENVS})\}}.*?\\end\{{\1\}}", " ", body, flags=re.S)
-    body = re.sub(r"\\iffalse\b.*?\\fi\b", " ", body, flags=re.S)
+    body = sub_regions(body, _UNTEXT_BEGIN, lambda b: _end_env(b.group(1)), lambda _: " ")
+    body = sub_regions(body, IFFALSE, FI, lambda _: " ")
     body = re.sub(r"\\[a-zA-Z@]+\*?", " ", body)
     body = re.sub(r"[{}\[\]\\$&^_~#%]", " ", body)
     return len(" ".join(body.split()))
@@ -670,9 +944,10 @@ def split_sections(body: str, max_level: int) -> list[tuple[int, str | None, str
     levels["subsection"] = levels["section"] + 1
     levels["subsubsection"] = levels["section"] + 2
     cuts: list[tuple[int, int, int, str]] = []
+    pairs = brace_pairs(body)
     for m in _SECTION.finditer(body):
         level = levels[m.group("cmd")]
-        end = match_brace(body, m.end())
+        end = _matched(pairs, m.end())
         if level <= max_level and end is not None:
             cuts.append((m.start(), end, max(level, 1), body[m.end() + 1 : end - 1]))
     starts = [c[0] for c in cuts] + [len(body)]

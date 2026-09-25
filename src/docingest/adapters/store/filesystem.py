@@ -3,10 +3,11 @@
     <root>/<sha256[:16]>/                         canonical: complete, default-option runs
         document.md, manifest.json
     <root>/_variants/<id>-<config>-p<N|all>/      --max-pages / --ocr-all runs
+    <root>/_degraded/<id>-<config>-p<N|all>/      environment-caused fallbacks (never cached)
     <root>/index.json                             catalog of canonical documents
 
 Writes are atomic (temp file + rename, normal permissions); an unreadable manifest
-counts as a cache miss; a partial run never replaces a complete result.
+counts as a cache miss; a partial or degraded run never replaces a complete result.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from ...domain.models import DocumentManifest
 from ...ports import StoredDocument
 
 VARIANTS_DIR = "_variants"
+DEGRADED_DIR = "_degraded"  # lookup() never reads here: the next run retries
 _UMASK = os.umask(0)
 os.umask(_UMASK)  # read once at import; os.umask is process-global
 
@@ -52,9 +54,12 @@ class FilesystemStore:
     def _canonical(self, doc_id: str) -> Path:
         return self.root / doc_id[:16]
 
-    def _variant(self, doc_id: str, config_hash: str, max_pages: int | None) -> Path:
+    def _variant(
+        self, doc_id: str, config_hash: str, max_pages: int | None, *, degraded: bool = False
+    ) -> Path:
         tag = "all" if max_pages is None else str(max_pages)
-        return self.root / VARIANTS_DIR / f"{doc_id[:16]}-{config_hash}-p{tag}"
+        base = DEGRADED_DIR if degraded else VARIANTS_DIR
+        return self.root / base / f"{doc_id[:16]}-{config_hash}-p{tag}"
 
     def lookup(
         self, doc_id: str, config_hash: str, *, max_pages: int | None, ocr_all: bool
@@ -71,12 +76,16 @@ class FilesystemStore:
                 return StoredDocument(m, str(variant), canonical=False)
         return None
 
-    def save(self, manifest: DocumentManifest, markdown: str) -> StoredDocument:
-        canonical = manifest.complete and not manifest.ocr_all
+    def save(
+        self, manifest: DocumentManifest, markdown: str, *, degraded: bool = False
+    ) -> StoredDocument:
+        canonical = manifest.complete and not manifest.ocr_all and not degraded
         out = (
             self._canonical(manifest.doc_id)
             if canonical
-            else self._variant(manifest.doc_id, manifest.config_hash, manifest.max_pages)
+            else self._variant(
+                manifest.doc_id, manifest.config_hash, manifest.max_pages, degraded=degraded
+            )
         )
         out.mkdir(parents=True, exist_ok=True)
         _atomic_write(out / "document.md", markdown)
@@ -92,19 +101,29 @@ class FilesystemStore:
         best: dict[str, StoredDocument] = {}
         warnings: list[str] = []
         canon = sorted(self.root.glob("*/manifest.json"))
-        variants = sorted((self.root / VARIANTS_DIR).glob("*/manifest.json"))
-        for path in [*canon, *variants]:
+        others = [
+            *sorted((self.root / VARIANTS_DIR).glob("*/manifest.json")),
+            *sorted((self.root / DEGRADED_DIR).glob("*/manifest.json")),
+        ]
+        for path in [*canon, *others]:
+            is_canon = path.parent.parent == self.root  # not under _variants / _degraded
             m = _load(path)
             if m is None:
                 warnings.append(f"skipped unreadable manifest {path} (re-run `docingest ingest`)")
                 continue
-            is_canon = VARIANTS_DIR not in path.parts
             seen = best.get(m.doc_id)
             if seen is None or (not seen.canonical and m.n_pages > seen.manifest.n_pages):
                 best[m.doc_id] = StoredDocument(m, str(path.parent), canonical=is_canon)
         for d in best.values():
-            if not d.canonical:
-                m = d.manifest
+            if d.canonical:
+                continue
+            m = d.manifest
+            if Path(d.location).parent.name == DEGRADED_DIR:
+                warnings.append(
+                    f"{m.source_name}: only a degraded fallback conversion exists"
+                    " (re-run `docingest ingest` to retry)"
+                )
+            else:
                 pages = f"{m.n_pages}/{m.source_pages} pages"
                 warnings.append(f"{m.source_name}: only a partial run exists ({pages})")
         return list(best.values()), warnings

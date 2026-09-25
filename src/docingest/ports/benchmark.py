@@ -78,12 +78,24 @@ class SuiteScore:
     by_category: dict[str, dict[str, Estimate]] = field(default_factory=dict)
     # Per scored unit (a page, an olmOCR-bench test) -> metric values, for paired tests.
     units: dict[str, dict[str, float | None]] = field(default_factory=dict)
-    # unit -> stratum for stratified resampling (empty: resample units freely)
+    # unit -> group; the headline is the mean of group means (empty: plain mean). Without
+    # clusters, units are also resampled within their group.
     unit_groups: dict[str, str] = field(default_factory=dict)
+    # unit -> cluster of correlated units that are resampled together: a synthetic page at
+    # every degradation level, an olmOCR-bench PDF with all its tests (empty: independent).
+    unit_clusters: dict[str, str] = field(default_factory=dict)
+    # cluster -> stratum it is resampled within (empty: one stratum)
+    cluster_strata: dict[str, str] = field(default_factory=dict)
     n_outputs: int = 0
     n_samples: int = 0
     errors: list[str] = field(default_factory=list)
     details: dict[str, Any] = field(default_factory=dict)
+    # The suite's scoring rules that produced this score. Scoring changes bump it instead
+    # of the suite fingerprint: a finished run is re-scored, never re-transcribed.
+    scoring_version: int | None = None
+    # What was scored (set by the runner's ``score_run``): lets a later report tell a
+    # stale score from a current one.
+    stamp: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -101,6 +113,8 @@ class SuiteScore:
 
 @runtime_checkable
 class BenchmarkSuite(Protocol):
+    """A suite may also expose ``scoring_version: int`` (recorded in its scores)."""
+
     name: str
     fingerprint: str  # data + rendering + scoring settings; changes invalidate a run
 

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import codecs
 import gzip
 import re
+import tarfile
+import zlib
 from pathlib import Path
 
 from ...domain.errors import UnsupportedInputError
@@ -13,6 +16,8 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".bmp", ".g
 OFFICE_SUFFIXES = {".docx", ".pptx", ".xlsx", ".html", ".htm", ".xhtml"}
 TEXT_SUFFIXES = {".md", ".markdown", ".txt"}
 LATEX_SUFFIXES = {".tex", ".ltx"}
+# Text formats in which a leading "%PDF-..." is ordinary content (a TeX comment line).
+TEXTLIKE_SUFFIXES = TEXT_SUFFIXES | LATEX_SUFFIXES
 
 # Unambiguous signatures. BMP ("BM") is too weak on its own and is checked separately.
 _MAGIC: list[tuple[bytes, SourceKind, str]] = [
@@ -24,7 +29,6 @@ _MAGIC: list[tuple[bytes, SourceKind, str]] = [
 ]
 _BMP_DIB_SIZES = {12, 40, 52, 56, 64, 108, 124}
 _PDF_HEADER = re.compile(rb"%PDF-\d\.\d")
-_TEX_HINT = re.compile(rb"\\(documentclass|documentstyle|begin\{document\}|section|input\{)")
 
 _OFFICE_MIME = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -37,7 +41,30 @@ _OFFICE_MIME = {
 
 
 def _is_tar(block: bytes) -> bool:
-    return len(block) > 262 and block[257:262] == b"ustar"
+    """A valid first tar header: ustar or a pre-POSIX (v7) tar without the magic.
+
+    Checks the header's checksum, as ``tarfile`` does (the arXiv crawler classifies
+    with ``tarfile``), but on this one block only: ``tarfile.open`` would read a
+    pax / GNU long-name member whole into memory before any size limit applies.
+    """
+    try:
+        tarfile.TarInfo.frombuf(block[: tarfile.BLOCKSIZE], tarfile.ENCODING, "surrogateescape")
+    except tarfile.HeaderError:
+        return False
+    return True
+
+
+def _is_text(head: bytes) -> bool:
+    """UTF-8 without NULs; a multi-byte character cut at the end of ``head`` is fine."""
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(head)
+    except UnicodeDecodeError:
+        return False
+    return b"\0" not in head
+
+
+def _looks_html(head: bytes) -> bool:
+    return head.lstrip()[:15].lower().startswith((b"<!doctype html", b"<html"))
 
 
 class MagicBytesDetector:
@@ -45,7 +72,9 @@ class MagicBytesDetector:
         with path.open("rb") as f:
             head = f.read(1024)
         suffix = path.suffix.lower()
-        if head.startswith(b"%PDF-"):
+        # A .tex / .txt / .md may begin with a "%PDF-A compliant ..." comment line; it is
+        # a PDF only if the bytes are not text (a real PDF's second line is binary).
+        if head.startswith(b"%PDF-") and (suffix not in TEXTLIKE_SUFFIXES or not _is_text(head)):
             return SourceKind.PDF, "application/pdf"
         for magic, kind, mime in _MAGIC:
             if head.startswith(magic):
@@ -78,15 +107,21 @@ class MagicBytesDetector:
 
     @staticmethod
     def _gzip(path: Path) -> tuple[SourceKind, str]:
+        """Same rule as the arXiv crawler's ``classify``, so whatever it saved as a
+        ``.tex.gz`` also ingests: a tar is a source archive, a PDF / PostScript / HTML
+        payload is not a source, anything else is a single gzipped .tex. TeX has no
+        reliable signature: comment headers run for kilobytes, and plain-TeX e-prints
+        (``\\input harvmac``) carry no ``\\documentclass`` at all.
+        """
         try:
             with gzip.open(path, "rb") as f:
-                block = f.read(4096)
-        except OSError as e:
+                inner = f.read(1024)
+        except (OSError, EOFError, zlib.error) as e:  # truncated streams raise EOFError
             raise UnsupportedInputError(f"corrupt gzip file {path.name}: {e}") from e
-        if _is_tar(block):
+        if _is_tar(inner):
             return SourceKind.LATEX, "application/gzip"  # tar.gz source archive
-        if block.startswith(b"%PDF-"):
+        if inner.startswith(b"%PDF-"):
             raise UnsupportedInputError(f"{path.name} is a gzipped PDF; gunzip it first")
-        if _TEX_HINT.search(block):
-            return SourceKind.LATEX, "application/gzip"  # single gzipped .tex
-        raise UnsupportedInputError(f"gzip file {path.name} is neither a tar nor a TeX source")
+        if inner.startswith(b"%!PS") or _looks_html(inner):
+            raise UnsupportedInputError(f"gzip file {path.name} holds PostScript / HTML, not TeX")
+        return SourceKind.LATEX, "application/gzip"  # single gzipped .tex

@@ -140,3 +140,65 @@ def test_unreadable_pdf_is_a_domain_error(src):
 def test_invalid_max_pages_rejected():
     with pytest.raises(ValueError, match="max_pages"):
         IngestOptions(max_pages=0)
+
+
+def test_new_sidecar_reaches_a_cached_result_without_reprocessing(src, tmp_path):
+    """A sidecar written after the first run must not need --force (which re-runs OCR)."""
+    svc = make_service({"a.pdf": [scanned()]})
+    path = src("a.pdf")
+    first = svc.ingest(path)
+    assert first.manifest.metadata is None and first.manifest.title == "a"
+    meta = SourceMetadata(title="Attention Is All You Need", authors=["A. Vaswani"])
+    (tmp_path / "a.pdf.meta.json").write_text(meta.model_dump_json())
+    second = svc.ingest(path)
+    assert svc.ocr.calls == 1  # served from the cache, not re-processed
+    assert second.manifest.metadata == meta and second.manifest.title == meta.title
+    assert second.location == first.location and second.canonical
+    markdown = svc.store.markdown(svc.ingest(path))
+    assert markdown.startswith("# Attention Is All You Need\n\n<!-- page 1 | method=vlm_ocr -->")
+    assert "# a\n" not in markdown
+
+
+def test_explicit_metadata_on_a_cache_hit_updates_the_manifest(src):
+    """The crawl case: a later crawl learned the license of an already-ingested paper."""
+    conv = FakeConverter([Segment("hi")])
+    svc = make_service(converters={SourceKind.LATEX: conv})
+    path = src("paper.tex")
+    svc.ingest(path, metadata=SourceMetadata(title="P", license=None))
+    later = SourceMetadata(title="P", license="http://creativecommons.org/licenses/by/4.0/")
+    doc = svc.ingest(path, metadata=later)
+    assert conv.calls == 1 and doc.manifest.metadata == later
+    m = doc.manifest
+    hit = svc.store.lookup(m.doc_id, m.config_hash, max_pages=None, ocr_all=False)
+    assert hit and hit.manifest.metadata == later  # stored, not only returned
+
+
+def test_unchanged_or_missing_metadata_leaves_the_cached_result_alone(src, monkeypatch):
+    conv = FakeConverter([Segment("hi")], metadata=SourceMetadata(title="From LaTeX"))
+    svc = make_service(converters={SourceKind.LATEX: conv})
+    path = src("paper.tex")
+    first = svc.ingest(path)
+    saves = []
+    monkeypatch.setattr(svc.store, "save", lambda *a, **kw: saves.append(a))
+    # No sidecar and no explicit metadata: the converter's metadata must not be erased.
+    assert svc.ingest(path).manifest == first.manifest
+    assert svc.ingest(path, metadata=first.manifest.metadata).manifest == first.manifest
+    assert saves == [] and conv.calls == 1
+
+
+def test_degraded_conversion_is_kept_but_never_served_from_the_cache(src):
+    """A fallback forced by a timeout must not be cached: the next run retries."""
+    conv = FakeConverter([Segment("plain text")], method=PageMethod.LATEX_PLAINTEXT, degraded=True)
+    svc = make_service(converters={SourceKind.LATEX: conv})
+    path = src("paper.tex")
+    first = svc.ingest(path)
+    assert not first.canonical and svc.store.markdown(first).endswith("plain text\n")
+    svc.ingest(path)
+    assert conv.calls == 2  # retried, not served from the cache
+    conv.kw["degraded"] = False  # the converter recovered
+    good = svc.ingest(path)
+    assert good.canonical and conv.calls == 3
+    conv.kw["degraded"] = True
+    svc.ingest(path, IngestOptions(force=True))  # a degraded --force run...
+    cached = svc.ingest(path)  # ...never replaces the good canonical result
+    assert cached.canonical and cached.manifest == good.manifest and conv.calls == 4

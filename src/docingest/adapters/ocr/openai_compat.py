@@ -190,10 +190,14 @@ class OpenAICompatibleOcr:
         t0 = time.perf_counter()
         choice: dict[str, Any] = {}
         usage: dict[str, Any] = {}
+        finishes: list[str | None] = []
+        total_tokens = 0
         for temperature, penalty in self._attempts():
             reply = self._post(self._body(data_url, temperature, penalty))
             choice = _first_choice(reply)
             usage = reply.get("usage") or {}
+            finishes.append(choice.get("finish_reason"))
+            total_tokens += int(usage.get("completion_tokens") or 0)
             if choice.get("finish_reason") != "length":
                 break
         return OcrResult(
@@ -201,6 +205,11 @@ class OpenAICompatibleOcr:
             seconds=time.perf_counter() - t0,
             gen_tokens=int(usage.get("completion_tokens") or 0),
             finish_reason=choice.get("finish_reason"),
+            # The whole ladder, so a benchmark sees a loop that a retry fixed. Decode time
+            # is not observable over HTTP: gen_seconds stays None.
+            attempts=len(finishes),
+            first_finish_reason=finishes[0] if finishes else None,
+            total_gen_tokens=total_tokens,
         )
 
     def _body(self, data_url: str, temperature: float, penalty: float | None) -> dict[str, Any]:

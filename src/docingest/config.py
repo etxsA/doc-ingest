@@ -18,6 +18,7 @@ from .domain.routing import RoutingPolicy
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config" / "pipeline.toml"
 DEFAULT_OCR_REPO = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
 DEFAULT_OCR_REVISION = "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b"
+DEFAULT_LLM_BASE = "http://127.0.0.1:8080/v1"  # scripts/serve_llm.sh
 
 
 class AdapterSelection(BaseModel):
@@ -74,7 +75,9 @@ class QaConfig(BaseModel):
     # Any litellm model string, e.g. "ollama/llama3.1". None -> the pinned [ocr] model
     # served locally by scripts/serve_llm.sh (mlx_vlm.server, OpenAI-compatible).
     llm: str | None = None
-    llm_base: str = "http://127.0.0.1:8080/v1"
+    # None -> DEFAULT_LLM_BASE for the default local model, the provider's own endpoint
+    # for any other model (a hosted model must not be sent to the local server).
+    llm_base: str | None = None
     llm_revision: str | None = None  # only used when llm is None and differs from [ocr]
     embedding_repo_id: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_revision: str = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
@@ -130,8 +133,17 @@ class AppConfig(BaseModel):
 
 
 def load_config(path: Path | None = None) -> AppConfig:
-    path = path or DEFAULT_CONFIG
-    if not path.exists():
-        return AppConfig()
+    """``path`` (e.g. ``--config``) must exist; only a missing *default* file means defaults.
+
+    Silently falling back for an explicit path would turn a typo into a different
+    pipeline: the in-process MLX OCR instead of the configured remote server, another
+    output directory.
+    """
+    if path is None:
+        if not DEFAULT_CONFIG.exists():
+            return AppConfig()
+        path = DEFAULT_CONFIG
+    if not path.is_file():
+        raise FileNotFoundError(f"config file not found: {path}")
     with path.open("rb") as f:
         return AppConfig.model_validate(tomllib.load(f))

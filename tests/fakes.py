@@ -126,13 +126,17 @@ class FakeImages:
 
 
 class FakeConverter:
+    """``**kw`` goes into every ``Conversion`` (title, metadata, degraded, ...); counts calls."""
+
     def __init__(self, segments: list[Segment], method: PageMethod = PageMethod.LATEX, **kw):
         self.segments = segments
         self.method = method
         self.kw = kw
         self.fingerprint = f"fake-converter {method.value}"
+        self.calls = 0
 
     def convert(self, path: Path) -> Conversion:
+        self.calls += 1
         return Conversion(segments=self.segments, method=self.method, engine="fake", **self.kw)
 
 
@@ -142,6 +146,8 @@ class InMemoryStore:
     def __init__(self):
         self.canonical: dict[str, tuple[DocumentManifest, str]] = {}
         self.variants: dict[tuple[str, str, int | None], tuple[DocumentManifest, str]] = {}
+        # Environment-caused fallbacks: kept for the corpus, never served by lookup().
+        self.degraded: dict[tuple[str, str, int | None], tuple[DocumentManifest, str]] = {}
 
     def lookup(self, doc_id, config_hash, *, max_pages, ocr_all):
         if doc_id in self.canonical:
@@ -154,11 +160,14 @@ class InMemoryStore:
                 return StoredDocument(self.variants[key][0], f"mem://{key}", canonical=False)
         return None
 
-    def save(self, manifest, markdown):
+    def save(self, manifest, markdown, *, degraded=False):
+        key = (manifest.doc_id, manifest.config_hash, manifest.max_pages)
+        if degraded:
+            self.degraded[key] = (manifest, markdown)
+            return StoredDocument(manifest, f"mem://degraded/{key}", canonical=False)
         if manifest.complete and not manifest.ocr_all:
             self.canonical[manifest.doc_id] = (manifest, markdown)
             return StoredDocument(manifest, f"mem://{manifest.doc_id}", canonical=True)
-        key = (manifest.doc_id, manifest.config_hash, manifest.max_pages)
         self.variants[key] = (manifest, markdown)
         return StoredDocument(manifest, f"mem://{key}", canonical=False)
 
@@ -166,16 +175,28 @@ class InMemoryStore:
         m = doc.manifest
         if doc.canonical:
             return self.canonical[m.doc_id][1]
-        return self.variants[(m.doc_id, m.config_hash, m.max_pages)][1]
+        key = (m.doc_id, m.config_hash, m.max_pages)
+        if doc.location.startswith("mem://degraded/"):
+            return self.degraded[key][1]
+        return self.variants[key][1]
 
     def corpus(self):
         docs = [StoredDocument(m, f"mem://{i}", True) for i, (m, _) in self.canonical.items()]
-        warnings = []
-        for (doc_id, _, _), (m, _) in self.variants.items():
-            if doc_id not in self.canonical:
-                docs.append(StoredDocument(m, f"mem://{doc_id}", False))
-                warnings.append(f"{m.source_name}: only a partial run exists")
-        return docs, warnings
+        best: dict[str, StoredDocument] = {}  # most complete non-canonical run per document
+        for store, prefix in ((self.variants, "mem://"), (self.degraded, "mem://degraded/")):
+            for key, (m, _) in store.items():
+                seen = best.get(m.doc_id)
+                if m.doc_id not in self.canonical and (
+                    seen is None or m.n_pages > seen.manifest.n_pages
+                ):
+                    best[m.doc_id] = StoredDocument(m, f"{prefix}{key}", False)
+        warnings = [
+            f"{d.manifest.source_name}: only a degraded fallback conversion exists"
+            if d.location.startswith("mem://degraded/")
+            else f"{d.manifest.source_name}: only a partial run exists"
+            for d in best.values()
+        ]
+        return docs + list(best.values()), warnings
 
 
 @dataclass
