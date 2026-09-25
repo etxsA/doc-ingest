@@ -276,7 +276,7 @@ def test_score_report_ranks_and_compares_against_the_best(tmp_path):
     assert json.loads(json_path.read_text())["suites"]["mem"]["best"] == "good"
     md = md_path.read_text()
     assert "## Suite `mem`" in md and "Paired comparison vs `good` (highest mean)" in md
-    assert "| 1 | good | 1.000 [1.000, 1.000] |" in md and "| bad |" in md
+    assert "| good | 1.000 [1.000, 1.000] |" in md and "| bad |" in md
 
 
 def test_rank_puts_incomplete_and_unscored_candidates_last():

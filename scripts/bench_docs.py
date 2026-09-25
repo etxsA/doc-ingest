@@ -66,7 +66,7 @@ def paired(suite: dict, name: str) -> str:
     if not p:
         return "–"
     verdict = "lower (p < 0.05)" if p.get("significant") else "not distinguishable"
-    return f"{p['diff'] * 100:+.1f} pts, p = {p['p_value']:.3f}: {verdict}"
+    return f"{p['diff'] * 100:+.1f} pts, {_p(p['p_value'])}: {verdict}"
 
 
 def olmocr_table(summary: dict, title: str) -> list[str]:
@@ -115,6 +115,32 @@ def category_table(summary: dict) -> list[str]:
     return [*out, ""]
 
 
+def median_note(summary: dict | None) -> str:
+    """Median page CER per candidate: the means are pulled by a few failure pages."""
+    syn = (summary or {}).get("suites", {}).get("synthetic")
+    path = RUNS / "screen" / "scores" / "synthetic.json"
+    if not syn or not path.exists():
+        return ""
+    units = json.loads(path.read_text())
+    medians = {}
+    for n in syn["ranking"]:
+        cers = [
+            u["cer"] for u in units.get(n, {}).get("units", {}).values() if u.get("cer") is not None
+        ]
+        if cers:
+            medians[n] = statistics.median(cers)
+    low = [n for n, m in medians.items() if m < 0.01]
+    if not low:
+        return ""
+    rest = sorted((n for n in medians if n not in low), key=medians.get)
+    return (
+        f"Median page CER is under 1% for {len(low)} of the {len(medians)} candidates "
+        f"({min(medians[n] for n in low) * 100:.2f}-{max(medians[n] for n in low) * 100:.2f}%)"
+        + ("; " + ", ".join(f"{n}: {medians[n] * 100:.1f}%" for n in rest) if rest else "")
+        + ". Means and their spread come from a few failure pages."
+    )
+
+
 def synthetic_table(summary: dict, run: str) -> list[str]:
     s = summary["suites"]["synthetic"]
     units = json.loads((RUNS / run / "scores" / "synthetic.json").read_text())
@@ -137,6 +163,8 @@ def synthetic_table(summary: dict, run: str) -> list[str]:
         )
     sep = next(iter(s["scores"].values()))["details"].get("reported_separately", {})
     out.append("")
+    if note := median_note(summary):
+        out += [note, ""]
     for cluster, info in sep.items():
 
         def page_cer(n: str, cluster: str = cluster) -> str:
@@ -220,7 +248,10 @@ def _separation(summary: dict | None, suite_name: str, metric: str, label: str) 
     others = [n for n in names if n != best and pv.get(n) and pv[n].get("p_value") is not None]
     if best not in names or not others:
         return None
-    n_units = s["scores"][best]["n_samples"]
+    if suite_name == "olmocr-bench":
+        n_units = s["scores"][best]["n_samples"]
+    else:  # pages reported separately are not in the mean
+        n_units = s["scores"][best]["metrics"][metric].get("n") or s["scores"][best]["n_samples"]
     direction = "highest" if s["scores"][best].get("higher_is_better", True) else "lowest"
     unit = "%"
     kind = "PDFs" if suite_name == "olmocr-bench" else "page images"
@@ -470,11 +501,34 @@ def _variant(screen: dict) -> list[str]:
             scores = load_scores(RUNS / "screen", suite)
             r = compare(scores[new], scores[old])
             ci_text = "" if r.low != r.low else f" [{r.low * 100:+.1f}, {r.high * 100:+.1f}]"
+            verdict = "distinguished" if r.significant else "not distinguished"
             parts.append(
                 f"{label} {pct(_mean(s, old, metric))} → {pct(_mean(s, new, metric))} "
-                f"(paired {r.diff * 100:+.1f} pts{ci_text}, {_p(r.p_value)})"
+                f"(paired {r.diff * 100:+.1f} pts{ci_text}, {_p(r.p_value)}: {verdict} at the "
+                "5% level)"
             )
+            tp = s["throughput"]
             if suite == "olmocr-bench":
+                cats = [
+                    f"{label_} {pct(bo, 0)} → {pct(bn, 0)}"
+                    for cat, label_ in CATS
+                    if (
+                        bo := s["scores"][old]["by_category"]
+                        .get(cat, {})
+                        .get("pass_rate", {})
+                        .get("mean")
+                    )
+                    is not None
+                    and (
+                        bn := s["scores"][new]["by_category"]
+                        .get(cat, {})
+                        .get("pass_rate", {})
+                        .get("mean")
+                    )
+                    is not None
+                ]
+                if cats:
+                    parts.append("by category " + ", ".join(cats))
                 files = {n: sorted((RUNS / "screen" / suite / n).rglob("*.md")) for n in (old, new)}
                 if all(files.values()):
                     blank = {n: sum(map(_blank, fs)) for n, fs in files.items()}
@@ -482,13 +536,20 @@ def _variant(screen: dict) -> list[str]:
                         f"outputs with no page text {blank[old]} → {blank[new]} of "
                         f"{len(files[new])} pages"
                     )
-                tp = s["throughput"]
-                parts.append(
-                    f"median {num(tp.get(old, {}).get('median_s'))} → "
-                    f"{num(tp.get(new, {}).get('median_s'))} s/page"
-                )
+            o, n_ = tp.get(old, {}), tp.get(new, {})
+            timing = (
+                f"{label.split(' ')[0]} time per page: median {num(o.get('median_s'))} → "
+                f"{num(n_.get('median_s'))} s, p90 {num(o.get('p90_s'))} → {num(n_.get('p90_s'))} s"
+            )
+            if n_.get("retried_rate") is not None:
+                timing += f" ({pct(n_['retried_rate'], 0)}% of pages retried)"
+            parts.append(timing)
         if parts:
-            out.append(f"**Same weights, different adapter: {what}.** " + "; ".join(parts) + ".")
+            out.append(
+                f"**Same weights, different adapter: {what}.** "
+                + "; ".join(parts)
+                + ". Verdicts follow the sign-flip test; the bootstrap interval shows the size."
+            )
     return out
 
 
@@ -496,6 +557,7 @@ def observations(screen: dict | None, deep: dict | None) -> list[str]:
     """Data-driven comparison statements (Markdown bold), shared with the PDF builder.
     Every number is computed from the run summaries and scores; none of them picks a model."""
     items = [
+        _separation(screen, "olmocr-bench", "pass_rate", "olmOCR-Bench, screening"),
         _separation(deep, "olmocr-bench", "pass_rate", "olmOCR-Bench, deep sample"),
         _separation(screen, "synthetic", "cer", "Synthetic CER"),
         screen and deep and _screen_to_deep(screen, deep),
