@@ -67,7 +67,10 @@ class DocumentManifest(BaseModel):
     source_kind: SourceKind
     mime: str
     size_bytes: int
-    n_pages: int
+    n_pages: int  # pages processed in this run
+    source_pages: int  # pages in the source; n_pages < source_pages -> partial run
+    max_pages: int | None = None  # run options, recorded for provenance
+    ocr_all: bool = False
     pages: list[PageRecord]
     pipeline_version: str
     config_hash: str  # hash of the effective config -> cache key / reproducibility

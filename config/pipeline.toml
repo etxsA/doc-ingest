@@ -15,11 +15,25 @@ min_alpha_ratio = 0.5           # olmOCR heuristic: <50% letters -> suspicious t
 # Pinned to an exact Hugging Face commit for reproducibility.
 repo_id = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
 revision = "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b"
+# repo_id and revision always change together (revision = a commit of that repo).
 # Higher-quality OCR-specialised alternative (Qwen2.5-VL-7B fine-tune, ~5.6 GB):
 # repo_id = "mlx-community/olmOCR-2-7B-1025-mlx-4bit"
 # revision = "c0eaffb7844e795a44e246744cfaba5981a1bf03"
+# Other verified MLX options (repo_id / revision):
+#   mlx-community/Nanonets-OCR2-3B-4bit    fe1396cbeb46cc71cba355907b5d6e11f3553f45
+#   mlx-community/Qwen3.5-4B-MLX-4bit      32f3e8ecf65426fc3306969496342d504bfa13f3
+#   mlx-community/GLM-OCR-4bit             97f587506984cc92fa69b2694b4128e53db6b081
+#   mlx-community/PaddleOCR-VL-1.6-4bit    c8987b277bdd8aaec8bd265d154f391bd03ad165
 dpi = 150
 max_side = 1600
 max_tokens = 4096
 temperature = 0.0
 repetition_penalty = 1.05
+
+[qa]
+# PaperQA2 step. LLM defaults to the pinned [ocr] model (served by scripts/serve_llm.sh).
+embedding_repo_id = "sentence-transformers/all-MiniLM-L6-v2"
+embedding_revision = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+chunk_chars = 900   # target size; chunks over MiniLM's 256-token window are re-split by tokens
+overlap = 100
+evidence_k = 10

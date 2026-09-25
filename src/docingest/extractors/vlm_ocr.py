@@ -6,7 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from ..config import OcrConfig
 
@@ -22,6 +22,10 @@ class OcrResult:
 
 
 def fit_image(img: Image.Image, max_side: int) -> Image.Image:
+    """Upright, opaque RGB no larger than ``max_side`` (phone photos, transparent PNGs)."""
+    img = ImageOps.exif_transpose(img)
+    if img.has_transparency_data:  # a plain convert("RGB") would turn transparency black
+        img = Image.alpha_composite(Image.new("RGBA", img.size, "white"), img.convert("RGBA"))
     img = img.convert("RGB")
     scale = max_side / max(img.size)
     if scale < 1:
@@ -47,16 +51,12 @@ class VlmOcr:
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
-        from huggingface_hub import snapshot_download
         from mlx_vlm import load
         from mlx_vlm.utils import load_config
 
-        try:  # offline-first: pinned revision already in the local HF cache
-            path = snapshot_download(
-                self.cfg.repo_id, revision=self.cfg.revision, local_files_only=True
-            )
-        except Exception:
-            path = snapshot_download(self.cfg.repo_id, revision=self.cfg.revision)
+        from ..models import resolve
+
+        path = resolve(self.cfg.repo_id, self.cfg.revision)
         self._model, self._processor = load(path)
         self._config = load_config(path)
 

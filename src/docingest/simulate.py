@@ -14,7 +14,9 @@ import numpy as np
 import pypdfium2 as pdfium
 from PIL import Image, ImageFilter
 
-from .pipeline import clean_text_layer
+from .pipeline import clean_text_layer, sha256_file, text_vocabulary
+
+MIN_TRUTH_CHARS = 50
 
 
 def degrade(img: Image.Image, seed: int) -> Image.Image:
@@ -33,19 +35,43 @@ def make_scan(
 ) -> Path:
     """Write an image-only PDF of ``pages`` (0-based) + ``<out>.truth.json``."""
     pdf = pdfium.PdfDocument(src)
-    images, truth = [], []
-    for k, i in enumerate(pages):
-        page = pdf[i]
-        truth.append(clean_text_layer(page.get_textpage().get_text_bounded()))
-        images.append(degrade(page.render(scale=dpi / 72).to_pil(), seed + k))
-    pdf.close()
+    try:
+        if bad := [i for i in pages if not 0 <= i < len(pdf)]:
+            raise ValueError(f"pages {bad} out of range: {src.name} has {len(pdf)} pages")
+        raws = [pdf[i].get_textpage().get_text_bounded() for i in pages]
+        vocab = text_vocabulary(*raws)
+        truth = [clean_text_layer(raw, vocab) for raw in raws]
+        for i, t in zip(pages, truth, strict=True):
+            if len("".join(t.split())) < MIN_TRUTH_CHARS:
+                raise ValueError(f"page {i} of {src.name} has no usable text layer for ground truth")
+        images = [
+            degrade(pdf[i].render(scale=dpi / 72).to_pil(), seed + k) for k, i in enumerate(pages)
+        ]
+    finally:
+        pdf.close()
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
     # JPEG-compressed, image-only pages: no text layer at all, like a real scanner.
+    # No timestamps -> identical bytes on every run, so the scan's sha256 / doc_id is stable.
     images[0].save(
-        out_pdf, "PDF", resolution=dpi, save_all=True, append_images=images[1:], quality=70
+        out_pdf,
+        "PDF",
+        resolution=dpi,
+        save_all=True,
+        append_images=images[1:],
+        quality=70,
+        title=src.stem,
+        creationDate=None,
+        modDate=None,
     )
     truth_path = out_pdf.with_suffix(".truth.json")
-    truth_path.write_text(
-        json.dumps({"source": src.name, "pages": pages, "text": truth}, indent=2)
-    )
+    meta = {
+        "source": src.name,
+        "source_sha256": sha256_file(src),
+        "pages": pages,
+        "dpi": dpi,
+        "seed": seed,
+        "scan_sha256": sha256_file(out_pdf),
+        "text": truth,
+    }
+    truth_path.write_text(json.dumps(meta, indent=2))
     return truth_path
