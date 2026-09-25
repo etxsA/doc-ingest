@@ -323,3 +323,26 @@ def test_pagination_advances_past_skipped_entries(tmp_path):
     assert not report.failures
     assert "start=2&max_results=1" in transport.urls(API)[1]
     assert any("skipped 1 entry" in line for line in logs)
+
+
+def test_a_failed_search_is_reported_not_raised(tmp_path):
+    from docingest.domain.errors import SourceUnavailableError
+
+    class DownCrawler:
+        def search(self, query, limit):
+            raise SourceUnavailableError("HTTP 503 from the API")
+
+        def fetch(self, record, dest_dir):  # pragma: no cover - never reached
+            raise AssertionError
+
+    report = CrawlService(
+        crawler=DownCrawler(), ingest=None, raw_dir=tmp_path, log=lambda _: None
+    ).run("cat:cs.CL", 3)
+    assert report.failures and report.failures[0][0].startswith("search")
+    assert report.stopped and "search failed" in report.stopped
+
+
+def test_intermittent_406_from_the_api_is_retried():
+    from docingest.adapters.sources.http import RETRYABLE_STATUS
+
+    assert 406 in RETRYABLE_STATUS

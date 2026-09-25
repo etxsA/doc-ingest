@@ -34,7 +34,9 @@ from ...domain.errors import DocingestError, RateLimitedError, SourceUnavailable
 
 log = logging.getLogger(__name__)
 
-RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+# 406 is normally permanent, but arXiv's CDN returns it intermittently for valid API
+# queries (observed 2026-09-24/25: the identical request succeeds seconds later).
+RETRYABLE_STATUS = frozenset({406, 429, 500, 502, 503, 504})
 # Network-side failures worth another attempt (EOFError / zlib.error: cut gzip stream).
 TRANSIENT_ERRORS = (OSError, http.client.HTTPException, EOFError, zlib.error)
 CHUNK = 1 << 20
@@ -131,6 +133,10 @@ class HttpStatusError(SourceUnavailableError):
 
 class RetriesExhaustedError(SourceUnavailableError):
     """Every attempt failed transiently (5xx, network errors, cut bodies): may clear up."""
+
+    def __init__(self, message: str, *, status: int | None = None):
+        super().__init__(message)
+        self.status = status  # the last HTTP status seen, if the last attempt got one
 
 
 class RateLimiter:
@@ -255,6 +261,7 @@ class PoliteClient:
         headers = {**self.headers, "Accept": accept}  # curl-like; urllib sends none
         attempts = self.retries + 1
         last_error = ""
+        last_status: int | None = None
         throttled = False  # the last attempt was told to back off (429 / Retry-After)
         with self._lock:  # a single connection at a time
             if (paused := self.limiter.paused_s()) > self.max_retry_after_s:
@@ -288,6 +295,7 @@ class PoliteClient:
                         if resp.status not in RETRYABLE_STATUS:
                             raise HttpStatusError(url, resp.status, _snippet(resp.body))
                         last_error = f"HTTP {resp.status}"
+                        last_status = resp.status
                         delay, throttled = self._retry_delay(url, resp, attempt)
                     except TRANSIENT_ERRORS as e:  # the body failed mid-read
                         last_error = f"{type(e).__name__}: {e}"
@@ -307,7 +315,7 @@ class PoliteClient:
         message = f"{url}: gave up after {attempts} attempt(s) ({last_error})"
         if throttled:  # still refused: the next URL on this host would be refused too
             raise RateLimitedError(message, retry_after_s=self.limiter.paused_s())
-        raise RetriesExhaustedError(message)
+        raise RetriesExhaustedError(message, status=last_status)
 
     def _backoff(self, attempt: int) -> float:
         return self.backoff_s * 2**attempt

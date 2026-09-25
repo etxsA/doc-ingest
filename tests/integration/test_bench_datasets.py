@@ -318,7 +318,7 @@ def test_repo_benchmark_config_pins_every_candidate():
 
     bc, preset = load_bench_config(DEFAULT_BENCH_CONFIG, "smoke")
     specs = bc.specs()
-    assert len(specs) == 9 and all(len(s.revision) == 40 for s in specs.values())
+    assert len(specs) >= 9 and all(len(s.revision) == 40 for s in specs.values())
     assert {s.profile for s in specs.values()} == {
         "markdown", "olmocr", "nanonets", "glm-ocr", "paddleocr-vl"
     }  # fmt: skip

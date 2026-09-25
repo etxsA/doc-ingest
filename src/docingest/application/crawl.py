@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..domain.errors import RateLimitedError
+from ..domain.errors import DocingestError, RateLimitedError
 from ..domain.models import SourceMetadata
 from ..ports import FetchedSource, SourceCrawler, StoredDocument
 from .ingest import SIDECAR_SUFFIX, IngestOptions, IngestService, read_sidecar
@@ -44,7 +44,12 @@ class CrawlService:
     ) -> CrawlReport:
         options = options or IngestOptions()
         report = CrawlReport()
-        records = self.crawler.search(query, limit)
+        try:
+            records = self.crawler.search(query, limit)
+        except DocingestError as e:  # e.g. the search API is down: a report, not a traceback
+            report.failures.append((f"search {query!r}", f"{type(e).__name__}: {e}"))
+            report.stopped = f"search failed: {e}"
+            return report
         self.log(f"{len(records)} record(s) for {query!r}")
         for i, record in enumerate(records):
             try:

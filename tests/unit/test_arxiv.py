@@ -338,7 +338,10 @@ def test_a_refused_id_batch_is_retried_one_id_at_a_time():
     transport.route(API, api)
     records = crawler.search("ids:1706.03762,math/0211159", 5)
     assert [r.key for r in records] == ["1706.03762v7"]
-    assert len(transport.calls) == 3  # the batch, then one request per id
+    # 406 is retried first (arXiv's CDN also sends it transiently): the batch gets every
+    # attempt, then one request per id, the persistently refused id again every attempt.
+    attempts = ArxivConfig().retries + 1
+    assert len(transport.calls) == attempts + 1 + attempts
     assert any("math/0211159" in line and "406" in line for line in logs)
 
     crawler, transport, _, _ = make()
