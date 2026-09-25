@@ -9,3 +9,4 @@ data/normalized/
 data/samples/*.pdf
 !data/samples/.gitkeep
 data/samples/*.html
+.DS_Store

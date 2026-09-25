@@ -1,9 +1,14 @@
-"""docingest: normalize any research document into Markdown + provenance manifest."""
+"""docingest: normalize any research document into Markdown + provenance manifest.
 
-from .pipeline import PIPELINE_VERSION as __version__
+Hexagonal layout: ``domain`` (pure) <- ``ports`` (Protocols) <- ``application``
+(use cases) <- ``adapters`` (implementations) <- ``bootstrap`` (composition root)
+<- ``entrypoints`` (CLI, PaperQA hook). See docs/architecture.md.
+"""
+
+from .application.ingest import PIPELINE_VERSION as __version__
 
 
 def main() -> None:
-    from .cli import app
+    from .entrypoints.cli import app
 
     app()
