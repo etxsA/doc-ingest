@@ -762,7 +762,7 @@ def render_report(summary: Mapping[str, Any]) -> str:
             out += ["", f"Primary metric: **{primary}** ({direction} is better).", ""]
             out += ["### Overall", ""]
             out += _table(
-                ["rank", "candidate", *metrics, "outputs"],
+                ["#", "candidate", *metrics, "outputs"],
                 (
                     [
                         i,
@@ -791,7 +791,8 @@ def render_report(summary: Mapping[str, Any]) -> str:
                     ),
                 )
             if s["paired_vs_best"]:
-                out += ["", f"### Paired comparison vs best (`{s['best']}`)", ""]
+                ref = "highest" if hib else "lowest"
+                out += ["", f"### Paired comparison vs `{s['best']}` ({ref} mean)", ""]
                 rows = []
                 for c, p in s["paired_vs_best"].items():
                     ci = {"mean": p["diff"], "low": p["low"], "high": p["high"]}
@@ -808,7 +809,7 @@ def render_report(summary: Mapping[str, Any]) -> str:
                 out += _table(
                     [
                         "candidate",
-                        f"Δ {primary} (candidate − best) [CI]",
+                        f"Δ {primary} (candidate − `{s['best']}`) [CI]",
                         "p",
                         "significant",
                         "pairs",

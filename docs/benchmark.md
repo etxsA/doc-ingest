@@ -27,17 +27,20 @@ Machine: Apple M4 Pro, 24 GB; mlx-vlm 0.7.3, mlx 0.32.2. Full generated reports:
 | olmocr-2-7b | 64.4 [52.4, 74.8] | 5.9 | -18.6 pts, p = 0.001: lower (p < 0.05) | 20.0 | 6.6 | 0% | ≥0% |
 | paddleocr-vl | 55.3 [47.5, 61.9] | 5.4 | -27.7 pts, p = 0.000: lower (p < 0.05) | 3.1 | 1.7 | 0% | ≥0% |
 
-42 PDFs (42 clusters). *official ±* is the scorer's own interval (tests resampled independently, narrower); the bracketed CI resamples whole PDFs within categories. *vs top mean*: paired cluster bootstrap / sign-flip test against the candidate with the highest mean.
+42 PDFs (42 clusters). *official ±* is the scorer's own interval (tests resampled independently, narrower); the bracketed CI resamples whole PDFs within categories. *vs top mean*: paired cluster bootstrap and sign-flip test against the candidate with the highest mean; p-values are per comparison, not adjusted for the number of comparisons (Comparisons below gives the Holm-adjusted verdicts).
 
-#### Deep sample: candidates the screening could not separate from the top mean, 12 PDFs per category
+#### Deep sample, 12 PDFs per category: the candidates the screening did not separate from the top mean (paired p ≥ 0.05), plus the one with the lowest synthetic CER
 
 | model | pass rate % [95% CI] | official ± | vs top mean (paired) | median s/page | peak GB | empty | truncated (1st try) |
 |---|---|---|---|---|---|---|---|
 | qwen3.5-4b | 79.4 [74.2, 83.9] | 3.3 | top mean | 14.6 | 5.0 | 0% | 2% |
 | qwen3.5-9b | 79.3 [74.3, 83.5] | 3.2 | -0.1 pts, p = 0.971: not distinguishable | 22.7 | 7.8 | 0% | 0% |
+| qwen3-vl-8b | 76.2 [70.8, 81.5] | 3.4 | -3.2 pts, p = 0.339: not distinguishable | 23.6 | 7.1 | 0% | 1% |
+| qwen3-vl-30b-a3b | 74.9 [68.9, 80.1] | 3.6 | -4.5 pts, p = 0.077: not distinguishable | 20.5 | 19.5 | 0% | 2% |
+| glm-ocr | 72.1 [65.8, 77.9] | 3.3 | -7.2 pts, p = 0.053: not distinguishable | 6.3 | 2.6 | 0% | 1% |
 | nanonets-ocr2-3b | 67.6 [61.0, 74.2] | 3.6 | -11.7 pts, p = 0.005: lower (p < 0.05) | 14.8 | 4.2 | 0% | 2% |
 
-84 PDFs (84 clusters). *official ±* is the scorer's own interval (tests resampled independently, narrower); the bracketed CI resamples whole PDFs within categories. *vs top mean*: paired cluster bootstrap / sign-flip test against the candidate with the highest mean.
+84 PDFs (84 clusters). *official ±* is the scorer's own interval (tests resampled independently, narrower); the bracketed CI resamples whole PDFs within categories. *vs top mean*: paired cluster bootstrap and sign-flip test against the candidate with the highest mean; p-values are per comparison, not adjusted for the number of comparisons (Comparisons below gives the Holm-adjusted verdicts).
 
 #### Pass rate by category (screening, %)
 
@@ -75,18 +78,29 @@ Machine: Apple M4 Pro, 24 GB; mlx-vlm 0.7.3, mlx 0.32.2. Full generated reports:
 
 ![Synthetic CER by degradation](benchmark/synthetic_cer.png)
 
+### Comparisons
+
+Generated from the run summaries and per-unit scores. They describe how the candidates differ; they do not pick a model.
+
+- **olmOCR-Bench, deep sample: paired tests against the highest mean.** qwen3.5-4b has the highest mean (79.4%, 84 PDFs). Not distinguished from it at the 5% level: qwen3.5-9b (-0.1 pts, p = 0.971), qwen3-vl-8b (-3.2 pts, p = 0.339), qwen3-vl-30b-a3b (-4.5 pts, p = 0.077) and glm-ocr (-7.2 pts, p = 0.053). Distinguished (lower): nanonets-ocr2-3b (-11.7 pts, p = 0.005). These p-values are per comparison; with a Holm correction for the 5 comparisons, the same verdicts hold.
+- **Synthetic CER: paired tests against the lowest mean.** nanonets-ocr2-3b has the lowest mean (1.1%, 36 page images). Not distinguished from it at the 5% level: qwen3.5-9b (+0.3 pts, p = 0.800), paddleocr-vl (+1.5 pts, p = 0.142), qwen3-vl-30b-a3b (+1.8 pts, p = 0.363), glm-ocr (+1.9 pts, p = 0.121), qwen3-vl-8b (+3.3 pts, p = 0.492), olmocr-2-7b (+5.7 pts, p = 0.053) and qwen3-vl-4b (+6.2 pts, p = 0.187). Distinguished (higher): qwen3.5-4b (+1.0 pts, p = 0.047) and qwen3-vl-2b (+8.3 pts, p < 0.001). These p-values are per comparison; with a Holm correction for the 9 comparisons, qwen3-vl-2b remains distinguished.
+- **Screening (42 PDFs) → deep (84 PDFs), pass rate.** The deep sample contains the screening PDFs and transcribes all of them again: qwen3.5-4b 80.2 → 79.4 (42 added: 77.8); qwen3.5-9b 83.0 → 79.3 (42 added: 74.6); qwen3-vl-8b 79.4 → 76.2 (42 added: 73.3); qwen3-vl-30b-a3b 74.9 → 74.9 (42 added: 74.1); glm-ocr 75.2 → 72.1 (same 42 PDFs, transcribed again: 73.3; 42 added: 70.5); nanonets-ocr2-3b 71.1 → 67.6 (same 42 PDFs, transcribed again: 73.0; 42 added: 61.9). For glm-ocr and nanonets-ocr2-3b the second transcription of the same pages scored differently, so part of the change is run-to-run variation, not the added PDFs.
+- **Per category (deep sample), lowest to highest pass rate:** arXiv math 60 (nanonets-ocr2-3b) to 88 (qwen3-vl-8b); old scans math 30 (nanonets-ocr2-3b) to 88 (qwen3-vl-8b); tables 35 (glm-ocr) to 88 (qwen3.5-4b, qwen3.5-9b and nanonets-ocr2-3b); old scans 34 (qwen3.5-9b and glm-ocr) to 40 (nanonets-ocr2-3b); headers/footers 51 (qwen3-vl-8b and nanonets-ocr2-3b) to 93 (glm-ocr); multi-column 75 (qwen3-vl-30b-a3b) to 85 (nanonets-ocr2-3b); tiny text 82 (qwen3-vl-30b-a3b) to 89 (qwen3.5-4b, glm-ocr and nanonets-ocr2-3b). Each category score rests on about 12 PDFs; their 95% CIs have half-widths of ±6 to ±28 points (median ±13). Tables and headers/footers also depend on the prompt: the general models' Markdown prompt asks them to omit headers and footers, and GLM-OCR and PaddleOCR-VL ran in whole-page text mode, not their region-level table mode (see the olmOCR-Bench failure analysis).
+- **Speed and memory (screening).** Median time per page runs from 3.1 s (paddleocr-vl) to 23.5 s (qwen3-vl-8b), about 7x apart. Peak memory runs from 1.7 GB (paddleocr-vl) to 19.5 GB (qwen3-vl-30b-a3b); the next highest is 7.8 GB (qwen3.5-9b). The quality-vs-speed chart plots pass rate against speed.
+- **The two suites order the candidates differently.** Of the 45 pairs, 16 are ordered one way by olmOCR-Bench mean pass rate and the other way by synthetic mean CER. Both differences are significant (paired tests, p < 0.05 in each suite) for none of them. Synthetic means are driven by a few failure pages (see the median CER note); olmOCR-Bench also scores tables, math rendering, reading order and header/footer removal.
+
 <!-- /RESULTS -->
 
 ## Methodology
 
 ### Candidates
-There are 10 models, each pinned to an exact Hugging Face commit in `config/benchmark.toml` and run in-process with mlx-vlm 0.7.3 (4-bit MLX conversions). Each model uses its **own profile**: the prompt, image size, output clean-up and generation limits from its model card or official repository. A model is never judged on a prompt it was not built for.
+There are 10 models, each pinned to an exact Hugging Face commit in `config/benchmark.toml` and run in-process with mlx-vlm 0.7.3 (4-bit MLX conversions). Each model uses its **own profile**: image size, output clean-up and generation limits from its model card or official repository. The OCR-specialized models get their model-card prompt. The general VLMs (Qwen) get our Markdown + LaTeX prompt, which also asks them to omit page headers and footers. GLM-OCR and PaddleOCR-VL run in whole-page text mode; their region-level table mode, which needs a layout detector, was not used. One deviation was found after the fact: the first olmOCR-2 adapter put the image before the prompt and did not retry invalid output, unlike its authors' pipeline, so it was re-run closer to that pipeline as `olmocr-2-7b-v2` (below). The olmOCR-Bench failure analysis lists the categories where the prompt matters (tables, headers/footers).
 
 | Candidate | Profile | Notes |
 |---|---|---|
 | Qwen3-VL-2B / 4B / 8B Instruct | `markdown` | general VLMs; our Markdown + LaTeX prompt |
 | Qwen3.5-4B / 9B | `markdown` | natively multimodal; thinking disabled by the chat template |
-| olmOCR-2-7B-1025 (AllenAI) | `olmocr` | official v4 prompt, 1288 px, YAML front matter stripped |
+| olmOCR-2-7B-1025 (AllenAI) | `olmocr` | official v4 prompt, 1288 px, YAML front matter stripped. Run twice with the same weights: `olmocr-2-7b` (first adapter: image before the prompt, retried only on the token cap) and `olmocr-2-7b-v2` (prompt before the image and the authors' temperature ladder, retrying until the output has olmOCR front matter followed by page text). The authors' pipeline (olmocr 0.4.27) also uses the prompt-first order and that ladder, but it parses the front matter strictly, accepts a header-only answer as a blank page, retries rotated pages, and falls back to the PDF's text layer when every attempt fails; v2 does none of those. |
 | Nanonets-OCR2-3B | `nanonets` | official prompt; `<page_number>`/`<img>` tags handled |
 | GLM-OCR | `glm-ocr` | `Text Recognition:` with the official (thinking-enabled) template |
 | PaddleOCR-VL-1.6 | `paddleocr-vl` | `OCR:`; its processor caps the input at about 1 MP |
@@ -115,13 +129,13 @@ All candidates use greedy decoding (temperature 0) and the same retry ladder. If
 - **Dataset:** `allenai/olmOCR-bench`, pinned to dataset commit `54a96a6f`.
 - **Categories:** arXiv math, old scans, old scans with math, tables, headers and footers, multi-column, and long tiny text.
 - **Sample:** a seeded sample of PDFs per category. Samples are nested, so the 6-per-category screening sample is contained in the 12-per-category deep sample.
-- **Deep sample:** the leading candidates are re-run on the larger sample. This is only to narrow their confidence intervals, not to select a model.
+- **Deep sample:** the candidates the screening did not separate from the top mean (paired p ≥ 0.05), plus the one with the lowest synthetic CER, are run on the larger sample. The screening PDFs are transcribed again as part of it. The purpose is to narrow their confidence intervals, not to select a model.
 - **Scoring:** the **official scorer** (`olmocr==0.4.27`, in an isolated venv with headless Chromium for the math-rendering tests). Scores are therefore comparable in kind with the published leaderboard, although a subset has wider uncertainty than the full benchmark (about 1,400 PDFs).
 - **Test types:** unit tests on the Markdown output. They check that specific text is present, that headers and footers are absent, that reading order is correct, that table cells are placed correctly, and that math renders to the same result as the reference. There are also baseline sanity tests.
 
 ### Statistics
 - **Clustered bootstrap.** Every confidence interval resamples **clusters**, never single observations. On the synthetic suite, one page with all three of its degradation levels is one cluster. On olmOCR-Bench, one PDF with all its tests is one cluster, resampled within its category. Treating those as independent made intervals falsely narrow. In a null simulation the false-positive rate went from 26.5% down to the nominal 5.2%.
-- **Paired comparisons** against the best candidate use a paired cluster bootstrap for the interval and an exact sign-flip test over cluster means for the p-value.
+- **Paired comparisons** against the candidate with the highest mean (lowest, for CER) use a paired cluster bootstrap for the interval and a sign-flip test over cluster means for the p-value. The test enumerates every sign pattern up to 16 clusters and otherwise uses 10,000 random patterns (so p is never below about 0.0001). p-values are per comparison; the Comparisons section also gives Holm-adjusted verdicts for the family of comparisons against the top mean.
 - With few clusters, p-values are shown but "significant" is suppressed. With k clusters the smallest possible p is 2/2^k.
 - The official scorer's own interval, which resamples tests and is narrower, is reported separately for comparison with published numbers.
 
