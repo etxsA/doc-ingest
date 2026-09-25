@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Annotated
 
@@ -47,15 +48,15 @@ def ingest(
         return
     dump_index(manifests, Path(cfg.output_dir))
     table = Table(title="Ingestion summary")
-    for col in ("document", "kind", "pages", "text-layer", "VLM OCR", "seconds", "doc_id"):
+    for col in ("document", "kind", "pages", "page methods", "seconds", "doc_id"):
         table.add_column(col)
     for m in manifests:
+        methods = Counter(p.method.value for p in m.pages)
         table.add_row(
             m.source_name,
             m.source_kind.value,
             str(m.n_pages),
-            str(m.n_pages - m.ocr_pages),
-            str(m.ocr_pages),
+            ", ".join(f"{k}×{v}" for k, v in methods.most_common()),
             f"{m.total_seconds:.1f}",
             m.doc_id[:12],
         )
