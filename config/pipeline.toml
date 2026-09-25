@@ -1,9 +1,24 @@
-# docingest pipeline config. Any change here changes config_hash, which
-# invalidates cached outputs in data/normalized/ for affected documents.
+# docingest configuration. Settings that change a document's output feed its
+# config_hash, which invalidates cached outputs in data/normalized/ automatically.
 
 output_dir = "data/normalized"
+raw_dir = "data/raw"
 
-[probe]
+[adapters]
+# Which implementation plugs into each port. `uv run docingest adapters` lists the
+# built-ins plus any installed plugins (entry-point group "docingest.<port>").
+detector = "magic"
+pdf = "pdfium"
+ocr = "mlx-vlm"            # or "openai-compatible" (vLLM, LM Studio, mlx_vlm.server, ...)
+images = "pillow"
+office = "docling"
+latex = "pandoc"
+text = "passthrough"
+store = "filesystem"
+qa = "paperqa"
+crawler = "arxiv"
+
+[routing]
 min_chars = 50                  # page with fewer embedded chars -> OCR
 image_coverage = 0.6            # image objects covering >60% of the page...
 image_coverage_max_chars = 400  # ...with little text -> OCR
@@ -25,15 +40,28 @@ revision = "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b"
 #   mlx-community/GLM-OCR-4bit             97f587506984cc92fa69b2694b4128e53db6b081
 #   mlx-community/PaddleOCR-VL-1.6-4bit    c8987b277bdd8aaec8bd265d154f391bd03ad165
 dpi = 150
-max_side = 1600
 max_tokens = 4096
 temperature = 0.0
 repetition_penalty = 1.05
+profile = "markdown"       # prompt + image size + clean-up: markdown | olmocr | nanonets | glm-ocr | paddleocr-vl
 
 [qa]
 # PaperQA2 step. LLM defaults to the pinned [ocr] model (served by scripts/serve_llm.sh).
+# Any litellm model works instead, e.g. llm = "ollama/llama3.1" with
+# llm_base = "http://localhost:11434" and embedding = "ollama/mxbai-embed-large".
 embedding_repo_id = "sentence-transformers/all-MiniLM-L6-v2"
 embedding_revision = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
 chunk_chars = 900   # target size; chunks over MiniLM's 256-token window are re-split by tokens
 overlap = 100
 evidence_k = 10
+
+[latex]
+timeout_s = 120        # pandoc wall-clock limit per document
+max_archive_mb = 200   # refuse larger extracted sources (zip-bomb guard)
+split_level = 2        # section depth that becomes one segment ("page")
+
+[arxiv]
+delay_s = 3.0          # arXiv API terms: at most one request every 3 seconds
+retries = 3
+# contact = "you@example.org"   # optional mailto in the User-Agent, as arXiv requests
+prefer = ["latex", "pdf"]
