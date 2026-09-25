@@ -1,6 +1,6 @@
 # OCR benchmark: run `deep`
 
-Generated 2026-09-25T14:15:04+00:00 · docingest 0.3.1 (pipeline 0.3.1) · mlx-vlm 0.7.3 · Apple M4 Pro, 24.0 GB RAM · macOS-26.6.2-arm64-arm-64bit
+Generated 2026-09-25T16:14:46+00:00 · docingest 0.3.1 (pipeline 0.3.1) · mlx-vlm 0.7.3 · Apple M4 Pro, 24.0 GB RAM · macOS-26.6.2-arm64-arm-64bit
 
 Intervals are 95% percentile bootstrap CIs that resample independent clusters, not single units: a synthetic page with all its degradation levels, an olmOCR-bench PDF with all its tests (within its category). Paired comparisons take the units both candidates scored: a cluster bootstrap CI (10000 resamples, seed 0) and a two-sided sign-flip test over clusters (every pattern up to 16 clusters, else 10000 random ones); *significant* means p < 0.05. With k clusters the smallest attainable p is 2/2^k.
 
@@ -23,7 +23,7 @@ Primary metric: **pass_rate** (higher is better).
 
 ### Overall
 
-| rank | candidate | pass_rate | outputs |
+| # | candidate | pass_rate | outputs |
 |---|---|---|---|
 | 1 | qwen3.5-4b | 79.4% [74.2, 83.9] | 84/84 |
 | 2 | qwen3.5-9b | 79.3% [74.3, 83.5] | 84/84 |
@@ -56,9 +56,9 @@ Official scorer CI, to compare with the leaderboard's ±: olmocr.bench: tests re
 | glm-ocr | 65.7% [41.3, 84.9] | 98.8% [96.3, 100.0] | 93.3% [77.5, 100.0] | 89.0% [74.1, 100.0] | 77.5% [66.7, 87.2] | 33.9% [14.5, 54.7] | 83.5% [71.1, 95.2] | 35.4% [8.1, 64.4] |
 | nanonets-ocr2-3b | 59.7% [32.4, 80.7] | 98.8% [96.3, 100.0] | 51.1% [36.9, 68.4] | 89.0% [78.3, 98.4] | 85.0% [73.0, 95.1] | 40.0% [18.8, 62.3] | 29.8% [2.6, 58.4] | 87.7% [74.6, 97.2] |
 
-### Paired comparison vs best (`qwen3.5-4b`)
+### Paired comparison vs `qwen3.5-4b` (highest mean)
 
-| candidate | Δ pass_rate (candidate − best) [CI] | p | significant | pairs | clusters |
+| candidate | Δ pass_rate (candidate − `qwen3.5-4b`) [CI] | p | significant | pairs | clusters |
 |---|---|---|---|---|---|
 | qwen3.5-9b | -0.1% [-4.4, 4.2] | 0.9713 | no | 558 | 84 |
 | qwen3-vl-8b | -3.2% [-8.9, 2.7] | 0.3391 | no | 558 | 84 |
