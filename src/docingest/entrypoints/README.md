@@ -117,7 +117,7 @@ sequenceDiagram
 
 **`--config` / `-c` on pipeline commands.** `ingest`, `crawl`, `eval-ocr`, `ask`, `adapters` and `model-path` accept `--config PATH` (a pipeline TOML file). Typer checks that `PATH` is an existing file (`exists=True, dir_okay=False`), so a mistyped path fails with exit code 2 and "does not exist" instead of silently using the defaults. Without `--config`, `config/pipeline.toml` of the source checkout is used; if that file is absent, the built-in defaults of `AppConfig` apply. The chosen file is not merged with `pipeline.toml`: keys it omits take the built-in defaults. Details: [../../../config/README.md](../../../config/README.md#selecting-and-overriding-a-configuration).
 
-**`--config` / `-c` on `bench` commands.** Every `bench` sub-command accepts `--config PATH` for a benchmark TOML file. The default is `config/benchmark.toml` of the checkout, resolved from the package location (the help text prints the absolute path). This option is not checked by Typer: a missing file raises `FileNotFoundError` (exit code 1).
+**`--config` / `-c` on `bench` commands.** Every `bench` sub-command accepts `--config PATH` for a benchmark TOML file. The default is `config/benchmark.toml` of the checkout, resolved from the package location (the help text prints the absolute path). Typer checks it like the pipeline `--config` (`exists=True, dir_okay=False`): a missing file, given or default, fails with exit code 2 and "does not exist".
 
 **Boolean flags** come in pairs, for example `--force / --no-force`. The default is shown in the tables below.
 
@@ -128,7 +128,7 @@ sequenceDiagram
 | Code | Meaning |
 |---|---|
 | 0 | Success. |
-| 1 | The command ran but something failed: `ingest` or `crawl` with at least one failed input, or an uncaught exception (for example a missing benchmark run, an empty corpus for `ask`, a configuration validation error). Uncaught exceptions print a traceback. |
+| 1 | The command ran but something failed: `ingest` or `crawl` with at least one failed input (for `crawl`, also a failed search or a query that cannot be sent), or an uncaught exception (for example a missing benchmark run, an empty corpus for `ask`, a configuration validation error). Uncaught exceptions print a traceback. |
 | 2 | Usage error reported by Typer/Click: missing argument, value out of range, `--config` path that does not exist, or a `typer.BadParameter` raised by the command (unknown suite, candidate, preset or role, invalid run id, page-count mismatch in `eval-ocr`). `bench run` also exits with 2 when the run directory was started with a different suite or candidate definition. |
 
 ## Command reference
@@ -217,7 +217,7 @@ Search arXiv, download LaTeX sources (PDF fallback) with metadata, then ingest t
 
 Request pacing, retries, the contact address in the User-Agent and license lookup are configured in `[arxiv]` ([../../../config/README.md](../../../config/README.md#arxiv)).
 
-**Exit behaviour.** 0 when every record was fetched (and ingested). 1 when the search failed or any record failed; the "Failed inputs" table lists them. 2 for usage errors.
+**Exit behaviour.** 0 when every record was fetched (and ingested). 1 when the search failed (including a query that cannot be sent, such as an empty one or `ids:` without ids, reported as `InvalidQueryError` without a traceback) or any record failed; the "Failed inputs" table lists them. 2 for usage errors.
 
 **Examples.**
 
@@ -539,7 +539,7 @@ Write <run>/summary.json and <run>/report.md (scores new, changed, incomplete or
 | `--seed` | integer | `0` | Seed of the paired bootstrap. |
 | `--config`, `-c` | path | `<repo>/config/benchmark.toml` | Benchmark configuration. |
 
-For every suite in the run it re-applies the current clean-up (as `score` does), then scores the candidates that need it: all of them with `--rescore`; otherwise those without a score, with a stale score (telemetry changed since scoring, errors, incomplete, no primary metric, or an older scoring version of the suite) or whose outputs the clean-up just changed. It then writes:
+For every suite in the run it re-applies the current clean-up (as `score` does), then scores the candidates that need it: all of them with `--rescore`; otherwise those without a score, with a stale score (telemetry changed since scoring, errors, incomplete, no primary metric, an older scoring version of the suite, or other scoring options such as an edited `[scoring.synthetic] report_separately`) or whose outputs the clean-up just changed. It then writes:
 
 - `<run>/summary.json`: the manifest, per-suite scores without per-unit data, the order by primary metric, paired comparisons (cluster bootstrap and sign-flip test with `--resamples` and `--seed`) against the first candidate in that order, and throughput statistics from the telemetry.
 - `<run>/report.md`: the same as Markdown tables.
@@ -662,7 +662,7 @@ PaperQA2's `parse_pdf` field also accepts the fully qualified name as a string, 
 
 1. **Put the logic in the right layer.** A command parses input and prints output. Work that is not about the terminal goes into a use case in `application/` (tested with fakes) or into an adapter behind a port. The import-linter contracts in `pyproject.toml` allow `entrypoints` to import every inner layer; nothing inside the package may import `entrypoints`.
 2. **Add the function** to `cli.py` with `@app.command()` (or `@bench_app.command()` in `bench_cli.py` for a benchmark sub-command). Typer derives the command name from the function name, lower-cased with underscores turned into hyphens (`model_path` becomes `model-path`); pass a name when they should differ, as `@app.command("make-scan")` does for the function `make_scan_cmd`. The docstring is the help text, and it is also shown next to the command in `docingest --help`.
-3. **Declare arguments and options** with `typing.Annotated` and `typer.Argument` / `typer.Option`, like the existing commands. In `cli.py`, reuse `ConfigOpt` for `--config` so that a missing file stays a usage error. `bench_cli.py` has its own `ConfigOpt` (a benchmark file, defaulting to `DEFAULT_BENCH_CONFIG`) plus `RunIdOpt`, `SuiteOpt`, `PresetOpt` and `PerCategoryOpt`.
+3. **Declare arguments and options** with `typing.Annotated` and `typer.Argument` / `typer.Option`, like the existing commands. In `cli.py`, reuse `ConfigOpt` for `--config` so that a missing file stays a usage error. `bench_cli.py` has its own `ConfigOpt` (a benchmark file, defaulting to `DEFAULT_BENCH_CONFIG`, also with `exists=True`) plus `RunIdOpt`, `SuiteOpt`, `PresetOpt` and `PerCategoryOpt`.
 4. **Get wired objects from the container.** `_container(config)` returns a `Container` for the loaded configuration; use its `ingest`, `crawl` or `ask` properties, or `adapter("<port>")`. Do not construct concrete adapters in a command; `bootstrap` owns that. Import heavy modules inside the function, as `make-scan` and `model-path` do, so `docingest --help` stays fast.
 5. **Report failures consistently.** Raise `typer.BadParameter` for invalid user input (exit 2) and `typer.Exit(1)` after printing a summary of failed items. Print user-controlled strings through `rich.markup.escape`, as the existing commands do.
 6. **Test it** with `typer.testing.CliRunner` (see `tests/integration/test_cli.py` and [../../../tests/README.md](../../../tests/README.md)) and document it in this file.

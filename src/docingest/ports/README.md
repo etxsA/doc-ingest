@@ -69,7 +69,7 @@ flowchart LR
 | `TypeDetector` | `detection.py` | `detector` | `magic`: `MagicBytesDetector` | `IngestService` | no |
 | `PdfReader` (with `PdfDocument`, `PdfPage`) | `pdf.py` | `pdf` | `pdfium`: `PdfiumReader` | `IngestService` | yes |
 | `OcrEngine` | `ocr.py` | `ocr` | `mlx-vlm`: `MlxVlmOcr`, `openai-compatible`: `OpenAICompatibleOcr` | `IngestService`, `BenchmarkRunner` | yes |
-| `ImageSource` | `images.py` | `images` | `pillow`: `PillowImageSource` | `IngestService` | no |
+| `ImageSource` | `images.py` | `images` | `pillow`: `PillowImageSource` | `IngestService` | yes |
 | `DocumentConverter` | `converters.py` | `office`, `latex`, `text` | `docling`: `DoclingConverter`, `pandoc`: `PandocLatexConverter`, `passthrough`: `PassthroughConverter` | `IngestService` | yes |
 | `DocumentStore` | `store.py` | `store` | `filesystem`: `FilesystemStore` | `IngestService`, `AskService` | no |
 | `SourceCrawler` | `sources.py` | `crawler` | `arxiv`: `ArxivCrawler` | `CrawlService` | no |
@@ -93,15 +93,16 @@ Reference fakes for every port except `BenchmarkSuite` live in `tests/fakes.py` 
 
 ## Fingerprints and the cache key
 
-Four ports declare `fingerprint: str`. For the ingestion ports it identifies everything that can change the output: implementation name and version plus output-relevant settings. `IngestService.config_hash(kind, ocr_all=...)` hashes it into the cache key, so swapping an adapter or changing one of its settings re-processes exactly the affected documents.
+Five ports declare `fingerprint: str`. For the ingestion ports it identifies everything that can change the output: implementation name and version plus output-relevant settings. `IngestService.config_hash(kind, ocr_all=...)` hashes it into the cache key, so swapping an adapter or changing one of its settings re-processes exactly the affected documents.
 
 | Input kind | Parts of the cache key |
 |---|---|
 | PDF | `PIPELINE_VERSION`, kind, `ocr_all`, routing policy JSON, `PdfReader.fingerprint`, `OcrEngine.fingerprint` |
-| IMAGE | `PIPELINE_VERSION`, kind, `ocr_all` (always `False`), `OcrEngine.fingerprint` |
+| IMAGE | `PIPELINE_VERSION`, kind, `ocr_all` (always `False`), `ImageSource.fingerprint`, `OcrEngine.fingerprint` |
 | OFFICE, LATEX, TEXT | `PIPELINE_VERSION`, kind, `ocr_all` (always `False`), the fingerprint of that kind's `DocumentConverter` |
 
-- `TypeDetector` and `ImageSource` have no fingerprint. A detector change affects the key only by changing the detected kind. A change in how images are loaded is not in any key.
+- `TypeDetector` has no fingerprint: its only output that can change a document is the detected kind, which is in the key (the MIME type is recorded in the manifest but changes no text).
+- `ImageSource` has one because decoding decides what the OCR engine sees: another image library, or another version of it, re-processes image inputs (and only those).
 - `DocumentStore`, `SourceCrawler` and `QuestionAnswerer` never change what an ingestion produces, so they have none.
 - `BenchmarkSuite.fingerprint` is unrelated to the ingestion cache: it identifies a suite's data in a benchmark run directory.
 
@@ -111,14 +112,15 @@ Rules for a fingerprint:
 2. Leave out settings that cannot change the text. `OpenAICompatibleOcr` excludes its timeout, retries and API key.
 3. Keep it stable: the same settings give the same string, and using the adapter never changes it (the OCR contract tests check both).
 4. It is read on every ingestion of its kind, before the cache lookup. Make it cheap or compute it once (`PandocLatexConverter` runs `pandoc --version` once, through a `cached_property`).
-5. When an adapter's own code changes its output while library versions stay the same, change the fingerprint by hand. `PandocLatexConverter` has a `REVISION` constant for this and `PassthroughConverter` uses `"passthrough 1"`.
+5. When an adapter's own code changes its output while library versions stay the same, change the fingerprint by hand. `PandocLatexConverter` has a `REVISION` constant for this and `PassthroughConverter` uses `"passthrough 1"`. The OCR engines take this from the profile: its `code_version` is in their fingerprints and is bumped when its `postprocess` or `valid` code changes (see [adapters/ocr/README.md](../adapters/ocr/README.md#fingerprints-and-caching)).
 
 Built-in fingerprints, for orientation:
 
 | Adapter | Fingerprint |
 |---|---|
 | `PdfiumReader` | `pypdfium2 <version>` |
-| `MlxVlmOcr` | `mlx-vlm ` followed by sorted JSON of the mlx-vlm version, model, profile name, prompt, max_side, chat kwargs, prompt order, retry ladder, validation flag, dpi, max_tokens, temperature, repetition_penalty |
+| `PillowImageSource` | `pillow <version>` |
+| `MlxVlmOcr` | `mlx-vlm ` followed by sorted JSON of the mlx-vlm version, model, profile name and `code_version`, prompt, max_side, chat kwargs, prompt order, retry ladder, validation flag, dpi, max_tokens, temperature, repetition_penalty |
 | `OpenAICompatibleOcr` | `openai-compatible ` followed by sorted JSON of base_url, served_model, model and revision, the same profile fields, dpi and generation settings |
 | `DoclingConverter` | `docling <version>` (or `docling missing`) |
 | `PandocLatexConverter` | `pandoc-latex r<REVISION> \| pandoc <version> \| <pandoc arguments> \| split_level=<n> \| pylatexenc <version>` (the last part is `no fallback` when the fallback is disabled) |
@@ -301,6 +303,8 @@ Module `images.py`. Loads the frames of an image file.
 ```python
 @runtime_checkable
 class ImageSource(Protocol):
+    fingerprint: str  # name + version: part of the cache key of image inputs
+
     def frames(self, path: Path) -> list[Image]:
         """Raise ``DocumentOpenError`` for unreadable images."""
 ```
@@ -310,7 +314,7 @@ Contract:
 - Return one image per frame; a multi-page TIFF gives several. Each frame becomes one `VLM_OCR` page in the manifest, and the number of frames becomes `source_pages`. `max_pages` truncates the list after it is loaded.
 - Raise `DocumentOpenError` for unreadable images.
 - Returned images must stay usable after the call. `PillowImageSource` copies every frame before the file is closed.
-- There is no fingerprint: the cache key of an image contains only the OCR engine's fingerprint.
+- `fingerprint` names the implementation and the version of its image library (`pillow <version>`). The cache key of an image hashes it with the OCR engine's fingerprint, so a change in how images are decoded re-processes image inputs.
 
 Implementations: `adapters/images/pillow.py` `PillowImageSource`. Test fake: `FakeImages`.
 
@@ -457,7 +461,10 @@ class FetchedSource:
 
 @runtime_checkable
 class SourceCrawler(Protocol):
-    def search(self, query: str, limit: int) -> list[SourceRecord]: ...
+    def search(self, query: str, limit: int) -> list[SourceRecord]:
+        """Raise a ``DocingestError`` (e.g. ``InvalidQueryError``, ``SourceUnavailableError``)
+        for expected failures: ``CrawlService`` reports those instead of raising."""
+        ...
 
     def fetch(self, record: SourceRecord, dest_dir: Path) -> FetchedSource:
         """Download the best available format; raise ``SourceUnavailableError`` if none."""
@@ -466,7 +473,7 @@ class SourceCrawler(Protocol):
 Contract, as `CrawlService.run` uses it:
 
 - `search(query, limit)` returns at most `limit` records, in the order they should be fetched. `CrawlService` does not truncate the list. The query syntax is the source's own (for arXiv, its query language or `ids:<id>,<id>`).
-- A `DocingestError` raised by `search` becomes a report entry (`report.failures` and `report.stopped`) instead of a traceback. Other exceptions propagate.
+- A `DocingestError` raised by `search` becomes a report entry (`report.failures` and `report.stopped`) instead of a traceback. Other exceptions propagate, so an adapter raises `InvalidQueryError` for a query it cannot send (the arXiv adapter does for an empty query and for `ids:` without ids) and `SourceUnavailableError` when the source fails.
 - `fetch(record, dest_dir)` downloads the best available format into `dest_dir`, creating it if needed, and returns a `FetchedSource` whose `path` is the file. `CrawlService` passes `<raw_dir>/arxiv`.
 - Raise `SourceUnavailableError` when a record has nothing downloadable. Any exception from one record's fetch or ingestion is recorded in `report.failures` and the crawl continues.
 - Raise `RateLimitedError` when the source asks for a pause that the crawler will not wait out. `CrawlService` then stops and reports the remaining records as not attempted.
@@ -508,7 +515,9 @@ Module `benchmark.py`. An OCR benchmark suite (samples, references, scoring) and
 ```python
 @runtime_checkable
 class BenchmarkSuite(Protocol):
-    """A suite may also expose ``scoring_version: int`` (recorded in its scores)."""
+    """A suite may also expose ``scoring_version: int`` (recorded in its scores) and
+    ``scoring_options: dict`` (JSON-able scoring-time settings, e.g. [scoring.synthetic],
+    stamped on its scores). Changing either makes saved scores stale for ``bench report``."""
 
     name: str
     fingerprint: str  # data + rendering + scoring settings; changes invalidate a run
@@ -564,14 +573,14 @@ class BenchmarkSuite(Protocol):
 | `errors` | Problems met while scoring. |
 | `details` | Suite-specific extras. |
 | `scoring_version` | The suite's scoring rules that produced this score. |
-| `stamp` | Set by `score_run`: what was scored, so a report can tell a stale score from a current one. |
+| `stamp` | Set by `score_run`: the telemetry that was scored and the suite's `scoring_options`, so a report can tell a stale score from a current one. |
 
 `to_dict()` and `SuiteScore.from_dict(d)` convert to and from the JSON stored in `scores/<suite>.json`.
 
 Contract, as `BenchmarkRunner` and `score_run` in `application/benchmark.py` use it:
 
 - `name` is stable. The runner uses it in `telemetry/<suite>/<candidate>.jsonl`, `model_raw/<suite>/<candidate>/` and `scores/<suite>.json`, and both built-in suites use it as the first directory of their output paths.
-- `fingerprint` identifies what the models see and what they are scored against. The runner records it in the run's `manifest.json` and raises `RunMismatchError` when the run directory already holds this suite with a different fingerprint; `score_run` refuses to score a changed suite. The built-in suites keep scoring rules out of the fingerprint and bump `scoring_version` instead, so a finished run is re-scored and never re-transcribed.
+- `fingerprint` identifies what the models see and what they are scored against. The runner records it in the run's `manifest.json` and raises `RunMismatchError` when the run directory already holds this suite with a different fingerprint; `score_run` refuses to score a changed suite. The built-in suites keep scoring rules out of the fingerprint and bump `scoring_version` instead, so a finished run is re-scored and never re-transcribed. Scoring-time settings that are not rules (such as `[scoring.synthetic]`) go in the optional `scoring_options` dict, which `score_run` stamps on every score; a change re-scores the same way.
 - `samples()` returns samples with unique ids (the runner raises `ValueError` on duplicates) that are stable across runs. Produce images lazily through `load_image`.
 - `output_path(run_dir, candidate, sample)` is where the runner writes the transcription. It must be unique per candidate and sample and lie under `run_dir`. The runner creates parent directories and writes atomically. An existing file means the sample is done, which is how an interrupted run resumes. A failed transcription is written as an empty file so that it scores as a miss.
 - `score(run_dir, candidates)` reads the outputs and returns a `SuiteScore` per candidate. `score_run` stamps each score and merges it into `scores/<suite>.json`.
@@ -587,7 +596,7 @@ Implementations: `adapters/datasets/synthetic.py` `SyntheticSuite` and `adapters
 3. Import only `docingest.domain`, `docingest.ports`, `docingest.config` (for your settings) and your own libraries. Adapter subpackages must not import each other (import-linter independence contract); `adapters/models` (the Hugging Face resolver) is the shared exception.
 4. Implement the members exactly as the Protocol declares them. No base class is needed. Check `isinstance(obj, Port)`, and for the signatures assign an instance to a variable annotated with the port and run pyright (see the note at the top of this page).
 5. Translate library exceptions into domain errors (`raise ConversionError(...) from e`), naming the input file in the message.
-6. For `PdfReader`, `OcrEngine` and `DocumentConverter`, define `fingerprint` following the [rules above](#fingerprints-and-the-cache-key).
+6. For `PdfReader`, `OcrEngine`, `ImageSource` and `DocumentConverter`, define `fingerprint` following the [rules above](#fingerprints-and-the-cache-key).
 7. Keep construction cheap and import heavy dependencies lazily: a factory runs when a service first needs the adapter, and `Container.ingest` builds the OCR engine even when no page needs OCR.
 8. Register it (next section), select it in `[adapters]` and check it with `uv run docingest adapters`.
 9. Test it (see [Testing an adapter](#testing-an-adapter)).

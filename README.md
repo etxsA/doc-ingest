@@ -387,10 +387,10 @@ Markdown transcription of page 2 ...
   | Kind | Parts of `config_hash` besides version, kind and `ocr_all` |
   |---|---|
   | `pdf` | the `[routing]` policy, the PDF reader fingerprint, the OCR engine fingerprint |
-  | `image` | the OCR engine fingerprint |
+  | `image` | the image source fingerprint (`pillow <version>`), the OCR engine fingerprint |
   | `latex`, `office`, `text` | the fingerprint of the converter configured for that kind |
 
-- **Fingerprints.** Each adapter exposes a `fingerprint` with its name, version and output-relevant settings. For the OCR adapters that is the model and revision, profile, prompt, image size, DPI, generation settings and retry ladder, plus the mlx-vlm version (`mlx-vlm`) or the server URL and served model name (`openai-compatible`); transport settings such as the timeout, the retry count and the API key are excluded. For pandoc it is the adapter revision, the pandoc version, its arguments, `split_level` and the fallback. Changing any of them re-processes exactly the documents of the affected kind.
+- **Fingerprints.** Each adapter exposes a `fingerprint` with its name, version and output-relevant settings. For the OCR adapters that is the model and revision, profile and its `code_version` (bumped when its clean-up code changes), prompt, image size, DPI, generation settings and retry ladder, plus the mlx-vlm version (`mlx-vlm`) or the server URL and served model name (`openai-compatible`); transport settings such as the timeout, the retry count and the API key are excluded. For pandoc it is the adapter revision, the pandoc version, its arguments, `split_level` and the fallback. Changing any of them re-processes exactly the documents of the affected kind.
 - **Lookup rules.** A complete canonical result with the same `config_hash` and `ocr_all` satisfies both a default run and a `--max-pages` run. A `--max-pages` or `--ocr-all` run otherwise looks for its own variant. Degraded results are never returned by a lookup, so the next run retries the real conversion.
 - **Metadata refresh.** When a cached result is found but a sidecar or the crawler brings new metadata, only the manifest's metadata and the title line are updated, without re-running OCR or pandoc.
 - **Forcing.** `--force` ignores the cache for that run.
@@ -528,7 +528,7 @@ Every `bench` command takes `--config/-c` pointing at a benchmark file (default:
 
 ## Configuration overview
 
-The pipeline reads one TOML file, [`config/pipeline.toml`](config/pipeline.toml) by default. A file given with `--config` replaces it entirely (it is not merged); sections it omits take the defaults in [`config.py`](src/docingest/README.md). Unknown keys in `[adapters]`, `[ocr]`, `[qa]`, `[latex]` and `[arxiv]` are rejected, unknown keys in `[routing]` are ignored, and unknown top-level sections are kept so that plugins can read their own settings. Relative paths inside the file (`output_dir`, `raw_dir`) are resolved against the working directory, so run docingest from the repository root. Full reference: [config/README.md](config/README.md).
+The pipeline reads one TOML file, [`config/pipeline.toml`](config/pipeline.toml) by default. A file given with `--config` replaces it entirely (it is not merged); sections it omits take the defaults in [`config.py`](src/docingest/README.md). Unknown keys in `[adapters]`, `[routing]`, `[ocr]`, `[qa]`, `[latex]` and `[arxiv]` are rejected, and unknown top-level sections are kept so that plugins can read their own settings. Relative paths inside the file (`output_dir`, `raw_dir`) are resolved against the working directory, so run docingest from the repository root. Full reference: [config/README.md](config/README.md).
 
 | Section | Controls | Examples | Affects the cache key |
 |---|---|---|---|
@@ -551,7 +551,8 @@ The benchmark has its own file, [`config/benchmark.toml`](config/benchmark.toml)
 
 | Variable | Read by | Effect |
 |---|---|---|
-| `DOCINGEST_LLM` | `docingest ask`, `scripts/serve_llm.sh` | For `ask`: a litellm model string that overrides `[qa].llm`. For `serve_llm.sh`: the model to serve instead of `docingest model-path llm`. |
+| `DOCINGEST_LLM` | `docingest ask` | A litellm model string that overrides `[qa].llm`. |
+| `DOCINGEST_LLM_SERVE_MODEL` | `scripts/serve_llm.sh` | The model to serve (a local snapshot path or a model id) instead of the output of `docingest model-path llm`. `docingest ask` does not read it. |
 | `DOCINGEST_EMBEDDING` | `docingest ask` | A PaperQA2 embedding string that overrides `[qa].embedding` and the pinned embedder. |
 | `OPENAI_API_KEY` | `docingest ask` (PaperQA2 through litellm) | Used for a custom `openai/...` LLM in `[qa].llm` or `DOCINGEST_LLM`; when it is unset, the placeholder key `sk-local` is sent. The default local model always uses `sk-local`. |
 | `PORT` | `scripts/serve_llm.sh` | Port of the local LLM server (default 8080; change `[qa].llm_base` to match). |
