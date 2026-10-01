@@ -181,6 +181,13 @@ def test_olmocr_layout_matches_the_official_scorer(subset, tmp_path):
     suite.scorer_dir(run)  # idempotent
     skip = OlmOcrBenchSuite(subset, scorer=ScorerConfig(Path("py"), skip_baseline=True))
     assert len(skip.tests()) == 49
+    # Settings that change the scores are stamped on them (a change re-scores); paths not.
+    moved = OlmOcrBenchSuite(subset, scorer=ScorerConfig(Path("elsewhere/py"), timeout_s=5))
+    assert (
+        moved.scoring_options
+        == OlmOcrBenchSuite(subset, scorer=ScorerConfig(Path("py"))).scoring_options
+    )
+    assert skip.scoring_options["skip_baseline"] is True
 
 
 def test_scorer_stdout_parser_on_captured_output(subset):
@@ -310,6 +317,20 @@ def test_bench_cli_run_resume_report(tmp_path, monkeypatch, two_page_source):
     summary = json.loads((run_dir / "summary.json").read_text())
     assert set(summary["suites"]["synthetic"]["scores"]) == {"a", "b"}
     assert "## Suite `synthetic`" in (run_dir / "report.md").read_text()
+    # A new [scoring.synthetic] table re-scores on the next report, without --rescore.
+    cluster = f"{Path(two_page_source).name}#p001"
+    base_config = config.read_text()
+    config.write_text(
+        base_config + "[[scoring.synthetic.report_separately]]\n"
+        f"cluster = '{cluster}'\nreason = 'known bad reference'\n"
+    )
+    res = cli.invoke(
+        bench_app, ["report", "--run-id", "t", "-c", str(config), "--resamples", "200"]
+    )
+    assert res.exit_code == 0, res.output
+    scores = json.loads((run_dir / "summary.json").read_text())["suites"]["synthetic"]["scores"]
+    assert all(cluster in s["details"]["reported_separately"] for s in scores.values())
+    config.write_text(base_config)
     # Same run id, different suite settings: refused instead of mixing outputs.
     config.write_text(config.read_text().replace("levels = ['clean']", "levels = ['heavy']"))
     res = cli.invoke(bench_app, ["run", *args])
