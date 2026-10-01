@@ -39,7 +39,7 @@ from typing import Literal, NamedTuple
 from ... import __version__
 from ...application.ingest import SIDECAR_SUFFIX
 from ...config import ArxivConfig
-from ...domain.errors import RateLimitedError, SourceUnavailableError
+from ...domain.errors import InvalidQueryError, RateLimitedError, SourceUnavailableError
 from ...domain.models import SourceMetadata
 from ...ports import FetchedSource, SourceRecord
 from .http import (
@@ -115,7 +115,7 @@ def parse_ids(query: str) -> list[str] | None:
         return None
     ids = [normalize_id(x) for x in re.split(r"[,\s]+", q[4:]) if x.strip()]
     if not ids:
-        raise ValueError(f"no arXiv ids in {query!r}")
+        raise InvalidQueryError(f"no arXiv ids in {query!r}")
     return list(dict.fromkeys(ids))
 
 
@@ -130,7 +130,7 @@ def query_params(query: str) -> dict[str, str]:
     if ids is not None:
         return id_params(ids)
     if not query.strip():
-        raise ValueError("empty arXiv query")
+        raise InvalidQueryError("empty arXiv query")
     return {"search_query": query.strip()}
 
 
