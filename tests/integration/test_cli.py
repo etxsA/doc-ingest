@@ -43,6 +43,19 @@ def test_a_missing_explicit_config_is_an_error_not_the_defaults(tmp_path):
     assert result.exit_code == 2 and "does not exist" in result.output
     result = CliRunner().invoke(app, ["ingest", str(tmp_path), "--config", str(typo)], env=wide)
     assert result.exit_code == 2 and "does not exist" in result.output
+    # Old: the bench sub-app opened the path itself, a traceback with exit code 1.
+    for cmd in (["candidates"], ["report", "--run-id", "r"], ["run", "--run-id", "r"]):
+        result = CliRunner().invoke(app, ["bench", *cmd, "--config", str(typo)], env=wide)
+        assert result.exit_code == 2 and "does not exist" in result.output, cmd
+
+
+def test_an_unusable_crawl_query_is_reported_not_a_traceback(tmp_path):
+    cfg_path = tmp_path / "cfg.toml"
+    cfg_path.write_text(f'raw_dir = "{tmp_path / "raw"}"\noutput_dir = "{tmp_path / "out"}"\n')
+    result = CliRunner().invoke(app, ["crawl", "ids: ,", "--no-ingest", "-c", str(cfg_path)])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert "search failed" in result.output and "InvalidQueryError" in result.output
+    assert not (tmp_path / "raw").exists()  # nothing was fetched
 
 
 def test_adapters_command_lists_a_broken_plugin_instead_of_crashing(monkeypatch, tmp_path):
