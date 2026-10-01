@@ -2,14 +2,16 @@
 refresh / degraded-result handling as seen on disk through the real FilesystemStore."""
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
 from fakes import FakeConverter, FakeDetector, FakeImages, FakeOcr, FakePdfReader
 
+from docingest import __version__
 from docingest.adapters.qa import paperqa
 from docingest.adapters.store.filesystem import DEGRADED_DIR, FilesystemStore
-from docingest.application.ingest import IngestService, retitle_markdown
+from docingest.application.ingest import PIPELINE_VERSION, IngestService, retitle_markdown
 from docingest.config import DEFAULT_LLM_BASE, AppConfig, load_config
 from docingest.domain.models import (
     DocumentManifest,
@@ -41,12 +43,22 @@ def test_an_existing_explicit_config_is_read(tmp_path):
     assert load_config(path).adapters.ocr == "openai-compatible"
 
 
+def test_pipeline_version_is_the_package_and_lockfile_version():
+    # Three literals kept equal by hand: the cache key, the wheel and the lock that CI
+    # installs with --frozen (which does not check the lock against pyproject.toml).
+    root = Path(__file__).resolve().parents[2]
+    project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
+    locked = tomllib.loads((root / "uv.lock").read_text())["package"]
+    (lock_version,) = [p["version"] for p in locked if p["name"] == "docingest"]
+    assert project["version"] == lock_version == PIPELINE_VERSION == __version__
+
+
 # ------------------------------------------------------------------- QA LLM params
 
 
 @pytest.fixture
 def qa_env(monkeypatch):
-    for var in ("DOCINGEST_LLM", "OPENAI_API_KEY"):
+    for var in ("DOCINGEST_LLM", "DOCINGEST_LLM_SERVE_MODEL", "OPENAI_API_KEY"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(paperqa, "llm_path", lambda cfg: "/hf/snapshots/qwen")
     return monkeypatch
@@ -62,6 +74,15 @@ def test_default_local_model_gets_the_local_server_and_a_placeholder_key(qa_env)
     assert params["api_base"] == DEFAULT_LLM_BASE and params["api_key"] == "sk-local"
     qa_env.setenv("OPENAI_API_KEY", "sk-REAL-KEY")  # never sent to the local server
     assert paperqa.llm_params(_cfg())["api_key"] == "sk-local"
+
+
+def test_the_served_model_path_is_not_the_litellm_model(qa_env):
+    # Old: serve_llm.sh and the adapter shared DOCINGEST_LLM, so a snapshot path set for
+    # the server became the litellm model string of `ask`.
+    qa_env.setenv("DOCINGEST_LLM_SERVE_MODEL", "/models/other")
+    assert paperqa.llm_params(_cfg())["model"] == "openai//hf/snapshots/qwen"
+    qa_env.setenv("DOCINGEST_LLM", "ollama/llama3.1")
+    assert paperqa.llm_params(_cfg())["model"] == "ollama/llama3.1"
 
 
 def test_a_real_openai_key_is_not_overridden(qa_env):
