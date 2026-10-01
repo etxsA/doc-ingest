@@ -73,6 +73,7 @@ class MlxVlmOcr:
                 "v": _mlx_vlm_version(),
                 "model": model.model_dump(),
                 "profile": profile.name,
+                "profile_code": profile.code_version,
                 "prompt": profile.prompt,
                 "max_side": profile.max_side,
                 "chat_kwargs": profile.chat_kwargs,

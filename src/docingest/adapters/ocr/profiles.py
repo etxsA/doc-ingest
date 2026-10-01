@@ -111,6 +111,10 @@ class OcrProfile:
     prompt_first: bool = False  # text before the image in the user turn (olmOCR training)
     ladder: tuple[tuple[float, float | None], ...] | None = None  # (temperature, penalty)
     valid: Callable[[str], bool] | None = None  # raw output acceptable? else retry
+    # The engine fingerprints record this, not the code of postprocess / valid: bump it
+    # when an edit can change their results, so cached OCR output is redone. A test pins
+    # each built-in profile's code (tests/unit/test_ocr_profiles.py).
+    code_version: int = 1
 
 
 # Sources: model cards + official repos (allenai/olmocr prompts.py, zai-org/GLM-OCR
