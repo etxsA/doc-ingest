@@ -8,7 +8,8 @@ A run directory (``data/bench/runs/<run-id>/``) is self-describing::
     telemetry/<suite>/<cand>.jsonl    one JSON line per transcription (with the engine's
                                       retry ladder: attempts, first finish, all tokens)
     scores/<suite>.json               ``SuiteScore`` per candidate (``score_run``), stamped
-                                      with the telemetry it saw and the scoring version
+                                      with the telemetry it saw, the scoring version and
+                                      the suite's scoring options
     summary.json, report.md           (``write_report``)
 
 Resumable: a sample whose output file exists is skipped, so an interrupted run picks
@@ -440,6 +441,11 @@ def read_manifest(run_dir: Path) -> dict[str, Any]:
 # --------------------------------------------------------------------------- scoring
 
 
+def scoring_options(suite: BenchmarkSuite) -> dict[str, Any]:
+    """The suite's scoring-time options (its optional ``scoring_options``; default none)."""
+    return dict(getattr(suite, "scoring_options", None) or {})
+
+
 def score_run(
     suite: BenchmarkSuite, run_dir: Path, candidates: Sequence[str] | None = None
 ) -> dict[str, SuiteScore]:
@@ -453,9 +459,10 @@ def score_run(
     # Stamped *before* scoring: a transcription landing while the scorer runs makes the
     # stamp stale, so the next report scores the candidate again.
     stamps = {c: telemetry_stamp(run_dir, suite.name, c) for c in names}
+    options = scoring_options(suite)
     scores = suite.score(run_dir, names)
     for name, s in scores.items():
-        s.stamp = {"telemetry": stamps.get(name)}
+        s.stamp = {"telemetry": stamps.get(name), "scoring_options": options}
     path = run_dir / SCORES_DIR / f"{suite.name}.json"
     merged = _read_json(path) or {}
     merged.update({name: s.to_dict() for name, s in scores.items()})
@@ -474,7 +481,12 @@ def telemetry_stamp(run_dir: Path, suite: str, candidate: str) -> dict[str, int]
     return {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "records": lines}
 
 
-def _stale(saved: Mapping[str, Any], current: dict[str, int] | None, version: int | None) -> bool:
+def _stale(
+    saved: Mapping[str, Any],
+    current: dict[str, int] | None,
+    version: int | None,
+    options: Mapping[str, Any] | None,
+) -> bool:
     """A saved score that does not describe the candidate's current outputs."""
     if saved.get("errors") or saved.get("n_outputs", 0) < saved.get("n_samples", 0):
         return True  # partial or failed (scorer missing, crashed): the cause may be gone now
@@ -483,23 +495,34 @@ def _stale(saved: Mapping[str, Any], current: dict[str, int] | None, version: in
     if version is not None and saved.get("scoring_version") != version:
         return True  # scored under older rules
     stamp = saved.get("stamp") or {}
+    if options is not None and stamp.get("scoring_options", {}) != options:
+        return True  # scored with other scoring options (e.g. [scoring.synthetic])
     return "telemetry" not in stamp or stamp["telemetry"] != current
 
 
-def needs_scoring(run_dir: Path, suite: str, *, scoring_version: int | None = None) -> list[str]:
+def needs_scoring(
+    run_dir: Path,
+    suite: str,
+    *,
+    scoring_version: int | None = None,
+    scoring_options: Mapping[str, Any] | None = None,
+) -> list[str]:
     """Candidates of ``suite`` whose saved score is missing or stale.
 
     Stale: the telemetry changed since the score was taken (compared with the stamp
     ``score_run`` saved, not with file times, which another candidate's scoring moves),
-    the score has errors, is incomplete or has no primary metric, or ``scoring_version``
-    (the suite's current rules) differs from the one the score was made with.
+    the score has errors, is incomplete or has no primary metric, ``scoring_version``
+    (the suite's current rules) differs from the one the score was made with, or
+    ``scoring_options`` (the suite's current options, see :func:`scoring_options`)
+    differ from the ones in its stamp (a stamp without them counts as none).
     """
     entry = read_manifest(run_dir)["suites"][suite]
     scored = _read_json(run_dir / SCORES_DIR / f"{suite}.json") or {}
     return [
         c
         for c in entry["candidates"]
-        if c not in scored or _stale(scored[c], telemetry_stamp(run_dir, suite, c), scoring_version)
+        if c not in scored
+        or _stale(scored[c], telemetry_stamp(run_dir, suite, c), scoring_version, scoring_options)
     ]
 
 

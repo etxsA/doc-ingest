@@ -93,8 +93,8 @@ class SuiteScore:
     # The suite's scoring rules that produced this score. Scoring changes bump it instead
     # of the suite fingerprint: a finished run is re-scored, never re-transcribed.
     scoring_version: int | None = None
-    # What was scored (set by the runner's ``score_run``): lets a later report tell a
-    # stale score from a current one.
+    # What was scored (set by the runner's ``score_run``: the telemetry it saw and the
+    # suite's scoring options): lets a later report tell a stale score from a current one.
     stamp: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -113,7 +113,9 @@ class SuiteScore:
 
 @runtime_checkable
 class BenchmarkSuite(Protocol):
-    """A suite may also expose ``scoring_version: int`` (recorded in its scores)."""
+    """A suite may also expose ``scoring_version: int`` (recorded in its scores) and
+    ``scoring_options: dict`` (JSON-able scoring-time settings, e.g. [scoring.synthetic],
+    stamped on its scores). Changing either makes saved scores stale for ``bench report``."""
 
     name: str
     fingerprint: str  # data + rendering + scoring settings; changes invalidate a run
