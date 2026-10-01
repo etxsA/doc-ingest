@@ -17,6 +17,10 @@ class ConversionError(DocingestError):
     """A converter (LaTeX, office) could not produce text."""
 
 
+class InvalidQueryError(DocingestError, ValueError):
+    """A crawler query that cannot be sent (empty, or an id list without ids)."""
+
+
 class SourceUnavailableError(DocingestError):
     """A remote source (e.g. arXiv) has no downloadable content for a record."""
 

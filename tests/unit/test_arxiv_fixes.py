@@ -342,6 +342,16 @@ def test_a_failed_search_is_reported_not_raised(tmp_path):
     assert report.stopped and "search failed" in report.stopped
 
 
+@pytest.mark.parametrize("query", ["", "   ", "ids:", "ids: , "])
+def test_an_unusable_query_is_reported_not_raised(tmp_path, query):
+    # Old: a plain ValueError escaped CrawlService.run (a traceback in the CLI).
+    crawler, transport, _, _ = make()
+    report = crawl(crawler, tmp_path, query, 3)
+    assert report.stopped and "search failed" in report.stopped
+    assert "InvalidQueryError" in report.failures[0][1] and "arXiv" in report.failures[0][1]
+    assert transport.calls == []
+
+
 def test_intermittent_406_from_the_api_is_retried():
     from docingest.adapters.sources.http import RETRYABLE_STATUS
 
