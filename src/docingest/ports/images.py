@@ -10,6 +10,8 @@ from PIL.Image import Image
 
 @runtime_checkable
 class ImageSource(Protocol):
+    fingerprint: str  # name + version: part of the cache key of image inputs
+
     def frames(self, path: Path) -> list[Image]:
         """Raise ``DocumentOpenError`` for unreadable images."""
         ...
