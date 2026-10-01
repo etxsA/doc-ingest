@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .models import PageProbe, PageSignals
 
 
 class RoutingPolicy(BaseModel):
     """Thresholds from published pipelines (Marker, olmOCR); tuned in config/pipeline.toml."""
+
+    # Like every other config section: a misspelt [routing] key is an error, not a no-op.
+    model_config = ConfigDict(extra="forbid")
 
     min_chars: int = 50  # fewer embedded chars than this -> treat as scanned
     image_coverage: float = 0.6  # big image + little text -> scanned
