@@ -77,6 +77,21 @@ def test_swapping_the_ocr_adapter_invalidates_the_cache(src):
     assert other.ocr.calls == 1  # different fingerprint -> different config hash
 
 
+def test_swapping_the_image_source_invalidates_image_results_only(src):
+    # Old: the image key held only the OCR fingerprint, so frames from another decoder
+    # never reached OCR: the transcription of the old decoding was served from the cache.
+    png, pdf = src("scan.png", b"png"), src("a.pdf", b"pdf")
+    docs = {"a.pdf": [scanned()]}
+    svc = make_service(docs)
+    svc.ingest(png)
+    svc.ingest(pdf)
+    other = make_service(docs, images=FakeImages(fingerprint="other-decoder 2"))
+    other.store = svc.store
+    other.ingest(png)
+    other.ingest(pdf)
+    assert other.ocr.calls == 1  # the image again; the PDF (no images port) from the cache
+
+
 def test_partial_run_is_a_variant_and_complete_run_serves_it(src):
     svc = make_service({"a.pdf": [digital(TEXT)] * 3})
     path = src("a.pdf")

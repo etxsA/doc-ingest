@@ -118,8 +118,9 @@ class FakeDetector:
 
 
 class FakeImages:
-    def __init__(self, n_frames: int = 1):
+    def __init__(self, n_frames: int = 1, fingerprint: str = "fake-images 1"):
         self.n_frames = n_frames
+        self.fingerprint = fingerprint
 
     def frames(self, path: Path) -> list[Image.Image]:
         return [Image.new("RGB", (10, 10), "white") for _ in range(self.n_frames)]
