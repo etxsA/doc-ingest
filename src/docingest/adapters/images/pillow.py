@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib.metadata import version
 from pathlib import Path
 
 from PIL import Image, ImageSequence, UnidentifiedImageError
@@ -10,6 +11,9 @@ from ...domain.errors import DocumentOpenError
 
 
 class PillowImageSource:
+    # Decoding decides what the OCR engine sees: the version is in the image cache key.
+    fingerprint = f"pillow {version('pillow')}"
+
     def frames(self, path: Path) -> list[Image.Image]:
         try:
             with Image.open(path) as img:

@@ -104,7 +104,7 @@ class IngestService:
             case SourceKind.PDF:
                 parts = [self.policy.model_dump_json(), self.pdf.fingerprint, self.ocr.fingerprint]
             case SourceKind.IMAGE:
-                parts = [self.ocr.fingerprint]
+                parts = [self.images.fingerprint, self.ocr.fingerprint]
             case _:
                 parts = [self._converter(kind).fingerprint]
         key = json.dumps([PIPELINE_VERSION, kind.value, ocr_all, *parts])
