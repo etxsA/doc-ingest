@@ -150,7 +150,7 @@ The script ends with `exec`, so the server replaces the shell process. Run in th
 
 | Variable | Default | Effect |
 |---|---|---|
-| `DOCINGEST_LLM` | output of `uv run --all-extras docingest model-path llm` | Value passed to `--model` of `mlx_vlm.server` (a local snapshot path or a model id) |
+| `DOCINGEST_LLM_SERVE_MODEL` | output of `uv run --all-extras docingest model-path llm` | Value passed to `--model` of `mlx_vlm.server` (a local snapshot path or a model id) |
 | `PORT` | `8080` | Port of the server. The host is always `127.0.0.1` |
 
 The script also exports `HF_HUB_OFFLINE=1` before starting the server, so the server loads the model from the local Hugging Face cache and does not contact Hugging Face.
@@ -171,7 +171,7 @@ sequenceDiagram
     participant HF as Hugging Face cache
     participant Server as mlx_vlm.server
     Dev->>Script: ./scripts/serve_llm.sh
-    Script->>CLI: docingest model-path llm (only when DOCINGEST_LLM is unset)
+    Script->>CLI: docingest model-path llm (only when DOCINGEST_LLM_SERVE_MODEL is unset)
     CLI->>HF: resolve pinned repo_id and revision
     HF-->>CLI: local snapshot path (downloaded first if missing)
     CLI-->>Script: snapshot path
@@ -183,7 +183,7 @@ sequenceDiagram
 
 **Requirements**: Apple Silicon with the `mlx` extra, which provides `mlx_vlm`. The script uses `uv run --all-extras`, so uv installs every optional extra (`mlx`, `qa`, `office`) into `.venv` if any is missing.
 
-**Caution**: the PaperQA2 adapter also reads `DOCINGEST_LLM`, but there it is a litellm model name that overrides `[qa] llm`. If you set `DOCINGEST_LLM` to a snapshot path for this script, set it only for the server command (for example `DOCINGEST_LLM=/path ./scripts/serve_llm.sh`) and not in the shell that runs `docingest ask`.
+**Serving another model**: `DOCINGEST_LLM_SERVE_MODEL` only changes what the server loads. It is a separate variable from `DOCINGEST_LLM`, which the PaperQA2 adapter reads as a litellm model string that overrides `[qa] llm`, so a snapshot path set for the server never reaches `docingest ask`. With the default `[qa]` settings, `ask` still requests `openai/<pinned snapshot path>`. To make it request the model you serve, set `[qa] llm = "openai/<same value>"` and `[qa] llm_base = "http://127.0.0.1:8080/v1"` (a custom `llm` without `llm_base` goes to its provider's own endpoint).
 
 ---
 

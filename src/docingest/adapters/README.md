@@ -40,7 +40,7 @@ These are the entries of `bootstrap.REGISTRY`. The first column is the key in th
 | `pdf` | **`pdfium`** | `PdfiumReader` | [pdf/pdfium.py](pdf/pdfium.py) | `PdfReader` | `pypdfium2 <version>` | `pypdfium2` (core) |
 | `ocr` | **`mlx-vlm`** | `MlxVlmOcr` | [ocr/mlx_vlm.py](ocr/mlx_vlm.py) | `OcrEngine` | `mlx-vlm ` + JSON of settings | `mlx` extra (macOS, Apple Silicon only) |
 | `ocr` | `openai-compatible` | `OpenAICompatibleOcr` | [ocr/openai_compat.py](ocr/openai_compat.py) | `OcrEngine` | `openai-compatible ` + JSON of settings | stdlib HTTP, plus a running server |
-| `images` | **`pillow`** | `PillowImageSource` | [images/pillow.py](images/pillow.py) | `ImageSource` | none | `pillow` (core) |
+| `images` | **`pillow`** | `PillowImageSource` | [images/pillow.py](images/pillow.py) | `ImageSource` | `pillow <version>` | `pillow` (core) |
 | `office` | **`docling`** | `DoclingConverter` | [converters/docling.py](converters/docling.py) | `DocumentConverter` | `docling <version>` | `office` extra |
 | `latex` | **`pandoc`** | `PandocLatexConverter` | [converters/pandoc_latex.py](converters/pandoc_latex.py) | `DocumentConverter` | `pandoc-latex r2` + pandoc version, arguments, `split_level`, fallback | `pypandoc-binary`, `pylatexenc` (core) |
 | `text` | **`passthrough`** | `PassthroughConverter` | [converters/plaintext.py](converters/plaintext.py) | `DocumentConverter` | `passthrough 1` | none |
@@ -195,19 +195,20 @@ flowchart LR
 
 ## Fingerprints and the cache key
 
-Ports whose output ends up in a stored document declare a `fingerprint: str` (`PdfReader`, `OcrEngine`, `DocumentConverter`), and so does `BenchmarkSuite`. `IngestService.config_hash()` in [`../application/ingest.py`](../application/ingest.py) hashes the fingerprints that can change a document of a given kind, so replacing an adapter or changing one of its settings produces a new `config_hash` and the stored result is no longer a cache hit.
+Ports whose output ends up in a stored document declare a `fingerprint: str` (`PdfReader`, `OcrEngine`, `ImageSource`, `DocumentConverter`), and so does `BenchmarkSuite`. `IngestService.config_hash()` in [`../application/ingest.py`](../application/ingest.py) hashes the fingerprints that can change a document of a given kind, so replacing an adapter or changing one of its settings produces a new `config_hash` and the stored result is no longer a cache hit.
 
 | Document kind | Parts hashed into `config_hash` |
 |---|---|
 | `pdf` | `PIPELINE_VERSION`, kind, `ocr_all`, `[routing]` policy, `PdfReader.fingerprint`, `OcrEngine.fingerprint` |
-| `image` | `PIPELINE_VERSION`, kind, `ocr_all`, `OcrEngine.fingerprint` |
+| `image` | `PIPELINE_VERSION`, kind, `ocr_all`, `ImageSource.fingerprint`, `OcrEngine.fingerprint` |
 | `office`, `latex`, `text` | `PIPELINE_VERSION`, kind, `ocr_all`, the fingerprint of that kind's converter |
 
-`ocr_all` can only be true for a PDF: `IngestService` ignores `--ocr-all` for every other kind. The hash is the first 12 hex characters of a SHA-256 of the JSON list of these parts. The detector, the image source, the store, the QA adapter and the crawler have no fingerprint and are not part of any cache key. Replacing one of them does not invalidate stored results: if a replacement image source or detector changes what gets transcribed, re-run with `docingest ingest --force`.
+`ocr_all` can only be true for a PDF: `IngestService` ignores `--ocr-all` for every other kind. The hash is the first 12 hex characters of a SHA-256 of the JSON list of these parts. The detector, the store, the QA adapter and the crawler have no fingerprint and are not part of any cache key: the detector's only output that matters is the kind, which is in the key, and the others do not change what is written. A replacement detector that only changes the MIME type recorded in the manifest does not invalidate stored results; re-run with `docingest ingest --force` if that matters.
 
 Rules for a fingerprint, all enforced or relied on by existing code and tests:
 
-- Include the adapter name, the library version, and every setting that can change the output text (for OCR: model, revision, profile, prompt, image size, dpi, generation settings).
+- Include the adapter name, the library version, and every setting that can change the output text (for OCR: model, revision, profile and its `code_version`, prompt, image size, dpi, generation settings).
+- When the adapter's own code changes its output while library versions and settings stay the same, change the fingerprint by hand: a revision constant (`PandocLatexConverter.REVISION`, `"passthrough 1"`), or for an OCR profile's `postprocess` / `valid` code its `code_version` (`tests/unit/test_ocr_profiles.py` pins that code, so an edit cannot go unnoticed).
 - Leave out settings that cannot change the text. `OpenAICompatibleOcr` excludes its timeout, retry count and API key.
 - Keep it stable: the same settings give the same string, and calling the adapter does not change it (`test_fingerprint_is_stable` in [`tests/contract/test_ocr_contract.py`](../../../tests/contract/test_ocr_contract.py)).
 
@@ -284,7 +285,7 @@ How the signals are used: `IngestService` passes them to `domain.routing.decide(
 | Port | `ImageSource.frames(path) -> list[PIL.Image.Image]` |
 | Registry | `[adapters] images = "pillow"` |
 | Config keys | none |
-| Fingerprint | none (only the OCR engine's fingerprint is hashed for images) |
+| Fingerprint | `pillow <version>` (hashed with the OCR engine's fingerprint for images: decoding decides what the model sees) |
 | Dependencies | `pillow` (core) |
 
 Behaviour and limits:
@@ -688,6 +689,7 @@ Both suites implement `BenchmarkSuite` from [`../ports/benchmark.py`](../ports/b
 | `output_path(run_dir, candidate, sample)` | Where a candidate's transcription of a sample is written; the suite owns this layout |
 | `score(run_dir, candidates)` | A `SuiteScore` per candidate |
 | `scoring_version` (optional) | Version of the scoring rules. A change re-scores a finished run (`docingest bench report` does it automatically) and never forces a re-transcription. |
+| `scoring_options` (optional) | Scoring-time settings outside the fingerprint, stamped on every score: `{"report_separately": ...}` for the synthetic suite, `bootstrap_samples`, `confidence_level` and `skip_baseline` for olmOCR-bench. A change re-scores the same way. |
 
 | | `SyntheticSuite` | `OlmOcrBenchSuite` |
 |---|---|---|
@@ -715,7 +717,7 @@ Configuration (`[suites.synthetic]` in `config/benchmark.toml`, model `Synthetic
 | `min_ref_chars` | `200` | Pages with fewer non-whitespace reference characters are skipped |
 | `primary_metric` | `"cer"` | Ranking metric: `cer`, `wer`, `word_f1` or `char3_f1` |
 
-Scoring-time option: `[[scoring.synthetic.report_separately]]` entries (`cluster`, `reason`) set `headline_exclusions`. A cluster id is `<pdf file name>#p<NNN>` (1-based page, three digits), one page with all its levels. Those pages are scored and reported in `details["reported_separately"]` but kept out of the headline metrics and paired tests. This option is not part of the fingerprint.
+Scoring-time option: `[[scoring.synthetic.report_separately]]` entries (`cluster`, `reason`) set `headline_exclusions`. A cluster id is `<pdf file name>#p<NNN>` (1-based page, three digits), one page with all its levels. Those pages are scored and reported in `details["reported_separately"]` but kept out of the headline metrics and paired tests. This option is not part of the fingerprint; it is the suite's `scoring_options` (`{"report_separately": {cluster: reason}}`), stamped on every score, so changing it makes `bench report` re-score.
 
 Levels (`apply_level`):
 
@@ -822,10 +824,11 @@ Adapters translate library exceptions into the errors of [`../domain/errors.py`]
 5. If the port declares `fingerprint`, follow the [fingerprint rules](#fingerprints-and-the-cache-key).
 6. Respect the port's contract, not only its signatures:
    - `OcrEngine`: expose `model` (a `ModelRef` with a revision), `dpi` and `fingerprint`; accept any PIL image mode; return an `OcrResult`.
+   - `ImageSource`: expose `fingerprint` (implementation and image-library version), since decoding decides what the OCR engine sees.
    - `DocumentConverter`: set `Conversion.degraded=True` only for fallbacks caused by the environment (timeout, crash, missing tool).
    - `DocumentStore`: never return a degraded result from `lookup`, never let a partial or degraded run replace a complete one, and replace a saved run in place when it is saved again.
-   - `SourceCrawler`: raise `RateLimitedError` when the source asks for a pause you will not wait out; `CrawlService` then stops.
-   - `BenchmarkSuite`: own the output layout in `output_path`, put in the fingerprint everything that changes what the model sees or what it is scored against, and bump `scoring_version` instead of the fingerprint when only the scoring rules change. A new suite also needs, in `bench_cli.py`, a settings model and a field in `SuitesConfig`, a case in `BenchConfig.suite_settings()` (which currently chooses between the two existing suites), a branch in `build_suite()`, and entries in `SUITES` and `SCORING_VERSIONS`.
+   - `SourceCrawler`: raise `RateLimitedError` when the source asks for a pause you will not wait out; `CrawlService` then stops. From `search()`, raise only `DocingestError`s for expected failures (`InvalidQueryError` for a query that cannot be sent).
+   - `BenchmarkSuite`: own the output layout in `output_path`, put in the fingerprint everything that changes what the model sees or what it is scored against, and bump `scoring_version` instead of the fingerprint when only the scoring rules change. Put scoring-time settings in `scoring_options` so a change re-scores. A new suite also needs, in `bench_cli.py`, a settings model and a field in `SuitesConfig`, a case in `BenchConfig.suite_settings()` (which currently chooses between the two existing suites), a branch in `build_suite()`, and entries in `SUITES` and `SCORING_VERSIONS`.
 7. Register it.
    - Built-in: add a factory to `REGISTRY` in [`../bootstrap.py`](../bootstrap.py) that imports the module lazily. In this sketch `SqliteStore` stands for the class you are adding:
 

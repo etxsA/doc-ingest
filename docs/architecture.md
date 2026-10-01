@@ -54,7 +54,7 @@ The architecture follows from four goals:
 | Page, segment | The unit of a document in the manifest. For PDFs it is a page, for images a frame, for LaTeX a section, for office and text files the whole document. The code calls all of them pages (`PageRecord`). |
 | `doc_id` | The SHA-256 of the input file's raw bytes. |
 | Fingerprint | A string on an adapter that names its version and every setting that can change its output. |
-| `config_hash` | A 12-character hash of the pipeline version, the source kind, the `ocr_all` option and whatever else can change the output for that kind (for PDFs the routing thresholds plus the PDF reader and OCR fingerprints, for images the OCR fingerprint, for converted kinds the converter fingerprint). It is the cache key together with `doc_id`. |
+| `config_hash` | A 12-character hash of the pipeline version, the source kind, the `ocr_all` option and whatever else can change the output for that kind (for PDFs the routing thresholds plus the PDF reader and OCR fingerprints, for images the image source and OCR fingerprints, for converted kinds the converter fingerprint). It is the cache key together with `doc_id`. |
 | Canonical result | A complete run with default options, stored under `<output_dir>/<doc_id[:16]>/`. |
 | Variant | A partial (`--max-pages`) or forced-OCR (`--ocr-all`) run, stored under `_variants/`. |
 | Degraded result | A converter fallback caused by the environment (timeout, crash, missing binary), stored under `_degraded/` and never served from the cache. |
@@ -253,6 +253,7 @@ classDiagram
     }
     class ImageSource {
         <<Protocol>>
+        +str fingerprint
         +frames(path) list~Image~
     }
     class DocumentConverter {
@@ -358,12 +359,13 @@ classDiagram
 
 ### Fingerprints
 
-Four ports carry a `fingerprint`: `PdfReader`, `OcrEngine`, `DocumentConverter` and `BenchmarkSuite`. The first three feed the ingestion cache key ([section 8](#8-caching-and-fingerprints)). The suite fingerprint identifies a benchmark run's data ([section 12](#12-the-benchmark-subsystem)). The other ports have no fingerprint and are not part of any cache key.
+Five ports carry a `fingerprint`: `PdfReader`, `OcrEngine`, `ImageSource`, `DocumentConverter` and `BenchmarkSuite`. The first four feed the ingestion cache key ([section 8](#8-caching-and-fingerprints)). The suite fingerprint identifies a benchmark run's data ([section 12](#12-the-benchmark-subsystem)). The other ports have no fingerprint and are not part of any cache key: the detector's only output that matters is the kind, which is in the key, and the store, question answering and the crawler do not change what is written.
 
 | Adapter | Fingerprint contents |
 |---|---|
 | `PdfiumReader` | `"pypdfium2 "` plus the installed pypdfium2 version |
-| `MlxVlmOcr` | `"mlx-vlm "` plus sorted JSON of: mlx-vlm version, model (`repo_id`, `revision`), profile name, prompt, `max_side`, `chat_kwargs`, `prompt_first`, retry ladder, whether the profile validates output, `dpi`, `max_tokens`, `temperature`, `repetition_penalty` |
+| `PillowImageSource` | `"pillow "` plus the installed Pillow version |
+| `MlxVlmOcr` | `"mlx-vlm "` plus sorted JSON of: mlx-vlm version, model (`repo_id`, `revision`), profile name and `code_version`, prompt, `max_side`, `chat_kwargs`, `prompt_first`, retry ladder, whether the profile validates output, `dpi`, `max_tokens`, `temperature`, `repetition_penalty` |
 | `OpenAICompatibleOcr` | `"openai-compatible "` plus sorted JSON of: `base_url`, `served_model`, `repo_id@revision`, and the same profile and generation settings as above. Transport settings (`timeout_s`, `retries`, the API key) are excluded because they cannot change the text. |
 | `PandocLatexConverter` | adapter revision (`REVISION`), pandoc version, the pandoc arguments, `split_level`, and the pylatexenc version or `no fallback` |
 | `DoclingConverter` | `"docling "` plus the installed docling version, or `docling missing` |
@@ -440,7 +442,7 @@ Selecting it is then one line in `config/pipeline.toml`: `ocr = "my-ocr"` under 
 
 ### The Container
 
-`Container(cfg, log=print, overrides=None)` builds the object graph for one configuration, lazily. `adapter(port)` returns the override for that port if there is one, otherwise it builds the adapter with `build(port, cfg)` and keeps the instance, so each port is built at most once per container. The use cases are `functools.cached_property` attributes. The diagram shows what each one receives.
+`Container(cfg, log=print, overrides=None)` builds the object graph for one configuration, lazily. `adapter(port)` returns the override for that port if there is one, otherwise it builds the adapter with `build(port, cfg)` and keeps the instance in a cache of its own (the caller's `overrides` dict is copied, never filled), so each port is built at most once per container. The use cases are `functools.cached_property` attributes. The diagram shows what each one receives.
 
 ```mermaid
 flowchart LR
@@ -682,7 +684,7 @@ config_hash = hashlib.sha256(key.encode()).hexdigest()[:12]
 | Kind | `parts` |
 |---|---|
 | `pdf` | the `RoutingPolicy` as JSON (all `[routing]` thresholds), the `PdfReader` fingerprint, the `OcrEngine` fingerprint |
-| `image` | the `OcrEngine` fingerprint |
+| `image` | the `ImageSource` fingerprint, the `OcrEngine` fingerprint |
 | `latex`, `office`, `text` | the fingerprint of the converter for that kind |
 
 `PIPELINE_VERSION` is defined in `application/ingest.py` (it is also `docingest.__version__`). Bumping it invalidates every cached result.
@@ -694,7 +696,7 @@ What is deliberately not in the key:
 - `[qa]` settings. They only affect question answering.
 - Transport settings of the OpenAI-compatible OCR adapter (`timeout_s`, `retries`, `api_key_env`), and the LaTeX adapter's `timeout_s` and `max_archive_mb`. They decide whether a conversion succeeds, not what it produces.
 
-Because the OCR fingerprint is in the PDF key, changing the OCR model, profile, prompt or generation settings re-processes every PDF and every image, including PDFs whose pages all use the text layer. The key does not depend on which pages of a document used OCR, so the store never needs that information to decide a hit. The cost is that born-digital PDFs are read again, which is cheap compared with OCR.
+Because the OCR fingerprint is in the PDF key, changing the OCR model, profile (including its `code_version`, bumped when its clean-up code changes), prompt or generation settings re-processes every PDF and every image, including PDFs whose pages all use the text layer. The key does not depend on which pages of a document used OCR, so the store never needs that information to decide a hit. The cost is that born-digital PDFs are read again, which is cheap compared with OCR.
 
 ### Lookup
 
@@ -763,7 +765,7 @@ Consequences of this layout:
 A call to `ingest` processes the input instead of returning a stored result when any of these holds:
 
 1. The bytes changed, which gives a new `doc_id`.
-2. A part of the key for its kind changed: `PIPELINE_VERSION`, any `[routing]` threshold (PDFs), the pypdfium2 version (PDFs), the OCR fingerprint (PDFs and images), or the converter fingerprint (LaTeX, office, text).
+2. A part of the key for its kind changed: `PIPELINE_VERSION`, any `[routing]` threshold (PDFs), the pypdfium2 version (PDFs), the OCR fingerprint (PDFs and images), the image source fingerprint (images), or the converter fingerprint (LaTeX, office, text).
 3. `--force` was given. The lookup is skipped, and the new result is saved over the stored result with the same run shape (a degraded result still goes to `_degraded/` and replaces nothing).
 4. The stored manifest is missing, unreadable or from an incompatible schema.
 5. The only stored result is degraded.
@@ -937,6 +939,8 @@ classDiagram
     Exception <|-- DocingestError
     DocingestError <|-- UnsupportedInputError
     ValueError <|-- UnsupportedInputError
+    DocingestError <|-- InvalidQueryError
+    ValueError <|-- InvalidQueryError
     DocingestError <|-- DocumentOpenError
     DocingestError <|-- ConversionError
     DocingestError <|-- SourceUnavailableError
@@ -948,11 +952,12 @@ classDiagram
     OcrError <|-- OcrServerError
 ```
 
-`DocingestError` and its six subclasses `UnsupportedInputError`, `DocumentOpenError`, `ConversionError`, `SourceUnavailableError`, `OcrError` and `RateLimitedError` live in `domain/errors.py`. `HttpStatusError`, `RetriesExhaustedError` and `LocalWriteError` are defined in `adapters/sources/http.py`, and `OcrServerError` in `adapters/ocr/openai_compat.py`.
+`DocingestError` and its seven subclasses `UnsupportedInputError`, `InvalidQueryError`, `DocumentOpenError`, `ConversionError`, `SourceUnavailableError`, `OcrError` and `RateLimitedError` live in `domain/errors.py`. `HttpStatusError`, `RetriesExhaustedError` and `LocalWriteError` are defined in `adapters/sources/http.py`, and `OcrServerError` in `adapters/ocr/openai_compat.py`.
 
 | Error | Meaning | Raised by | Handled by |
 |---|---|---|---|
 | `UnsupportedInputError` | The input type is not recognized, or no converter is configured for its kind. | `MagicBytesDetector.detect`, `IngestService._converter` | `docingest ingest` records the file as failed and continues |
+| `InvalidQueryError` | A crawler query that cannot be sent: empty, or `ids:` without ids. | `ArxivCrawler.search` (`query_params`, `parse_ids`) | `CrawlService` ends the crawl with a report, before any request |
 | `DocumentOpenError` | The file exists but cannot be opened (corrupt, encrypted, truncated). | `PdfiumReader.open`, `PillowImageSource.frames`, the benchmark suites | `docingest ingest` records the failure. The PaperQA2 hook converts it to PaperQA2's `ImpossibleParsingError`, so PaperQA2 skips the file instead of retrying. |
 | `ConversionError` | A converter could not produce text. | `DoclingConverter` (missing `office` extra or a docling failure), `PandocLatexConverter` and `latex_source` (unreadable or oversized source, no text from pandoc or the fallback) | recorded as a failed input or crawl record |
 | `SourceUnavailableError` | A remote source has no downloadable content for a record. | `ArxivCrawler`, `PoliteClient`, olmOCR-bench subset preparation | `CrawlService` records the failure and moves to the next record. A search failure ends the crawl with a report. |
@@ -1152,7 +1157,7 @@ A run directory (`data/bench/runs/<run-id>/` by default) is self-describing:
 - **Failure streaks.** Five consecutive failures (`max_consecutive_errors`) stop a candidate and delete that streak's empty outputs, because a streak points at the model or the machine, not at those pages.
 - **Suite fingerprint.** If a suite's data or rendering settings change, its fingerprint changes and the runner refuses to extend the run with `RunMismatchError`. The same happens when a candidate name is reused with a different spec. Use a new `--run-id`.
 - **Scoring version.** Scoring rules are versioned separately with `scoring_version` (`SCORING_VERSION` in each suite module). A change re-scores a finished run and never forces a re-transcription.
-- **Stale scores.** `needs_scoring` treats a saved score as stale when the candidate's telemetry changed since it was scored, when the score has errors or is incomplete, when it has no primary metric, or when it was made under another scoring version. `bench report` re-scores exactly those, plus candidates whose stored outputs `refresh_outputs` just rewrote (or everything with `--rescore`), before writing the report.
+- **Stale scores.** `needs_scoring` treats a saved score as stale when the candidate's telemetry changed since it was scored, when the score has errors or is incomplete, when it has no primary metric, when it was made under another scoring version, or when it was made with other scoring options (a suite's optional `scoring_options`: `[scoring.synthetic]` for the synthetic suite, the result-changing scorer settings for olmOCR-bench). `bench report` re-scores exactly those, plus candidates whose stored outputs `refresh_outputs` just rewrote (or everything with `--rescore`), before writing the report.
 
 The report ranks candidates by each suite's primary metric and compares every other candidate with the top-ranked one using a paired cluster bootstrap and a sign-flip test (`application.stats`), over the clusters and strata each suite defines. The code makes no choice of model: which model to configure in `[ocr]` is a decision for the user, informed by [benchmark.md](benchmark.md).
 

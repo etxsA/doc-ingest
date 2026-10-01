@@ -279,7 +279,7 @@ Derived members:
 3. `n_pages <= source_pages`. A result is complete exactly when they are equal.
 4. `config_hash` is the first 12 hex characters of the SHA-256 of a JSON list `[PIPELINE_VERSION, source_kind value, ocr_all, *parts]`, where `parts` depends on the kind:
    - PDF: the routing policy as JSON, `PdfReader.fingerprint`, `OcrEngine.fingerprint`;
-   - IMAGE: `OcrEngine.fingerprint`;
+   - IMAGE: `ImageSource.fingerprint`, `OcrEngine.fingerprint`;
    - OFFICE, LATEX, TEXT: the fingerprint of that kind's converter.
 
    It is computed by `IngestService.config_hash()`; the domain only stores it.
@@ -382,7 +382,7 @@ A pydantic model; its values come from the `[routing]` section of `config/pipeli
 | `max_garbage_ratio` | `float` | `0.10` | Above this share of broken glyphs the text layer is considered garbled. |
 | `min_alpha_ratio` | `float` | `0.5` | Below this share of letters the text layer is considered suspicious (olmOCR heuristic). |
 
-`RoutingPolicy` does not forbid unknown fields, so a misspelled key in `[routing]` is silently ignored and the default stays in effect. The other config sections reject unknown keys.
+`RoutingPolicy` forbids unknown fields (`extra="forbid"`), like the other config sections: a misspelled key in `[routing]` is a validation error, never a silently ignored threshold.
 
 ### `decide(signals, policy, *, force_ocr=False) -> PageProbe`
 
@@ -538,6 +538,7 @@ classDiagram
     class ValueError
     class DocingestError
     class UnsupportedInputError
+    class InvalidQueryError
     class DocumentOpenError
     class ConversionError
     class SourceUnavailableError
@@ -559,6 +560,8 @@ classDiagram
     Exception <|-- DocingestError
     DocingestError <|-- UnsupportedInputError
     ValueError <|-- UnsupportedInputError
+    DocingestError <|-- InvalidQueryError
+    ValueError <|-- InvalidQueryError
     DocingestError <|-- DocumentOpenError
     DocingestError <|-- ConversionError
     DocingestError <|-- SourceUnavailableError
@@ -576,6 +579,7 @@ classDiagram
 |---|---|---|---|---|
 | `DocingestError` | `Exception` | Base class for expected, reportable failures. | (not raised directly) | `CrawlService.run` turns one raised by `search()` into a report entry instead of a traceback. |
 | `UnsupportedInputError` | `DocingestError`, `ValueError` | The input type is not recognized. | `MagicBytesDetector.detect` (unknown type, corrupt gzip, gzipped PDF, gzipped PostScript or HTML); `IngestService` when no converter is configured for the detected kind. | The CLI records the file as failed and continues. |
+| `InvalidQueryError` | `DocingestError`, `ValueError` | A crawler query that cannot be sent (empty, or an `ids:` list without ids). | `ArxivCrawler.search` (through `query_params` / `parse_ids`), before any request. | `CrawlService.run` ends the crawl with a report; `docingest crawl` exits with status 1, no traceback. |
 | `DocumentOpenError` | `DocingestError` | The document exists but cannot be opened (corrupt, encrypted, truncated). | `PdfiumReader.open`, `PillowImageSource.frames`, the benchmark suites for missing or unreadable sources. | The PaperQA2 hook converts it to PaperQA2's `ImpossibleParsingError`. |
 | `ConversionError` | `DocingestError` | A converter could not produce text. | `DoclingConverter` (missing `office` extra, Docling failure); `PandocLatexConverter` and `latex_source` (archive cannot be unpacked, no `.tex` file, size limits, pandoc failed with no usable fallback). | The CLI records the file as failed. |
 | `SourceUnavailableError` | `DocingestError` | A remote source has no downloadable content for a record. | `ArxivCrawler` (API error, malformed XML, no usable format); the olmOCR-bench dataset download. | `CrawlService` records the record as failed and moves on. |

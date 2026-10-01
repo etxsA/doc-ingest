@@ -127,8 +127,7 @@ print(remote.adapters.ocr, remote.ocr.repo_id, remote.ocr.revision)
 | Situation | Result |
 |---|---|
 | TOML syntax error | Error (`tomllib.TOMLDecodeError`). |
-| Unknown key inside `[adapters]`, `[ocr]`, `[qa]`, `[latex]` or `[arxiv]` | Error (`extra_forbidden`). |
-| Unknown key inside `[routing]` | **Silently ignored** (`RoutingPolicy` does not forbid extra keys). Check the spelling of routing keys. |
+| Unknown key inside `[adapters]`, `[routing]`, `[ocr]`, `[qa]`, `[latex]` or `[arxiv]` | Error (`extra_forbidden`). |
 | Unknown top-level table or key | Kept in `AppConfig.model_extra` for plugins; no error. |
 | Value that cannot be converted to the declared type (for example `dpi = "high"`) | Error. |
 | `[ocr] repo_id` other than the default without `revision` | Error: `[ocr] revision is required for '<repo>': pin a commit sha of that repo`. |
@@ -322,12 +321,12 @@ flowchart LR
 | Setting | Changes the cache key of |
 |---|---|
 | `[routing]` (any key) | PDFs |
-| `[ocr] repo_id`, `revision`, `profile`, `prompt`, `max_side`, `dpi`, `max_tokens`, `temperature`, `repetition_penalty` (after profile defaults are applied), and the profile's own settings; with `mlx-vlm`, also the installed mlx-vlm version | PDFs (even pages that end up on the text layer) and images |
+| `[ocr] repo_id`, `revision`, `profile`, `prompt`, `max_side`, `dpi`, `max_tokens`, `temperature`, `repetition_penalty` (after profile defaults are applied), and the profile's own settings (including its `code_version`); with `mlx-vlm`, also the installed mlx-vlm version | PDFs (even pages that end up on the text layer) and images |
 | `[ocr] base_url`, `served_model` (with `openai-compatible`) | PDFs and images |
 | `[ocr] timeout_s`, `retries`, `api_key_env` | nothing (transport only) |
 | `[adapters] ocr` | PDFs and images (the fingerprint names the adapter) |
-| `[adapters] pdf`, `office`, `latex`, `text` | the kind that adapter handles, through its fingerprint |
-| `[adapters] detector`, `images`, `store`, `qa`, `crawler` | nothing (these adapters carry no fingerprint) |
+| `[adapters] pdf`, `images`, `office`, `latex`, `text` | the kind that adapter handles, through its fingerprint (`images`: image inputs; the Pillow version is in its fingerprint) |
+| `[adapters] detector`, `store`, `qa`, `crawler` | nothing (these adapters carry no fingerprint; the detector's only output that matters is the kind, which is in the key) |
 | `[latex] split_level`, `fallback`, the pandoc version (which `pandoc_path` can change) and, when `fallback` is on, the pylatexenc version | LaTeX |
 | `[latex] timeout_s`, `max_archive_mb` | nothing |
 | Docling version | office documents |
@@ -486,7 +485,7 @@ reason = """Why this page's reference text is not a fair reference."""
 |---|---|---|
 | `scoring.synthetic.report_separately` | array of `{ cluster, reason }`, both keys required | Synthetic pages whose text layer is known not to be a fair reference. `cluster` is `<pdf file name>#p<NNN>` with a 1-based, three-digit page number. These pages are still scored, at every level, but reported under `reported_separately` in the score details with their `reason`, and left out of the headline metrics, the per-level metrics and the paired comparisons. |
 
-Every entry under `[scoring]` must be a table (such as `[scoring.synthetic]`); only `synthetic.report_separately` is read, and other keys are accepted and ignored. The repository file lists one such page, with the reason found by the failure analysis in [../docs/benchmark/synthetic_failure_analysis.md](../docs/benchmark/synthetic_failure_analysis.md). A saved score is not marked stale when this list changes: after editing it, re-score with `docingest bench score --run-id ID --suite synthetic` or `docingest bench report --run-id ID --rescore`.
+Every entry under `[scoring]` must be a table (such as `[scoring.synthetic]`); only `synthetic.report_separately` is read, and other keys are accepted and ignored. The repository file lists one such page, with the reason found by the failure analysis in [../docs/benchmark/synthetic_failure_analysis.md](../docs/benchmark/synthetic_failure_analysis.md). Every score records the options it was made with (`scoring_options` in its stamp), so after editing this list the next `docingest bench report --run-id ID` re-scores the synthetic candidates by itself; `--rescore` is not needed.
 
 ### Fingerprints and run compatibility
 
@@ -495,14 +494,15 @@ Every entry under `[scoring]` must be a table (such as `[scoring.synthetic]`); o
 | A suite's defining settings (synthetic sources, levels, `dpi`, `seed`, `min_ref_chars`; olmOCR-bench `repo_id`, `revision`, `per_category`, `seed`, `long_side`, `categories`) or the relevant library versions | `bench run` refuses the run id (exit code 2). Use a new run id. |
 | A candidate's spec under the same name | `bench run` refuses the run id (exit code 2). |
 | Adding a candidate | Allowed: the run is extended. |
-| Scorer settings, `[scoring]`, `primary_metric` | No new transcription. Scorer settings and `[scoring]` apply the next time the run is scored. `primary_metric` is read from the synthetic settings stored in the run's manifest, which the latest `bench run` of that run id wrote; editing the file alone does not change it for `bench score` or `bench report`. |
+| Scorer settings, `[scoring]`, `primary_metric` | No new transcription. Scorer settings and `[scoring]` apply the next time the run is scored. `[scoring.synthetic]` and the olmOCR-bench settings that change the scores (`bootstrap_samples`, `confidence_level`, `skip_baseline`) are stamped on each score, so `bench report` re-scores by itself after a change; the scorer paths and `scorer_timeout_s` are not. `primary_metric` is read from the synthetic settings stored in the run's manifest, which the latest `bench run` of that run id wrote; editing the file alone does not change it for `bench score` or `bench report`. |
 | The suites' scoring rules in code (scoring version) | `bench report` re-scores automatically. |
 
 ## Environment variables
 
 | Variable | Read by | Effect |
 |---|---|---|
-| `DOCINGEST_LLM` | `paperqa` adapter; `scripts/serve_llm.sh` | In the adapter, a litellm model string that replaces `[qa] llm`. In `serve_llm.sh`, the model passed to `mlx_vlm.server` instead of the output of `docingest model-path llm`. |
+| `DOCINGEST_LLM` | `paperqa` adapter | A litellm model string that replaces `[qa] llm`. |
+| `DOCINGEST_LLM_SERVE_MODEL` | `scripts/serve_llm.sh` | The model passed to `mlx_vlm.server` (a local snapshot path or a model id) instead of the output of `docingest model-path llm`. Not read by the adapter, so a snapshot path set for the server never becomes the litellm model of `docingest ask`. |
 | `DOCINGEST_EMBEDDING` | `paperqa` adapter | PaperQA2 embedding string that replaces `[qa] embedding` and the pinned embedder (chunks are then not re-split by tokens). |
 | `OPENAI_API_KEY` | `paperqa` adapter (through litellm) | For a custom `openai/...` LLM (`[qa] llm` or `DOCINGEST_LLM`), used when set; otherwise the placeholder `sk-local` is sent. The default local model always uses `sk-local`. |
 | `PORT` | `scripts/serve_llm.sh` | Port of the local LLM server (default `8080`). If you change it, set `[qa] llm_base` to match. |
