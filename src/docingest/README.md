@@ -153,7 +153,9 @@ Each port slot is resolved by `Container.adapter(port)`:
 flowchart TD
     A["Container.adapter(port)"] --> B{"port in overrides?"}
     B -->|yes| R["return that object"]
-    B -->|no| N["name = getattr(cfg.adapters, port)"]
+    B -->|no| BU{"already built by this container?"}
+    BU -->|yes| R
+    BU -->|no| N["name = getattr(cfg.adapters, port)"]
     N --> F{"name in REGISTRY[port]?"}
     F -->|yes| BI["built-in factory"]
     F -->|no| P{"entry point named name in group docingest.port?"}
@@ -161,14 +163,14 @@ flowchart TD
     P -->|no| ERR["ValueError: unknown adapter, lists available names"]
     BI --> MK["factory(cfg) builds the adapter"]
     PL --> MK
-    MK --> CACHE["stored in the overrides dict"]
+    MK --> CACHE["kept in the container's own cache"]
     CACHE --> R
 ```
 
 Behaviour worth knowing:
 
 - Port names (the keys of `REGISTRY`, of `[adapters]` and of `overrides`) are `detector`, `pdf`, `ocr`, `images`, `office`, `latex`, `text`, `store`, `qa`, `crawler`.
-- An adapter is built once per container and shared: `ingest` and `ask` use the same store instance. A non-empty `overrides` dict you pass is used as that cache, so built adapters are added to it (an empty dict or `None` is replaced by a new private dict). Do not reuse one `overrides` dict for two containers with different configurations.
+- An adapter is built once per container and shared: `ingest` and `ask` use the same store instance. The container copies the `overrides` dict you pass and keeps built adapters in a cache of its own, so your dict is never modified and can be passed to several containers with different configurations.
 - A built-in adapter wins a name clash with a plugin. A plugin is imported only when it is selected; if its import fails, the exception keeps its type and gets a note naming the plugin.
 - `Container.ingest` builds the detector, PDF reader, OCR engine, image source and store when first accessed. Converters are built only when a document of that kind is ingested (`_LazyConverters` maps `SourceKind.OFFICE`, `LATEX`, `TEXT` to the `office`, `latex`, `text` slots).
 - Building the OCR engine is cheap: the mlx-vlm engine loads model weights on the first `transcribe()` call, and the OpenAI-compatible engine only opens HTTP connections per request.
@@ -215,7 +217,7 @@ cfg = AppConfig.model_validate(
 
 - `load_config(None)` reads `DEFAULT_CONFIG`, which is resolved from the package location (`<repository>/config/pipeline.toml`). If that file does not exist it returns `AppConfig()`. An explicit path that does not exist raises `FileNotFoundError`; it never falls back to defaults.
 - `output_dir` (default `data/normalized`) and `raw_dir` (default `data/raw`) are used as given, so relative paths are relative to the current working directory.
-- The `[adapters]`, `[ocr]`, `[qa]`, `[latex]` and `[arxiv]` models reject unknown keys with a `ValidationError`. `[routing]` ignores unknown keys. Unknown top-level tables are kept in `cfg.model_extra` for plugins.
+- The `[adapters]`, `[routing]`, `[ocr]`, `[qa]`, `[latex]` and `[arxiv]` models reject unknown keys with a `ValidationError`. Unknown top-level tables are kept in `cfg.model_extra` for plugins.
 - `OcrConfig` requires `revision` whenever `repo_id` is not the default model; the default model's revision is filled in for you.
 
 ### 2. Build a container and ingest a file
