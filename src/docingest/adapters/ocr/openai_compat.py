@@ -145,6 +145,7 @@ class OpenAICompatibleOcr:
                 "served_model": self.served_model,
                 "model": f"{model.repo_id}@{model.revision}",
                 "profile": profile.name,
+                "profile_code": profile.code_version,
                 "prompt": profile.prompt,
                 "max_side": profile.max_side,
                 "chat_kwargs": profile.chat_kwargs,
