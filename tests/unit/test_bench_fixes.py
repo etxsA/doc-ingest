@@ -22,6 +22,7 @@ from docingest.application.benchmark import (
     read_telemetry,
     render_report,
     score_run,
+    scoring_options,
     telemetry_path,
     throughput,
 )
@@ -449,6 +450,40 @@ def test_scores_from_other_scoring_rules_or_without_a_stamp_are_rescored(tmp_pat
     saved["a"].pop("stamp")  # written by the older runner
     path.write_text(json.dumps(saved))
     assert needs_scoring(tmp_path, "mem") == ["a"]
+
+
+def test_changed_scoring_options_make_saved_scores_stale(tmp_path):
+    # Old: editing [scoring.synthetic] report_separately left every saved score "current",
+    # so `bench report` kept the old exclusions until --rescore.
+    suite = TaggedSuite()
+    suite.scoring_options = {"report_separately": {}}
+    runner({"a": EchoOcr()}).run(suite, [spec("a")], tmp_path)
+    score_run(suite, tmp_path)
+    assert needs_scoring(tmp_path, "mem", scoring_options=scoring_options(suite)) == []
+    suite.scoring_options = {"report_separately": {"d.pdf#p001": "bad reference"}}
+    assert needs_scoring(tmp_path, "mem", scoring_options=scoring_options(suite)) == ["a"]
+    score_run(suite, tmp_path)
+    assert needs_scoring(tmp_path, "mem", scoring_options=scoring_options(suite)) == []
+    # A suite without options (and a stamp written before options existed) is not stale.
+    plain = TaggedSuite()
+    runner({"b": EchoOcr()}).run(plain, [spec("b")], tmp_path / "p")
+    score_run(plain, tmp_path / "p")
+    path = tmp_path / "p" / "scores" / "mem.json"
+    saved = json.loads(path.read_text())
+    saved["b"]["stamp"].pop("scoring_options")
+    path.write_text(json.dumps(saved))
+    assert needs_scoring(tmp_path / "p", "mem", scoring_options=scoring_options(plain)) == []
+
+
+def test_the_synthetic_suites_options_are_its_report_separately_table(tmp_path):
+    from builders import LONG, text_pdf
+
+    from docingest.adapters.datasets.synthetic import SyntheticSuite
+
+    suite = SyntheticSuite([(text_pdf(tmp_path / "d.pdf", LONG), [0])], levels=["clean"])
+    assert scoring_options(suite) == {"report_separately": {}}
+    suite.headline_exclusions = {"d.pdf#p001": "why"}
+    assert scoring_options(suite) == {"report_separately": {"d.pdf#p001": "why"}}
 
 
 def test_bench_report_knows_each_suites_scoring_version():

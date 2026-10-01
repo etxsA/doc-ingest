@@ -43,6 +43,7 @@ from ..application.benchmark import (
     rank,
     read_manifest,
     score_run,
+    scoring_options,
     write_report,
 )
 from ..bootstrap import build
@@ -295,7 +296,10 @@ def engine_factory(base: AppConfig) -> Callable[[CandidateSpec], OcrEngine]:
 
 # --------------------------------------------------------------------------- helpers
 
-ConfigOpt = Annotated[Path, typer.Option("--config", "-c", help="benchmark.toml")]
+# exists=True: a mistyped --config is a usage error (exit 2), as in the pipeline commands.
+ConfigOpt = Annotated[
+    Path, typer.Option("--config", "-c", help="benchmark.toml", exists=True, dir_okay=False)
+]
 RunIdOpt = Annotated[str, typer.Option("--run-id", help="Results go to <runs_dir>/<run-id>/")]
 SuiteOpt = Annotated[str, typer.Option("--suite", help="synthetic, olmocr-bench or all")]
 PresetOpt = Annotated[str | None, typer.Option(help="Overlay the presets.<name> table, e.g. smoke")]
@@ -528,7 +532,7 @@ def report(
     config: ConfigOpt = DEFAULT_BENCH_CONFIG,
 ) -> None:
     """Write <run>/summary.json and <run>/report.md (scores new, changed, incomplete or
-    failed candidates first, and scores made under older scoring rules)."""
+    failed candidates first, and scores made under older scoring rules or options)."""
     bc, _ = load_bench_config(config)
     run_dir = _run_dir(bc, run_id)
     manifest = read_manifest(run_dir)
@@ -536,11 +540,10 @@ def report(
         version = SCORING_VERSIONS.get(name)
         s = _suite_from_manifest(name, manifest, bc)
         refreshed = refresh_outputs(run_dir, s, manifest)
-        todo = (
-            entry["candidates"]
-            if rescore
-            else sorted(set(needs_scoring(run_dir, name, scoring_version=version)) | refreshed)
+        stale = needs_scoring(
+            run_dir, name, scoring_version=version, scoring_options=scoring_options(s)
         )
+        todo = entry["candidates"] if rescore else sorted(set(stale) | refreshed)
         if todo:
             score_run(s, run_dir, todo)
         _print_scores(name, load_scores(run_dir, name))
