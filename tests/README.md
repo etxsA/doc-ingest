@@ -91,13 +91,14 @@ flowchart LR
 | `test_bench_fixes.py` | Benchmark regressions: clustered statistics, the OCR retry ladder in telemetry, page furniture and LaTeX / `<img>` normalisation, stale saved scores. The MLX adapter runs against stub modules, never a model |
 | `test_benchmark.py` | `BenchmarkRunner`, score persistence and report aggregation on an in-memory suite (`MemSuite`) |
 | `test_bootstrap.py` | `REGISTRY` defaults, unknown adapter names, `Container` overrides, entry-point plugins including broken ones |
-| `test_core_fixes.py` | Regressions: config loading, QA LLM parameters, metadata refresh and degraded results through the real `FilesystemStore` |
+| `test_core_fixes.py` | Regressions: config loading, the pipeline version against `pyproject.toml` and `uv.lock`, QA LLM parameters, metadata refresh and degraded results through the real `FilesystemStore` |
 | `test_domain_models.py` | `SourceMetadata` citation formatting |
 | `test_ingest_service.py` | `IngestService` with fakes for every port: per-page routing, the cache and its invalidation, partial and forced-OCR variants, images, converters, metadata sidecars, degraded conversions, domain errors |
 | `test_latex_fixes.py` | Regressions of the LaTeX adapter (`latex_source`, `pandoc_latex`) |
 | `test_latex_source.py` | Pure LaTeX-source helpers and the pandoc adapter's Markdown helpers |
 | `test_metrics.py` | `application.metrics`: normalisation (Markdown, hyphenation), capping of runaway output, `char3_f1`, `bootstrap_ci` |
-| `test_routing_policy.py` | `domain.routing.decide` and configurable `RoutingPolicy` thresholds |
+| `test_ocr_profiles.py` | OCR profile clean-up code pinned against each profile's `code_version` (an edit fails until it is re-pinned, with a bump if results can change), and `code_version` in both engine fingerprints |
+| `test_routing_policy.py` | `domain.routing.decide`, configurable `RoutingPolicy` thresholds, unknown `[routing]` keys rejected |
 | `test_services.py` | `AskService` and `CrawlService` with fakes |
 | `test_stats.py` | `application.stats`: paired bootstrap, `quantile`, `bootstrap_ci` |
 | `test_text.py` | `domain.text`: garbled-text detection, de-hyphenation, page splitting |
@@ -115,7 +116,7 @@ flowchart LR
 |---|---|
 | `test_arxiv_network.py` | `ArxivCrawler` over real HTTP against a local stand-in server (redirects, gzip, retries with `Retry-After`); one live arXiv test (`network`) |
 | `test_bench_datasets.py` | The synthetic and olmOCR-bench suite adapters, scorer output parsing, and the `docingest bench` sub-app end to end with a fake OCR engine; one dataset download test (`network`) |
-| `test_cli.py` | `docingest ingest` batch behaviour, option validation, the `adapters` command, a missing `--config` file, a broken plugin |
+| `test_cli.py` | `docingest ingest` batch behaviour, option validation, the `adapters` command, a missing `--config` file (pipeline and `bench` commands), a `crawl` query that cannot be sent, a broken plugin |
 | `test_filesystem_store.py` | `FilesystemStore` file permissions, no leftover temp files, a corrupt cached manifest treated as a cache miss |
 | `test_magic_detector.py` | `MagicBytesDetector` on real files |
 | `test_openai_ocr.py` | `OpenAICompatibleOcr` against a scripted local OpenAI-compatible server: request shape, retries, the `finish_reason="length"` ladder, authentication |
@@ -123,6 +124,7 @@ flowchart LR
 | `test_paperqa_adapter.py` | PaperQA2 token windows; skipped when `paperqa` is not installed or the embedder is not in the local Hugging Face cache |
 | `test_pdfium_reader.py` | `PdfiumReader` page signals and routing on generated PDFs, corrupt PDFs |
 | `test_pipeline_real_adapters.py` | `Container` with the real detector, pdfium, Pillow and filesystem adapters and a fake OCR engine |
+| `test_scripts.py` | `scripts/serve_llm.sh` run with a stub `uv` on `PATH`: which variable chooses the served model. Skipped without `bash` |
 | `test_synthetic_and_images.py` | Deterministic `make_scan`, `fit_image`, OCR profile post-processing |
 
 ### fixtures/
@@ -160,7 +162,7 @@ The module docstring states the rule: the fakes are real implementations of the 
 | `digital(text)` | helper | A `FakePage` whose `n_chars` is the number of non-whitespace characters of `text` and `alpha_ratio=0.9`. It routes to the text layer only when `text` has at least 50 such characters (the default `RoutingPolicy.min_chars`) | |
 | `scanned()` | helper | A `FakePage` with no text and one full-page image (`n_chars=0`, `n_images=1`, `image_coverage=1.0`); always routes to OCR | |
 | `FakeDetector()` | `TypeDetector` | Kind from the suffix only: `.pdf`, `.png`, `.docx`, `.tex`, `.md`; anything else raises `UnsupportedInputError` | `KINDS` |
-| `FakeImages(n_frames=1)` | `ImageSource` | Returns `n_frames` white 10x10 images for any path | |
+| `FakeImages(n_frames=1, fingerprint="fake-images 1")` | `ImageSource` | Returns `n_frames` white 10x10 images for any path | `fingerprint` (part of the image cache key) |
 | `FakeConverter(segments, method=PageMethod.LATEX, **kw)` | `DocumentConverter` | Returns `Conversion(segments=segments, method=method, engine="fake", **kw)`; pass `title`, `metadata`, `warnings` or `degraded` through `kw` | `calls`; `fingerprint` includes the method |
 | `InMemoryStore()` | `DocumentStore` | Reference implementation of the store contract: canonical results, variants (partial or forced-OCR runs) and degraded fallbacks kept apart; locations are `mem://...` strings | `canonical`, `variants`, `degraded` dictionaries |
 | `FakeCrawler(records, payload=..., fail_keys=set())` | `SourceCrawler` | `search()` returns the first `limit` records; `fetch()` writes `<key>.tex` with `payload` into `dest_dir` and returns format `"latex"`; keys in `fail_keys` raise `DocumentOpenError` | |
@@ -207,7 +209,7 @@ flowchart TD
 
 Other conditional skips, independent of the variables above: tests that need pandoc skip when `PandocLatexConverter().pandoc_version` is `None` (no runnable pandoc binary; pypandoc-binary normally bundles one); a few pandoc tests need POSIX (a shell-script stand-in for pandoc, file permissions) or a non-root user; `test_paperqa_adapter.py` uses `pytest.importorskip("paperqa")`.
 
-`DOCINGEST_TEST_OCR_KEY` appears in `test_openai_ocr.py`, but the tests set and remove it themselves with `monkeypatch`; you never set it. In the same way, the `qa_env` fixture of `test_core_fixes.py` removes `DOCINGEST_LLM` and `OPENAI_API_KEY` for its tests, so values in your shell do not change their results.
+`DOCINGEST_TEST_OCR_KEY` appears in `test_openai_ocr.py`, but the tests set and remove it themselves with `monkeypatch`; you never set it. In the same way, the `qa_env` fixture of `test_core_fixes.py` removes `DOCINGEST_LLM`, `DOCINGEST_LLM_SERVE_MODEL` and `OPENAI_API_KEY` for its tests, and `test_scripts.py` runs `scripts/serve_llm.sh` without the `DOCINGEST_LLM*` variables or `PORT` of your shell, so values in your shell do not change their results.
 
 ### Adding an opt-in marker
 

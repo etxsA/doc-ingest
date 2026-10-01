@@ -251,7 +251,7 @@ Constructor (all keyword-only):
 | `detector` | `TypeDetector` | `detect(path) -> (SourceKind, mime)` |
 | `pdf` | `PdfReader` | opening PDFs; its `fingerprint` is part of the PDF cache key |
 | `ocr` | `OcrEngine` | transcribing scanned PDF pages and image frames; its `fingerprint` is part of the PDF and image cache keys, `dpi` sets the rasterization resolution, `model` goes into the manifest |
-| `images` | `ImageSource` | `frames(path)` for image inputs (a multi-page TIFF gives several frames) |
+| `images` | `ImageSource` | `frames(path)` for image inputs (a multi-page TIFF gives several frames); its `fingerprint` is part of the image cache key |
 | `converters` | `Mapping[SourceKind, DocumentConverter]` | one converter per non-PDF, non-image kind (`OFFICE`, `LATEX`, `TEXT`) |
 | `store` | `DocumentStore` | cache lookup, persistence, reading Markdown back |
 | `policy` | `RoutingPolicy` | thresholds for the per-page OCR decision (`[routing]` in `pipeline.toml`) |
@@ -508,14 +508,17 @@ A result is found again by two keys:
 | Kind | Inputs of `config_hash` |
 |---|---|
 | PDF | `PIPELINE_VERSION`, `"pdf"`, `ocr_all`, the `RoutingPolicy` as JSON, `PdfReader.fingerprint`, `OcrEngine.fingerprint` |
-| Image | `PIPELINE_VERSION`, `"image"`, `False`, `OcrEngine.fingerprint` |
+| Image | `PIPELINE_VERSION`, `"image"`, `False`, `ImageSource.fingerprint`, `OcrEngine.fingerprint` |
 | Office, LaTeX, text | `PIPELINE_VERSION`, the kind, `False`, the converter's `fingerprint` |
 
 Consequences:
 
-- Changing the OCR adapter, model or revision, profile, prompt, `dpi` or generation
-  settings changes the OCR fingerprint, so PDFs (including those whose pages all used the
-  text layer) and images are processed again. LaTeX, office and text results stay cached.
+- Changing the OCR adapter, model or revision, profile (or its `code_version`, bumped
+  when its clean-up code changes), prompt, `dpi` or generation settings changes the OCR
+  fingerprint, so PDFs (including those whose pages all used the text layer) and images
+  are processed again. LaTeX, office and text results stay cached.
+- Replacing the image source, or upgrading Pillow for the built-in one, re-processes
+  images only.
 - Changing a routing threshold in `[routing]` re-processes PDFs only.
 - Upgrading pandoc or changing `[latex] split_level` changes the LaTeX converter's
   fingerprint and re-processes LaTeX inputs only.
@@ -588,8 +591,10 @@ same adapters, for example routing, text-layer cleaning, Markdown rendering or m
 content. A change inside one adapter belongs in that adapter's `fingerprint` instead (the
 pandoc LaTeX converter has a `REVISION` constant for this), so only the affected
 documents are re-processed. `pyproject.toml` declares the same number in
-`[project] version` as a separate literal; nothing links the two, so update both
-together.
+`[project] version` as a separate literal, and `uv.lock` records it for the `docingest`
+package: update all three together (`uv lock` rewrites the lock).
+`test_pipeline_version_is_the_package_and_lockfile_version` in
+`tests/unit/test_core_fixes.py` fails when they differ.
 
 ### Side effects
 
@@ -1034,15 +1039,24 @@ share of the successful samples (`ok`), not of all samples:
    each candidate before scoring. A transcription that lands while the scorer runs
    therefore makes the stamp stale.
 3. Calls `suite.score(run_dir, names)` (default: every candidate recorded for the suite).
-4. Stores the stamp in each `SuiteScore.stamp` and merges the scores into
+4. Stores the stamp in each `SuiteScore.stamp` (`{"telemetry": ..., "scoring_options":
+   ...}`, the latter from `scoring_options(suite)`) and merges the scores into
    `scores/<suite>.json`, keeping other candidates' scores.
 
-`needs_scoring(run_dir, suite, *, scoring_version=None)` lists candidates whose saved
-score is missing or stale. A score is stale when:
+`scoring_options(suite)` returns the suite's optional `scoring_options` attribute (an
+empty dict without one): JSON-able settings applied at scoring time that are not part of
+the fingerprint. `SyntheticSuite` returns `{"report_separately": headline_exclusions}`
+(`[scoring.synthetic]`), `OlmOcrBenchSuite` the scorer settings that change the scores
+(`bootstrap_samples`, `confidence_level`, `skip_baseline`).
+
+`needs_scoring(run_dir, suite, *, scoring_version=None, scoring_options=None)` lists
+candidates whose saved score is missing or stale. A score is stale when:
 
 - it has errors, or fewer outputs than samples (the cause may be fixed now);
 - its primary metric has no mean;
 - `scoring_version` is given and differs from the score's (scored under older rules);
+- `scoring_options` is given and differs from the options in the score's stamp (a stamp
+  written before options were recorded counts as having none);
 - it has no telemetry stamp, or the stamp differs from the current telemetry.
 
 A suite's `fingerprint` covers what the model sees and the reference (data, rendering,
@@ -1103,7 +1117,7 @@ sequenceDiagram
     loop each suite recorded in the manifest
         CLI->>Suite: rebuild the suite from the settings in the manifest
         CLI->>Dir: refresh_outputs re-applies each profile clean-up
-        CLI->>Bench: needs_scoring(run_dir, suite, scoring_version)
+        CLI->>Bench: needs_scoring(run_dir, suite, scoring_version, scoring_options)
         Bench->>Dir: read scores/suite.json and current telemetry stamps
         Bench-->>CLI: candidates with a missing or stale score
         Note over CLI,Bench: with rescore set, every candidate is scored instead
@@ -1459,7 +1473,8 @@ To add a new use case (for example a re-indexing or export service):
 When changing `IngestService`:
 
 - If ingestion output changes for the same input and adapters, change
-  `PIPELINE_VERSION` (and `[project] version` in `pyproject.toml`). See
+  `PIPELINE_VERSION`, `[project] version` in `pyproject.toml` and the lock (a test
+  checks they match). See
   [Versioning](#versioning-pipeline_version).
 - Keep the cache key minimal: add to `config_hash` only what changes the output of that
   kind. Anything added there re-processes documents when it changes.

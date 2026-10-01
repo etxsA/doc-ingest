@@ -119,7 +119,7 @@ The official olmOCR-Bench scorer runs in a separate virtual environment, `.bench
 - **Postponed annotations.** Every module except the package `__init__.py` files and `domain/errors.py` puts `from __future__ import annotations` right after the module docstring. Do the same in new modules.
 - **Relative imports inside the package** (`from ...domain.models import PageMethod`). Tests import `docingest.*` absolutely. They import the helpers as `from fakes import ...` and `from builders import ...`, because `tests/conftest.py` puts `tests/` on `sys.path`.
 - **Heavy optional libraries are imported lazily**, inside the function that needs them. Examples: `mlx_vlm` in `MlxVlmOcr._ensure_loaded`, `docling` in `DoclingConverter.convert`, and every adapter module inside its factory in `bootstrap.py`. Ruff's `PLC0415` is disabled for this reason.
-- **Value objects.** Types that cross a port are frozen dataclasses (`OcrResult`, `Conversion`, `Segment`, `StoredDocument`, `SourceRecord`, `FetchedSource`, `Sample`, `CandidateSpec`, `Estimate`). The one exception is `SuiteScore`, a plain dataclass, because `score_run` sets its `stamp` after scoring. Domain entities and configuration are pydantic models. The section models in `config.py` (`AdapterSelection`, `OcrConfig`, `QaConfig`, `LatexConfig`, `ArxivConfig`) use `ConfigDict(extra="forbid")`, so a mistyped key is a validation error. Two exceptions: `AppConfig` itself keeps unknown top-level tables for plugins (`extra="allow"`), and `[routing]` is the domain's `RoutingPolicy`, which uses pydantic's default and ignores unknown keys.
+- **Value objects.** Types that cross a port are frozen dataclasses (`OcrResult`, `Conversion`, `Segment`, `StoredDocument`, `SourceRecord`, `FetchedSource`, `Sample`, `CandidateSpec`, `Estimate`). The one exception is `SuiteScore`, a plain dataclass, because `score_run` sets its `stamp` after scoring. Domain entities and configuration are pydantic models. The section models in `config.py` (`AdapterSelection`, `OcrConfig`, `QaConfig`, `LatexConfig`, `ArxivConfig`) use `ConfigDict(extra="forbid")`, so a mistyped key is a validation error. So does `[routing]`, the domain's `RoutingPolicy`. The one exception is `AppConfig` itself, which keeps unknown top-level tables for plugins (`extra="allow"`).
 - **Services take their ports as keyword-only constructor arguments**: `IngestService(*, detector, pdf, ocr, images, converters, store, policy, log)`, `CrawlService(*, crawler, ingest, raw_dir, log)` and `AskService(*, store, qa)`. `BenchmarkRunner` is the exception: its first argument is a positional engine factory, `(CandidateSpec) -> OcrEngine`.
 - **Everything is pinned.** Model repositories carry a commit sha (`revision`), benchmark datasets carry a revision, and sample inputs are checked against `scripts/samples.sha256`.
 - **Settings that change output are part of a fingerprint** (section 8.3). The header of `config/pipeline.toml` states this rule for users.
@@ -217,13 +217,14 @@ Expected, reportable failures are domain exceptions from `src/docingest/domain/e
 |---|---|---|---|
 | `DocingestError` | `Exception` | Base class for expected, reportable failures | (base only) |
 | `UnsupportedInputError` | `DocingestError`, `ValueError` | The input type is not recognized | `MagicBytesDetector.detect`; `IngestService` when no converter is configured for a kind |
+| `InvalidQueryError` | `DocingestError`, `ValueError` | A crawler query that cannot be sent (empty, or `ids:` without ids) | `SourceCrawler.search` (`ArxivCrawler`) |
 | `DocumentOpenError` | `DocingestError` | The file exists but cannot be opened (corrupt, encrypted, truncated) | `PdfReader.open`, `ImageSource.frames` |
 | `ConversionError` | `DocingestError` | A converter could not produce text | `DoclingConverter.convert`, `PandocLatexConverter.convert` |
 | `SourceUnavailableError` | `DocingestError` | A remote source has no downloadable content for a record | `SourceCrawler.fetch`. The subclasses `HttpStatusError` and `RetriesExhaustedError` live in `adapters/sources/http.py`. |
 | `OcrError` | `DocingestError` | The OCR engine could not transcribe a page | `OcrServerError` in `adapters/ocr/openai_compat.py` (with `.status`) |
 | `RateLimitedError` | `SourceUnavailableError` | The source asked for a pause (429 or `Retry-After`) that the crawler will not wait out. It carries `retry_after_s`. | `PoliteClient` in `adapters/sources/http.py`, the HTTP client of `ArxivCrawler`. `CrawlService` stops the crawl on it. |
 
-When a port has a specific error, the Protocol method's docstring names it. For example, `DocumentConverter.convert` says "Raise ``ConversionError`` when the document cannot be converted". `TypeDetector.detect`, `PdfReader.open`, `ImageSource.frames` and `SourceCrawler.fetch` do the same. `OcrEngine`, `DocumentStore`, `QuestionAnswerer` and `BenchmarkSuite` name no error.
+When a port has a specific error, the Protocol method's docstring names it. For example, `DocumentConverter.convert` says "Raise ``ConversionError`` when the document cannot be converted". `TypeDetector.detect`, `PdfReader.open`, `ImageSource.frames`, `SourceCrawler.search` and `SourceCrawler.fetch` do the same. `OcrEngine`, `DocumentStore`, `QuestionAnswerer` and `BenchmarkSuite` name no error.
 
 ### Rules
 
@@ -243,7 +244,7 @@ When a port has a specific error, the Protocol method's docstring names it. For 
 ### What the user sees
 
 - `docingest ingest` and `docingest crawl` print a "Failed inputs" table and exit with status 1 if any input failed. The table shows `ExceptionType: message` for each failure.
-- typer reports usage errors with exit status 2: an option out of range (such as `--max-pages 0`), a `typer.BadParameter` raised by a command, or a `--config` path of the main CLI that does not exist (`tests/integration/test_cli.py` checks the last case).
+- typer reports usage errors with exit status 2: an option out of range (such as `--max-pages 0`), a `typer.BadParameter` raised by a command, or a `--config` path that does not exist, for the pipeline commands and the `bench` sub-commands alike (`tests/integration/test_cli.py` checks the last case).
 - `docingest bench run` exits with status 2 when a run directory was created with different settings (`RunMismatchError`).
 
 ---
@@ -286,9 +287,11 @@ flowchart TD
     CFG --> SETS["Settings read by the factories: ocr, latex, arxiv, qa, output_dir, plugin tables"]
     CFG --> CONT["Container(cfg, log, overrides)"]
     CONT --> ADP["Container.adapter(port)"]
-    ADP --> OV{"Port already in overrides?"}
-    OV -->|"yes: test fake or already built"| INST["Adapter instance, kept for the lifetime of the Container"]
-    OV -->|"no"| BUILD["build(port, cfg) reads the selected name"]
+    ADP --> OV{"Port in overrides (a copy of the caller's dict)?"}
+    OV -->|"yes: test fake"| INST["Adapter instance, kept for the lifetime of the Container"]
+    OV -->|"no"| BLT{"Already built by this Container?"}
+    BLT -->|"yes"| INST
+    BLT -->|"no"| BUILD["build(port, cfg) reads the selected name"]
     SEL --> BUILD
     BUILD --> BI{"Name is a built-in in REGISTRY?"}
     BI -->|"yes, built-ins win a name clash"| FAC["Built-in factory, which imports its adapter module lazily"]
@@ -326,7 +329,7 @@ This guide adds a working example, a `text` converter that splits Markdown into 
 | `detector` | `TypeDetector` (`detection.py`) | `detect(path) -> tuple[SourceKind, str]` (kind, MIME) | no | `UnsupportedInputError` |
 | `pdf` | `PdfReader`, `PdfDocument`, `PdfPage` (`pdf.py`) | `fingerprint`; `open(path) -> PdfDocument`; the document has `title`, `__len__`, `page(i)`, `close()`; the page has `signals() -> (PageSignals, str)` and `render(dpi) -> Image` | yes, PDF | `DocumentOpenError` |
 | `ocr` | `OcrEngine` (`ocr.py`) | `fingerprint`, `model: ModelRef`, `dpi: int`, `transcribe(image) -> OcrResult` | yes, PDF and image | `OcrError` (convention) |
-| `images` | `ImageSource` (`images.py`) | `frames(path) -> list[Image]` | no | `DocumentOpenError` |
+| `images` | `ImageSource` (`images.py`) | `fingerprint`, `frames(path) -> list[Image]` | yes, image | `DocumentOpenError` |
 | `office`, `latex`, `text` | `DocumentConverter` (`converters.py`) | `fingerprint`, `convert(path) -> Conversion` | yes, for its kind | `ConversionError` |
 | `store` | `DocumentStore` (`store.py`) | `lookup(doc_id, config_hash, *, max_pages, ocr_all)`, `save(manifest, markdown, *, degraded=False)`, `markdown(doc)`, `corpus()` | no | (none named) |
 | `qa` | `QuestionAnswerer` (`qa.py`) | `async ask(question, documents, warn) -> str` | no, QA never changes ingestion output | (none named) |
@@ -387,7 +390,7 @@ The cache key of a document is computed in `IngestService.config_hash`:
 ```text
 sha256(json([PIPELINE_VERSION, kind, ocr_all, *parts]))[:12]
   PDF:          parts = [RoutingPolicy as JSON, PdfReader.fingerprint, OcrEngine.fingerprint]
-  IMAGE:        parts = [OcrEngine.fingerprint]
+  IMAGE:        parts = [ImageSource.fingerprint, OcrEngine.fingerprint]
   other kinds:  parts = [the converter's fingerprint]
 ```
 
@@ -396,7 +399,7 @@ Rules for a `fingerprint` string:
 - **Include everything that can change the output:** the adapter name, the library version (`importlib.metadata.version(...)`), a `REVISION` constant for your own logic, and every output-relevant setting. `MlxVlmOcr` and `OpenAICompatibleOcr` serialize a sorted JSON dict for this purpose.
 - **Exclude what cannot change the text.** `OpenAICompatibleOcr` leaves out its timeout, retries and API key.
 - **Keep it deterministic.** Two instances built with the same settings must have equal fingerprints. The OCR contract test `test_fingerprint_is_stable` checks this.
-- **Detectors, image sources and stores have no fingerprint** and are not in the key. If you change what they produce, bump `PIPELINE_VERSION` in `src/docingest/application/ingest.py`. That constant is part of every key, and it is also `docingest.__version__`. The package version in `pyproject.toml` is kept equal to it.
+- **Detectors and stores have no fingerprint** and are not in the key: the detector's only output that matters is the kind, which is in the key, and the store does not change what is written. If you change what they produce, bump `PIPELINE_VERSION` in `src/docingest/application/ingest.py`. That constant is part of every key, and it is also `docingest.__version__`. The package version in `pyproject.toml` (and the `docingest` entry of `uv.lock`, rewritten by `uv lock`) must equal it: `test_pipeline_version_is_the_package_and_lockfile_version` fails otherwise.
 
 ### 8.4 Register it
 
@@ -467,7 +470,7 @@ def factory(cfg: AppConfig) -> MarkdownSectionsConverter:
   - saving the same run again replaces it in place.
 
   `InMemoryStore` in `tests/fakes.py` is the reference implementation.
-- **`crawler`.** Raise `RateLimitedError` (with `retry_after_s` when known) when the source asks for a pause. Raise another `SourceUnavailableError` for a single record without content.
+- **`crawler`.** Raise `RateLimitedError` (with `retry_after_s` when known) when the source asks for a pause. Raise another `SourceUnavailableError` for a single record without content. From `search()`, raise only `DocingestError`s for expected failures (`InvalidQueryError` for a query that cannot be sent): `CrawlService` reports those, and anything else escapes as a traceback.
 - **Converters.** Set `degraded=True` on a `Conversion` only when a fallback ran because of the environment, and put a human-readable explanation in `warnings`.
 
 ### 8.6 Select it
@@ -660,7 +663,7 @@ Steps:
 
 1. Take the prompt, image size and generation settings from the model card or the official repository. Note the source in a comment, as the existing comment above `PROFILES` does.
 2. Add a dedicated `postprocess` function if the model wraps or marks up its output (see `_olmocr` and `_nanonets`).
-3. Add the profile name to the list in the `profile = ...` comment in `config/pipeline.toml`, and to [config/README.md](config/README.md) and [src/docingest/adapters/ocr/README.md](src/docingest/adapters/ocr/README.md).
+3. Add the profile name to the list in the `profile = ...` comment in `config/pipeline.toml`, and to [config/README.md](config/README.md) and [src/docingest/adapters/ocr/README.md](src/docingest/adapters/ocr/README.md). Pin it in `PINNED` of `tests/unit/test_ocr_profiles.py` (the failing test prints the hash).
 4. Test the clean-up and the retry behaviour. `tests/unit/test_bench_fixes.py` has examples: `test_olmocr_front_matter_is_stripped_in_every_observed_shape` checks a `postprocess` function, and the ladder tests (such as `test_every_profile_retries_empty_output_and_keeps_the_best_text`) install stand-in `mlx` and `mlx_vlm` modules whose `generate` replays prepared results, so no model is loaded.
 5. Try the model on a page where the truth is known:
 
@@ -674,7 +677,7 @@ Steps:
 ### Cache effects of profile changes
 
 - **Invalidates cached OCR output automatically.** Besides the model, the adapter fingerprints include the profile's name, `prompt`, `max_side`, `chat_kwargs`, `prompt_first` and `ladder`, whether a `valid` predicate is set, the resolved `max_tokens` and `repetition_penalty`, plus the `dpi` and `temperature` settings.
-- **Does not invalidate it.** The `postprocess` function itself is not in the fingerprint. After changing an existing profile's clean-up, bump `PIPELINE_VERSION`, or tell users to re-run with `--force`.
+- **Invalidates it through `code_version`.** The code of `postprocess` and `valid` is not in the fingerprint; the profile's `code_version` is. After an edit that can change what they return, bump that profile's `code_version` in `profiles.py`: cached OCR output of that profile is then redone, and nothing else. `tests/unit/test_ocr_profiles.py` pins a hash of each built-in profile's clean-up code (the functions and the module-level helpers and patterns they reach), so an edit fails there until the hash is pinned again, with or without a bump.
 - **Benchmark runs are handled separately.** `docingest bench score` and `bench report` re-apply each candidate's current clean-up to the stored outputs (`refresh_outputs`). They back up the originals under `raw_outputs/` and list every rewrite in `postprocess_log.json`, so a finished run does not need to be transcribed again.
 
 Adding a profile or a candidate does not change which model the pipeline uses by default. The benchmark compares models and does not choose one; see [docs/benchmark.md](docs/benchmark.md).
@@ -731,6 +734,7 @@ A suite implements `BenchmarkSuite`:
 - **`name`:** the suite name.
 - **`fingerprint`:** a hash of what the model sees and what it is scored against: data, rendering and references. A change makes `bench run` refuse the existing run directory (`RunMismatchError`). Scoring rules are *not* part of it in the built-in suites (`SyntheticSuite`, `OlmOcrBenchSuite`), even though the comment on the Protocol attribute still mentions scoring settings; they are versioned by `scoring_version` instead.
 - **`scoring_version`:** an optional `int`, bumped when `score()` changes. `bench report` then re-scores finished runs instead of transcribing them again.
+- **`scoring_options`:** an optional JSON-able `dict` of scoring-time settings that are not in the fingerprint (such as `[scoring.synthetic] report_separately`). `score_run` stamps it on every score, and `bench report` re-scores a candidate whose stamp holds other options.
 - **`samples()`:** stable ids that are unique within the suite; images produced lazily through `load_image`; the `reference` text when scored against one; a `category` for the breakdown.
 - **`output_path(run_dir, candidate, sample)`:** the file inside `run_dir` where the runner writes each transcription. The suite owns this layout because official scorers expect exact file names.
 - **`score(run_dir, candidates)`:** returns one `SuiteScore` per candidate.
@@ -988,7 +992,7 @@ Copy this list into the pull-request description and tick what applies.
 - [ ] New behaviour has tests at the right level. Model and network tests are marked and opt-in. No test reads from `data/` or the network by default.
 - [ ] Coverage stays at or above 85%.
 - [ ] No import-linter contract was weakened. Changes to `[tool.importlinter]`, such as adding a new adapter subpackage to the `independence` list, are explained.
-- [ ] Every setting that changes output is in the relevant adapter's `fingerprint`. If outputs change without a fingerprint change, `PIPELINE_VERSION` (and the package version in `pyproject.toml`) is bumped.
+- [ ] Every setting that changes output is in the relevant adapter's `fingerprint`. An edit to an OCR profile's clean-up that can change its results bumps that profile's `code_version`. If outputs change without a fingerprint change, `PIPELINE_VERSION` (and the package version in `pyproject.toml` and `uv.lock`) is bumped.
 - [ ] Library exceptions are translated into domain errors at the adapter boundary, with `from e` or `from None`.
 - [ ] New configuration keys have defaults and are documented in `config/pipeline.toml` comments and in [config/README.md](config/README.md). Models are pinned by commit sha. Secrets are referenced only through the name of an environment variable.
 - [ ] New or changed dependencies are in `pyproject.toml` (an extra if they are optional and heavy) and `uv.lock` is updated in the same commit.

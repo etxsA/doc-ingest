@@ -177,6 +177,7 @@ A profile captures how a model's authors run it: the prompt, the input size, the
 | `prompt_first` | `bool` | `False` | Put the prompt text before the image in the user turn (the order olmOCR was trained with). Otherwise the image comes first. |
 | `ladder` | `tuple[tuple[float, float \| None], ...] \| None` | `None` | The profile's own retry ladder of `(temperature, repetition_penalty)` pairs. `None` means the default ladder. |
 | `valid` | `Callable[[str], bool] \| None` | `None` | Extra acceptance test on the raw output. A failing attempt is retried. |
+| `code_version` | `int` | `1` | Version of the profile's `postprocess` and `valid` code, recorded in the engine fingerprint. Bump it when an edit can change what they return (see [Fingerprints and caching](#fingerprints-and-caching)). |
 
 ### Built-in profiles
 
@@ -476,13 +477,13 @@ The engine's `fingerprint` enters the cache key (`config_hash`) of every PDF and
 
 | Engine | Fingerprint prefix | JSON keys included |
 | --- | --- | --- |
-| `MlxVlmOcr` | `mlx-vlm ` | `v` (installed mlx-vlm version), `model` (repo_id and revision), `profile`, `prompt`, `max_side`, `chat_kwargs`, `prompt_first`, `ladder`, `validated` (whether the profile has `valid`), `dpi`, `max_tokens`, `temperature`, `repetition_penalty` |
-| `OpenAICompatibleOcr` | `openai-compatible ` | `base_url`, `served_model`, `model` (`repo_id@revision`), `profile`, `prompt`, `max_side`, `chat_kwargs`, `prompt_first`, `ladder`, `validated`, `dpi`, `max_tokens`, `temperature`, `repetition_penalty`. Not `timeout_s`, `retries` or `api_key_env` |
+| `MlxVlmOcr` | `mlx-vlm ` | `v` (installed mlx-vlm version), `model` (repo_id and revision), `profile`, `profile_code` (the profile's `code_version`), `prompt`, `max_side`, `chat_kwargs`, `prompt_first`, `ladder`, `validated` (whether the profile has `valid`), `dpi`, `max_tokens`, `temperature`, `repetition_penalty` |
+| `OpenAICompatibleOcr` | `openai-compatible ` | `base_url`, `served_model`, `model` (`repo_id@revision`), `profile`, `profile_code`, `prompt`, `max_side`, `chat_kwargs`, `prompt_first`, `ladder`, `validated`, `dpi`, `max_tokens`, `temperature`, `repetition_penalty`. Not `timeout_s`, `retries` or `api_key_env` |
 
 Two consequences to keep in mind:
 
 - Moving an OCR server to another `base_url` or renaming `served_model` changes the fingerprint, so documents are OCRed again on the next run.
-- The fingerprint records the profile's name, not the code of its `postprocess` or `valid` functions. Editing a clean-up function does not change the cache key by itself. To make the next `ingest` re-run OCR after such a change, bump `PIPELINE_VERSION` in `application/ingest.py` (it is part of every cache key, so this invalidates every cached document) or ingest with `--force`. For benchmark runs, `docingest bench score` and `docingest bench report` re-apply each candidate's current clean-up to its stored outputs (`refresh_outputs()` in `entrypoints/bench_cli.py`), keeping the originals under `raw_outputs/`.
+- The fingerprint records the profile's name and `code_version`, not the code of its `postprocess` or `valid` functions. The rule: an edit that can change what those functions return bumps that profile's `code_version` in `profiles.py`, so the next `ingest` re-runs OCR for documents cached with that profile, and for no others. `tests/unit/test_ocr_profiles.py` enforces it: it pins each built-in profile's `code_version` with a hash of its clean-up code (the functions plus the module-level helpers, patterns and constants they reach), so any edit fails there until the new hash is pinned, with a bump if the results can change and without one for a comment or a rename. For benchmark runs, `docingest bench score` and `docingest bench report` re-apply each candidate's current clean-up to its stored outputs (`refresh_outputs()` in `entrypoints/bench_cli.py`), keeping the originals under `raw_outputs/`.
 
 ## Adding a model, a profile or an engine
 
@@ -515,7 +516,8 @@ No code change is needed.
    ```
 
 4. Select it with `profile = "my-model"` in `[ocr]` or in a benchmark candidate. Update the list of profile names in the `profile` comment of `config/pipeline.toml`.
-5. Add tests next to the existing ones: clean-up cases in `tests/integration/test_synthetic_and_images.py` (`test_profiles_postprocess`) or `tests/unit/test_bench_fixes.py`, and a ladder test with the stubbed mlx-vlm used there (`_stub_mlx`) if the profile has its own `ladder` or `valid`.
+5. Pin the profile in `PINNED` of `tests/unit/test_ocr_profiles.py` (`test_every_built_in_profile_is_pinned` fails until you do; the failure message of `test_profile_code_changes_come_with_a_decision` prints the hash to pin).
+6. Add tests next to the existing ones: clean-up cases in `tests/integration/test_synthetic_and_images.py` (`test_profiles_postprocess`) or `tests/unit/test_bench_fixes.py`, and a ladder test with the stubbed mlx-vlm used there (`_stub_mlx`) if the profile has its own `ladder` or `valid`.
 
 ### A new engine (another runtime)
 
@@ -558,6 +560,7 @@ No code change is needed.
                {
                    "model": f"{model.repo_id}@{model.revision}",
                    "profile": profile.name,
+                   "profile_code": profile.code_version,
                    "prompt": profile.prompt,
                    "max_side": profile.max_side,
                    "max_tokens": profile.max_tokens,
