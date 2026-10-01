@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from fakes import FakeOcr
 
@@ -21,6 +23,19 @@ def test_overrides_replace_any_port(cfg):
     fake = FakeOcr()
     container = Container(cfg, log=lambda _: None, overrides={"ocr": fake})
     assert container.ingest.ocr is fake
+
+
+def test_the_callers_overrides_are_not_filled_with_built_adapters(cfg):
+    # Old: the dict was the adapter cache, so a second Container given the same dict got
+    # the first one's adapters, built from the first one's config.
+    overrides = {"ocr": FakeOcr()}
+    first = Container(cfg, log=lambda _: None, overrides=overrides)
+    assert first.adapter("store").root == Path(cfg.output_dir)
+    assert list(overrides) == ["ocr"]
+    other = cfg.model_copy(update={"output_dir": str(Path(cfg.output_dir) / "other")})
+    second = Container(other, log=lambda _: None, overrides=overrides)
+    assert second.adapter("store").root == Path(other.output_dir)
+    assert second.adapter("ocr") is first.adapter("ocr") is overrides["ocr"]
 
 
 def test_entry_point_plugins_are_discovered(monkeypatch):
