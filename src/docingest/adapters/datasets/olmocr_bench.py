@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 
 import pypdfium2 as pdfium
 from PIL import Image
@@ -321,6 +322,19 @@ class OlmOcrBenchSuite:
         blob = json.dumps(definition, sort_keys=True).encode()
         self.fingerprint = hashlib.sha256(blob).hexdigest()
         self._samples: list[Sample] | None = None
+
+    @property
+    def scoring_options(self) -> dict[str, Any]:
+        """Scorer settings that change the scores (not paths or the timeout), stamped on
+        every score: changing one makes saved scores stale."""
+        sc = self.scorer
+        if sc is None:
+            return {}
+        return {
+            "bootstrap_samples": sc.bootstrap_samples,
+            "confidence_level": sc.confidence_level,
+            "skip_baseline": sc.skip_baseline,
+        }
 
     def _rows(self) -> dict[str, list[dict]]:
         rows = {}

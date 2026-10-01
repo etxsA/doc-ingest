@@ -19,6 +19,7 @@ from dataclasses import asdict
 from functools import partial
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pypdfium2 as pdfium
@@ -182,6 +183,11 @@ class SyntheticSuite:
     # are scored and reported separately, not dropped, and never enter headline metrics
     # or paired tests. Set from [scoring.synthetic] (not part of the suite fingerprint).
     headline_exclusions: dict[str, str] = {}  # noqa: RUF012 - replaced per instance
+
+    @property
+    def scoring_options(self) -> dict[str, Any]:
+        """Stamped on every score: changing [scoring.synthetic] makes saved scores stale."""
+        return {"report_separately": dict(self.headline_exclusions)}
 
     def __init__(
         self,
