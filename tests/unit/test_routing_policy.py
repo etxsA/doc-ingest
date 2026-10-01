@@ -32,3 +32,13 @@ def test_force_ocr_records_reason():
 def test_policy_thresholds_are_configurable():
     lenient = RoutingPolicy(min_chars=0, min_alpha_ratio=0)
     assert not decide(PageSignals(n_chars=0), lenient).needs_ocr
+
+
+def test_an_unknown_routing_key_is_rejected():
+    # Old: a misspelt [routing] key was dropped silently and the default threshold applied.
+    from pydantic import ValidationError
+
+    from docingest.config import AppConfig
+
+    with pytest.raises(ValidationError, match="min_char"):
+        AppConfig.model_validate({"routing": {"min_char": 0}})

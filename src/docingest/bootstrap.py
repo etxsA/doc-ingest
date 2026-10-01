@@ -164,12 +164,15 @@ class Container:
     def __init__(self, cfg: AppConfig, log: Log = print, overrides: dict[str, Any] | None = None):
         self.cfg = cfg
         self.log = log
-        self._overrides = overrides or {}  # tests / notebooks: {"ocr": FakeOcr(), ...}
+        self._overrides = dict(overrides or {})  # tests / notebooks: {"ocr": FakeOcr(), ...}
+        self._built: dict[str, Any] = {}
 
     def adapter(self, port: str) -> Any:
-        if port not in self._overrides:
-            self._overrides[port] = build(port, self.cfg)
-        return self._overrides[port]
+        if port in self._overrides:
+            return self._overrides[port]
+        if port not in self._built:
+            self._built[port] = build(port, self.cfg)
+        return self._built[port]
 
     @cached_property
     def ingest(self) -> IngestService:
