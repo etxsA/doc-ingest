@@ -24,7 +24,10 @@ class FetchedSource:
 
 @runtime_checkable
 class SourceCrawler(Protocol):
-    def search(self, query: str, limit: int) -> list[SourceRecord]: ...
+    def search(self, query: str, limit: int) -> list[SourceRecord]:
+        """Raise a ``DocingestError`` (e.g. ``InvalidQueryError``, ``SourceUnavailableError``)
+        for expected failures: ``CrawlService`` reports those instead of raising."""
+        ...
 
     def fetch(self, record: SourceRecord, dest_dir: Path) -> FetchedSource:
         """Download the best available format; raise ``SourceUnavailableError`` if none."""

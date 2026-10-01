@@ -39,7 +39,7 @@ from docingest.adapters.sources.http import (
 )
 from docingest.application.crawl import CrawlService
 from docingest.config import ArxivConfig
-from docingest.domain.errors import SourceUnavailableError
+from docingest.domain.errors import InvalidQueryError, SourceUnavailableError
 from docingest.ports import SourceCrawler
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "arxiv"
@@ -240,7 +240,7 @@ def test_query_params():
         "id_list": "1706.03762,math/0211159",
     }
     for bad in ("", "  ", "ids:", "ids: , "):
-        with pytest.raises(ValueError, match=r"arXiv"):
+        with pytest.raises(InvalidQueryError, match=r"arXiv"):
             query_params(bad)
 
 
