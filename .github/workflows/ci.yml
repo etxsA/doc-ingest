@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# The docingest package lives in packages/docingest; its commands run from there.
+defaults:
+  run:
+    working-directory: packages/docingest
+
 jobs:
   linux:
     # Core + dev only: no mlx (Apple Silicon), no PaperQA2 / Docling extras.
