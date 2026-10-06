@@ -4,15 +4,18 @@ on:
   push:
   pull_request:
 
-# The docingest package lives in packages/docingest; its commands run from there.
-defaults:
-  run:
-    working-directory: packages/docingest
-
+# One job per package and lane. Each package runs its own gates from its folder;
+# uv installs into the workspace's shared environment from the one uv.lock.
 jobs:
   linux:
     # Core + dev only: no mlx (Apple Silicon), no PaperQA2 / Docling extras.
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [docingest]
+    defaults:
+      run:
+        working-directory: packages/${{ matrix.package }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.2.0
@@ -27,6 +30,12 @@ jobs:
   macos:
     # Everything installed; model / network tests stay opt-in.
     runs-on: macos-latest
+    strategy:
+      matrix:
+        package: [docingest]
+    defaults:
+      run:
+        working-directory: packages/${{ matrix.package }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.2.0
