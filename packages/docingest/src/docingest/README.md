@@ -179,7 +179,7 @@ Behaviour worth knowing:
 
 ## Using docingest as a library
 
-Install the project with uv from the repository root. The base install covers born-digital PDFs, LaTeX sources, Markdown and text, and OCR through an OpenAI-compatible server. Extras add the rest:
+Install the project with uv from the package folder (`packages/docingest`); `uv sync` at the repository root installs every package of the workspace. The base install covers born-digital PDFs, LaTeX sources, Markdown and text, and OCR through an OpenAI-compatible server. Extras add the rest:
 
 | Extra | Needed for |
 |---|---|
@@ -201,7 +201,7 @@ from pathlib import Path
 
 from docingest.config import AppConfig, load_config
 
-# config/pipeline.toml at the repository root, or all defaults if that file is absent
+# config/pipeline.toml in the package folder, or all defaults if that file is absent
 cfg = load_config()
 cfg = load_config(Path("config/examples/remote-ocr.toml"))  # an explicit path must exist
 

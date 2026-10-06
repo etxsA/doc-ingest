@@ -231,7 +231,7 @@ Coverage is measured only when pytest runs with `--cov` (`scripts/check.sh` and 
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs two jobs on every push and pull request:
+`.github/workflows/ci.yml` (at the repository root) runs two jobs on every push and pull request, from this package's folder:
 
 | Job | Installed | Test command | Consequence for tests |
 |---|---|---|---|

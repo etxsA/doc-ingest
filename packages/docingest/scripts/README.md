@@ -2,7 +2,7 @@
 
 Helper scripts for development, sample data, the local QA server and the OCR benchmark documentation. None of them are part of the `docingest` package: the package and its CLI live in [`src/docingest/`](../src/docingest/README.md), and these scripts either call that CLI, call standard tools (uv, curl, shasum, ruff, import-linter, pyright, pytest, Playwright), or post-process benchmark results.
 
-All shell scripts start with `cd "$(dirname "$0")/.."`, so they can be run from any directory and always operate on the repository root. `bench_docs.py` resolves the repository root from its own location in the same way. `bench_charts.py` takes its input and output directories as arguments, relative to the current directory.
+All shell scripts start with `cd "$(dirname "$0")/.."`, so they can be run from any directory and always operate on the package folder (`packages/docingest`). `bench_docs.py` resolves the package folder from its own location in the same way. `bench_charts.py` takes its input and output directories as arguments, relative to the current directory.
 
 ## Overview
 
@@ -87,7 +87,7 @@ flowchart LR
 
 **Side effects**: `uv run` installs any package from the lock file that is missing in `.venv` before running the command. The tools write their usual caches and the coverage data file (see the overview table). No source file is modified.
 
-**Relation to CI**: `.github/workflows/ci.yml` runs the same gates split over two jobs. The Linux job (core and dev dependencies, no extras) runs ruff, the format check, import-linter and `pytest -q --cov`. The macOS job (all extras) runs pyright and `pytest -q --cov`. Tests marked `model` or `network` stay skipped in both jobs. See [tests/README.md](../tests/README.md) for the markers.
+**Relation to CI**: `.github/workflows/ci.yml` (at the repository root) runs the same gates from this folder, split over two jobs. The Linux job (core and dev dependencies, no extras) runs ruff, the format check, import-linter and `pytest -q --cov`. The macOS job (all extras) runs pyright and `pytest -q --cov`. Tests marked `model` or `network` stay skipped in both jobs. See [tests/README.md](../tests/README.md) for the markers.
 
 **Not covered**: `scripts/` itself is not linted by `check.sh`. When you change a Python script here, run `uv run ruff check scripts` and `uv run ruff format --check scripts` by hand (both pass on the current scripts).
 
@@ -201,7 +201,7 @@ The script is idempotent: running it again reuses the existing environment.
 
 **Steps**
 
-1. Creates a Python 3.12 virtual environment with `uv venv --allow-existing` at `$DOCINGEST_BENCH_VENV`, or at `.bench-venv/` in the repository root when that variable is unset.
+1. Creates a Python 3.12 virtual environment with `uv venv --allow-existing` at `$DOCINGEST_BENCH_VENV`, or at `.bench-venv/` in the package folder when that variable is unset.
 2. Installs `olmocr==0.4.27` with `--no-deps`.
 3. Installs the pinned import closure from `scripts/bench_scorer_requirements.txt`, also with `--no-deps`.
 4. Installs Playwright's headless Chromium shell into `<venv>/pw`. The math tests render equations with KaTeX in this browser. The script's own comment estimates about 200 MB on the first run.
@@ -273,7 +273,7 @@ uv run python scripts/bench_docs.py
 
 No arguments. Use `uv run`: some sections import `docingest.application.benchmark` (`load_scores`, `compare`).
 
-**Inputs** (fixed paths under the repository root; `runs_dir` from `config/benchmark.toml` is not consulted)
+**Inputs** (fixed paths under the package folder; `runs_dir` from `config/benchmark.toml` is not consulted)
 
 | Path | Required | Used for |
 |---|---|---|

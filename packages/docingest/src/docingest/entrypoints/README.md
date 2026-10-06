@@ -22,7 +22,7 @@ Contents:
 
 ## Running the CLI
 
-The package is installed into the project virtual environment by `uv sync`. Run commands from the **repository root**, because relative paths in the configuration files (`data/normalized`, `data/raw`, `data/bench/...`) resolve against the working directory.
+The package is installed into the project virtual environment by `uv sync`. Run commands from the **package folder** (`packages/docingest`), because relative paths in the configuration files (`data/normalized`, `data/raw`, `data/bench/...`) resolve against the working directory.
 
 ```bash
 uv sync --locked --all-extras     # once; extras: mlx (in-process OCR on Apple Silicon), qa (PaperQA2), office (Docling)

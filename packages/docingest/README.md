@@ -302,7 +302,7 @@ The PaperQA2 index is built in memory on every `ask` call; nothing from it is wr
 
 ### Where files go on disk
 
-All paths are relative to the working directory (run from the repository root). The diagram shows where a crawl, an ingest and an ask read and write, and how the store chooses between the canonical, variant and degraded locations.
+All paths are relative to the working directory (run from the package folder, `packages/docingest`). The diagram shows where a crawl, an ingest and an ask read and write, and how the store chooses between the canonical, variant and degraded locations.
 
 ```mermaid
 flowchart TD
@@ -430,8 +430,8 @@ Model weights are downloaded into the Hugging Face cache the first time they are
 1. Clone and install. The extras are `mlx` (Apple Silicon OCR), `qa` (PaperQA2) and `office` (Docling).
 
    ```bash
-   git clone https://github.com/etxsA/doc-ingest.git
-   cd doc-ingest
+   git clone https://github.com/etxsA/research-engine.git
+   cd research-engine/packages/docingest
    uv sync --locked --all-extras
    ```
 
@@ -479,7 +479,7 @@ Results are in `data/normalized/<sha256[:16]>/document.md` and `manifest.json`; 
 
 ## Using docingest from Python
 
-The CLI is a thin layer over the use cases, which are wired by `Container` in [`bootstrap.py`](src/docingest/README.md). The same objects can be used directly. Run from the repository root, since the paths in the configuration are relative.
+The CLI is a thin layer over the use cases, which are wired by `Container` in [`bootstrap.py`](src/docingest/README.md). The same objects can be used directly. Run from the package folder (`packages/docingest`), since the paths in the configuration are relative.
 
 ```python
 from pathlib import Path
@@ -528,7 +528,7 @@ Every `bench` command takes `--config/-c` pointing at a benchmark file (default:
 
 ## Configuration overview
 
-The pipeline reads one TOML file, [`config/pipeline.toml`](config/pipeline.toml) by default. A file given with `--config` replaces it entirely (it is not merged); sections it omits take the defaults in [`config.py`](src/docingest/README.md). Unknown keys in `[adapters]`, `[routing]`, `[ocr]`, `[qa]`, `[latex]` and `[arxiv]` are rejected, and unknown top-level sections are kept so that plugins can read their own settings. Relative paths inside the file (`output_dir`, `raw_dir`) are resolved against the working directory, so run docingest from the repository root. Full reference: [config/README.md](config/README.md).
+The pipeline reads one TOML file, [`config/pipeline.toml`](config/pipeline.toml) by default. A file given with `--config` replaces it entirely (it is not merged); sections it omits take the defaults in [`config.py`](src/docingest/README.md). Unknown keys in `[adapters]`, `[routing]`, `[ocr]`, `[qa]`, `[latex]` and `[arxiv]` are rejected, and unknown top-level sections are kept so that plugins can read their own settings. Relative paths inside the file (`output_dir`, `raw_dir`) are resolved against the working directory, so run docingest from the package folder (`packages/docingest`). Full reference: [config/README.md](config/README.md).
 
 | Section | Controls | Examples | Affects the cache key |
 |---|---|---|---|
@@ -754,8 +754,8 @@ Each directory with its own README is linked.
   - [`entrypoints/`](src/docingest/entrypoints/README.md): CLI, benchmark CLI, PaperQA2 hook.
 - [`tests/`](tests/README.md): `unit/`, `contract/`, `integration/`, `fixtures/`, plus in-memory fakes (`fakes.py`) and builders.
 - `data/`: inputs, outputs and benchmark data; git-ignored except a few small samples (see [Where files go on disk](#where-files-go-on-disk)).
-- `.github/workflows/ci.yml`: CI (Linux core lane, macOS full lane).
-- `pyproject.toml`, `uv.lock`, `.python-version`: package metadata, locked environment, Python version.
+- `pyproject.toml`: package metadata and tool settings.
+- At the repository root (the uv workspace): [`pyproject.toml`](../../pyproject.toml) (workspace members, supported platforms), [`uv.lock`](../../uv.lock) (the locked environment of every package), `.python-version`, and [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) (CI: Linux core lane, macOS full lane).
 
 ## Development and quality gates
 

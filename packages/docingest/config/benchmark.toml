@@ -7,7 +7,7 @@
 #
 # A run directory (runs_dir/<run-id>/) records each suite's settings and fingerprint and
 # every candidate's spec; resuming it with different settings is refused.
-# Paths are relative to the working directory (the repo root), like pipeline.toml.
+# Paths are relative to the working directory (the package folder, packages/docingest), like pipeline.toml.
 
 runs_dir = "data/bench/runs"
 data_dir = "data/bench"

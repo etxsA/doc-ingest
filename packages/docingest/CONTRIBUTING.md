@@ -54,12 +54,14 @@ Each part of the repository also has its own reference:
 |---|---|---|
 | Python | `.python-version`, `requires-python` in `pyproject.toml` | 3.12 (`>=3.12`) |
 | Package manager | `uv.lock`, `[build-system]` | [uv](https://docs.astral.sh/uv/). The build backend is `uv_build>=0.12.2,<0.13.0`. |
-| Platforms | `[tool.uv] environments` | macOS on Apple Silicon (`sys_platform == 'darwin' and platform_machine == 'arm64'`) and Linux (`sys_platform == 'linux'`). The lockfile is resolved for these two environments only. |
+| Platforms | `[tool.uv] environments` in the workspace root's `pyproject.toml` (uv reads `[tool.uv]` only there) | macOS on Apple Silicon (`sys_platform == 'darwin' and platform_machine == 'arm64'`) and Linux (`sys_platform == 'linux'`). The lockfile is resolved for these two environments only. |
 
 ### Install
 
+Run these from `packages/docingest`. uv finds the workspace root one level up, with the one `uv.lock` and the shared `.venv`; `uv sync` at the repository root installs every package of the workspace.
+
 ```bash
-uv sync --locked                    # core dependencies + the "dev" group (default-groups = ["dev"])
+uv sync --locked                    # core dependencies + the "dev" group (installed by default)
 uv sync --locked --all-extras       # everything; this is what the macOS CI lane installs
 uv sync --locked --extra office     # a single extra: mlx, qa or office
 uv run docingest --help             # the console script (docingest.entrypoints.cli:app)
@@ -97,6 +99,8 @@ The official olmOCR-Bench scorer runs in a separate virtual environment, `.bench
 ## 2. Repository layout and conventions
 
 ### Where things live
+
+Paths are relative to the package folder, `packages/docingest`. The repository root holds the uv workspace (`pyproject.toml`, `uv.lock`, `.python-version`), CI (`.github/`) and the top-level README.
 
 | Path | Contents |
 |---|---|
@@ -906,7 +910,7 @@ DOCINGEST_NETWORK_TESTS=1 uv run pytest -m network            # opt-in: live arX
 
 ### Local gates
 
-`./scripts/check.sh` runs every gate from the repository root and stops at the first failure (`set -euo pipefail`):
+`./scripts/check.sh` runs every gate from the package folder and stops at the first failure (`set -euo pipefail`):
 
 | Step | Command | Checks |
 |---|---|---|
@@ -920,14 +924,14 @@ Run it after `uv sync --locked --all-extras`, so that pyright and the extra-depe
 
 ### CI (`.github/workflows/ci.yml`)
 
-The workflow `ci` runs on every `push` and `pull_request`. It has two jobs, each using `actions/checkout@v7.0.1` and `astral-sh/setup-uv@v10.2.0` with caching:
+The workflow `ci` (at the repository root) runs on every `push` and `pull_request`. It has two jobs, each using `actions/checkout@v7.0.1` and `astral-sh/setup-uv@v10.2.0` with caching. Each job runs once per workspace package (a `package` matrix) from that package's folder, here `packages/docingest`:
 
 | Job | Runner | Install | Steps |
 |---|---|---|---|
 | `linux` | `ubuntu-latest` | `uv sync --locked` (core and dev only: no `mlx`, `qa` or `office`) | `ruff check src tests`, `ruff format --check src tests`, `lint-imports`, `pytest -q --cov` |
 | `macos` | `macos-latest` | `uv sync --locked --all-extras` | `pyright`, `pytest -q --cov` |
 
-Model and network tests stay opt-in in both jobs. Together the two jobs cover every gate of `scripts/check.sh`.
+Model and network tests stay opt-in in both jobs. Together the two jobs cover every gate of `scripts/check.sh`. `./scripts/check.sh` at the repository root checks `uv.lock` and runs this package's `scripts/check.sh` together with those of the other packages.
 
 ### Change workflow
 
