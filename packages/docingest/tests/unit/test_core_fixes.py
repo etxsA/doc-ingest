@@ -46,9 +46,11 @@ def test_an_existing_explicit_config_is_read(tmp_path):
 def test_pipeline_version_is_the_package_and_lockfile_version():
     # Three literals kept equal by hand: the cache key, the wheel and the lock that CI
     # installs with --frozen (which does not check the lock against pyproject.toml).
-    root = Path(__file__).resolve().parents[2]
-    project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
-    locked = tomllib.loads((root / "uv.lock").read_text())["package"]
+    package = Path(__file__).resolve().parents[2]
+    project = tomllib.loads((package / "pyproject.toml").read_text())["project"]
+    # One uv.lock for the whole uv workspace: the nearest one at or above the package.
+    lock = next(d / "uv.lock" for d in (package, *package.parents) if (d / "uv.lock").is_file())
+    locked = tomllib.loads(lock.read_text())["package"]
     (lock_version,) = [p["version"] for p in locked if p["name"] == "docingest"]
     assert project["version"] == lock_version == PIPELINE_VERSION == __version__
 

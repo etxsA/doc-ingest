@@ -1,0 +1,13 @@
+# Workspace root. It is virtual (no [project] table): nothing is built or installed from
+# here. Each package in packages/ has its own pyproject.toml; all of them share one uv.lock
+# and one environment (.venv in this folder). `uv sync` here installs every package.
+[tool.uv.workspace]
+members = ["packages/*"]
+
+# uv reads [tool.uv] from the workspace root only and silently ignores it in packages.
+# The "dev" dependency group of each package is installed by default.
+[tool.uv]
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux'",
+]
