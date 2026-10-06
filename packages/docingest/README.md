@@ -1,5 +1,7 @@
 # docingest
 
+Part of the research engine: see the [top-level README](../../README.md) for the other packages.
+
 docingest is a document normalization layer for a research agent. It takes a research document in any of the common formats (born-digital PDF, scanned PDF, page images, arXiv LaTeX source, DOCX, PPTX, XLSX, HTML, Markdown, plain text) and turns it into one canonical form: a Markdown file with page or section markers, plus a JSON manifest that records how every page was produced. [PaperQA2](https://github.com/Future-House/paper-qa), or any other retrieval-augmented agent, reads that canonical form instead of the raw files.
 
 - Scanned pages are transcribed by a vision-language model, either in-process on Apple Silicon (mlx-vlm) or through any OpenAI-compatible vision endpoint (vLLM, LM Studio, Ollama, `mlx_vlm.server`).
