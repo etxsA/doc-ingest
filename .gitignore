@@ -28,3 +28,6 @@ __pycache__/
 **/docingest_overview.pdf
 **/docs/report/
 **/scripts/build_report.py
+
+# Machine-specific settings of the model servers
+serving/env.local

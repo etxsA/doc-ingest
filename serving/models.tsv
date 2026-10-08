@@ -1,0 +1,11 @@
+# role	name	repo	revision	vllm_overrides	chat_template
+# Pinned models for serve.sh. One line per model, tab-separated; "-" means none.
+# vllm_overrides is a JSON object passed to --hf-overrides; chat_template is relative to serving/templates/.
+llm	qwen3.8-27b-awq	cyankiwi/Qwen3.8-27B-AWQ-INT4	6e134bae811fb5adac50ee042ae5f029ac6779aa	-	-
+embed	qwen3-embedding-4b	Qwen/Qwen3-Embedding-4B	5cf2132abc99cad020ac570b19d031efec650f2b	-	-
+embed	qwen3-embedding-8b	Qwen/Qwen3-Embedding-8B	1d8ad4ca9b3dd8059ad90a75d4983776a23d44af	-	-
+embed	qwen3-embedding-0.6b	Qwen/Qwen3-Embedding-0.6B	97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3	-	-
+embed	arctic-embed-l-v2	Snowflake/snowflake-arctic-embed-l-v2.0	ac6544c8a46e00af67e330e85a9028c66b8cfd9a	-	-
+rerank	qwen3-reranker-8b	Qwen/Qwen3-Reranker-8B	77d193c791ed757ca307ee72715aa132723da912	{"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}	qwen3_reranker.jinja
+rerank	qwen3-reranker-4b	Qwen/Qwen3-Reranker-4B	22e683669bc0f0bd69640a1354a6d0aebcfeede5	{"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}	qwen3_reranker.jinja
+rerank	mxbai-rerank-large-v2	mixedbread-ai/mxbai-rerank-large-v2	ca7e1ee484c37c0ddd8d178a9a5c33cec575c5e6	{"architectures": ["Qwen2ForSequenceClassification"], "classifier_from_token": ["0", "1"], "method": "from_2_way_softmax"}	mxbai_rerank_v2.jinja
