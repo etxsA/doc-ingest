@@ -50,6 +50,7 @@ The failure analyses describe one specific run and scoring version, named at the
 | Document | Content |
 |---|---|
 | [../README.md](../README.md) | Project overview, installation, quick start, supported inputs and how each is handled |
+| [../../../docs/run-guide.md](../../../docs/run-guide.md) | The run guide of the whole engine: vLLM and the model servers, crawl or ingest, the chunk index, `ask`, a shared GPU machine and troubleshooting |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Development workflow, conventions, how to add code and submit changes |
 | [../config/README.md](../config/README.md) | The TOML configuration files (`pipeline.toml`, `benchmark.toml`, `examples/`), their schemas and keys |
 | [../scripts/README.md](../scripts/README.md) | Every helper script: purpose, usage, inputs, outputs, side effects, requirements |

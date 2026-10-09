@@ -479,6 +479,8 @@ Model weights are downloaded into the Hugging Face cache the first time they are
 
 Results are in `data/normalized/<sha256[:16]>/document.md` and `manifest.json`; the CLI prints the output directory of every document and a summary table.
 
+For the GPU-server setup (vLLM model servers, the chunk index and `ask` with reranking), follow the [run guide](../../docs/run-guide.md).
+
 ## Using docingest from Python
 
 The CLI is a thin layer over the use cases, which are wired by `Container` in [`bootstrap.py`](src/docingest/README.md). The same objects can be used directly. Run from the package folder (`packages/docingest`), since the paths in the configuration are relative.

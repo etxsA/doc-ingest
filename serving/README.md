@@ -21,6 +21,8 @@ serving/serve.sh rerank stop          # stops only this server (it runs in its o
 Clients always use the served names, so switching a model (for example `embed start 1 8002 qwen3-embedding-8b`)
 needs no client change. The embedder and the reranker fit together on one 48 GB GPU at 0.45 of its memory each.
 
+For the whole path from a clone to an answer, including a shared GPU machine and troubleshooting, see the [run guide](../docs/run-guide.md).
+
 ## Requirements
 
 The defaults need two GPUs with 48 GB each: one for the answering model, one for the embedder and the reranker together. The figures below are `nvidia-smi` totals per GPU, measured with the default models on such machines (NVIDIA driver 535.230.02, CUDA 12.2 as `nvidia-smi` reports it).

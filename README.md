@@ -8,7 +8,7 @@ A local research engine for scientific papers. It turns papers into clean Markdo
 |---|---|---|
 | [`packages/docingest/`](packages/docingest/README.md) | Document normalization: PDF, scanned PDF, LaTeX source, Office files and images become Markdown plus a provenance manifest. Also crawls arXiv and answers questions with PaperQA2. Command: `docingest`. | Available (0.3.1) |
 | [`packages/docingest-index/`](packages/docingest-index/README.md) | Embedding and reranker clients (OpenAI-compatible `/v1/embeddings`, vLLM `/rerank`) and a persistent chunk index (dense vectors plus BM25), plugged into docingest as adapters. Command: `docingest index build`. | Available (0.1.0); `docingest ask` retrieves from it when configured |
-| [`serving/`](serving/README.md) | Start and stop script for the local model servers (answering model, embedder, reranker), pinned model list, reranker templates and a configuration example. | Available |
+| [`serving/`](serving/README.md) | Start and stop script for the local model servers (answering model, embedder, reranker), pinned model list, reranker templates, the vLLM install recipe and GPU requirements. | Available |
 | `experiments/` | Benchmark runners, a timing harness and retrieval and question-answering evaluations. | Planned |
 
 ## How the pieces fit
@@ -25,6 +25,8 @@ flowchart LR
 ```
 
 ## Quick start
+
+To run the whole engine on a GPU machine (install vLLM, start the three model servers, crawl or ingest, build the index, ask), follow the [run guide](docs/run-guide.md). The steps below install the workspace and show the commands.
 
 Requirements: [uv](https://docs.astral.sh/uv/getting-started/installation/). uv installs Python 3.12 from `.python-version` if needed. The lock file resolves for Apple Silicon macOS and Linux.
 
@@ -50,6 +52,18 @@ uv run docingest ask "What limits T1 in transmons?" -c config/examples/lab-serve
 ```
 
 `ask` embeds the question, takes the 50 best chunks from the index (dense vectors plus BM25), reranks them and gives the best 10 to PaperQA2, which writes the cited answer. Without `index` in `[adapters]` (the default) `ask` works as before, and `ask --no-index` skips a configured index for one question. The keys are in the [configuration reference](packages/docingest/config/README.md#index-embedder-and-reranker-docingest-index) and the design in [ADR 0004](packages/docingest/docs/adr/0004-chunk-index-and-two-stage-retrieval.md).
+
+## Documentation map
+
+| To | Read |
+|---|---|
+| Run the engine end to end on a GPU machine | [docs/run-guide.md](docs/run-guide.md) |
+| Install vLLM, see GPU and disk needs, start and stop the model servers | [serving/README.md](serving/README.md) |
+| Learn what docingest does, its commands and the architecture | [packages/docingest/README.md](packages/docingest/README.md) |
+| Set a configuration key or pick an example file | [packages/docingest/config/README.md](packages/docingest/config/README.md) |
+| Understand the chunk index, the embedder and the reranker | [packages/docingest-index/README.md](packages/docingest-index/README.md) and [ADR 0004](packages/docingest/docs/adr/0004-chunk-index-and-two-stage-retrieval.md) |
+| Change the code and open a pull request | [packages/docingest/CONTRIBUTING.md](packages/docingest/CONTRIBUTING.md) |
+| Find any other document of docingest | [packages/docingest/docs/README.md](packages/docingest/docs/README.md) |
 
 ## Development
 
