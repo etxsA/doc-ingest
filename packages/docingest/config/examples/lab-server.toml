@@ -1,0 +1,61 @@
+# A lab server that runs the three local model servers of serving/ (a vLLM answering model,
+# embedder and reranker), with the chunk index on. Everything stays on this machine: every URL
+# is 127.0.0.1 and every path is relative to the folder you run docingest from.
+#
+#   serving/serve.sh llm start       # served name qwen-local,  port 8001
+#   serving/serve.sh embed start     # served name qwen-embed,  port 8002
+#   serving/serve.sh rerank start    # served name qwen-rerank, port 8003
+#
+#   docingest ingest data/raw --index --config config/examples/lab-server.toml
+#   docingest index build --config config/examples/lab-server.toml     # once, or to catch up
+#   docingest ask "your question" --config config/examples/lab-server.toml
+#
+# Needs the docingest-index package (uv sync --all-extras installs it) and the qa extra.
+
+output_dir = "data/normalized"
+raw_dir = "data/raw"
+
+[adapters]
+ocr = "openai-compatible"            # scanned pages are read by the answering model's server
+embedder = "openai-compatible"       # docingest-index
+index = "local"                      # docingest-index
+reranker = "vllm"                    # docingest-index
+
+[ocr]
+repo_id = "cyankiwi/Qwen3.8-27B-AWQ-INT4"   # recorded in manifests; serving/models.tsv
+revision = "6e134bae811fb5adac50ee042ae5f029ac6779aa"
+profile = "markdown"
+base_url = "http://127.0.0.1:8001/v1"
+served_model = "qwen-local"
+# api_key_env = "OCR_API_KEY"        # name of the environment variable that holds a key, if the server needs one
+
+[qa]
+# PaperQA2 writes the evidence summaries and the answer with the same server.
+llm = "openai/qwen-local"
+llm_base = "http://127.0.0.1:8001/v1"
+evidence_k = 10
+max_concurrent_requests = 10
+temperature = 0.0
+
+[index]
+dir = "data/index"                   # one subfolder per corpus, embedder and chunk setting
+candidates = 50                      # chunks the first stage hands to the reranker
+contexts = 10                        # chunks PaperQA2 summarizes (the top of the reranked candidates)
+bm25 = "english"                     # add keyword matching for English questions
+max_chunks_per_paper = 0             # 0: no cap
+
+[embedder]
+base_url = "http://127.0.0.1:8002/v1"
+served_model = "qwen-embed"
+model = "Qwen/Qwen3-Embedding-4B"    # recorded in the index folder name; the server decides the weights
+revision = "5cf2132abc99cad020ac570b19d031efec650f2b"
+query_instruction = ""
+# api_key_env = "EMBED_API_KEY"
+
+[reranker]
+base_url = "http://127.0.0.1:8003"
+served_model = "qwen-rerank"
+model = "Qwen/Qwen3-Reranker-8B"
+revision = "77d193c791ed757ca307ee72715aa132723da912"
+instruction = "Given a question about a research paper, retrieve the passage that answers it"
+# api_key_env = "RERANK_API_KEY"

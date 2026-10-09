@@ -19,7 +19,9 @@ qa = "paperqa"
 crawler = "arxiv"
 # Persistent chunk index (package docingest-index, `docingest index build`). The defaults
 # are "none"; the real adapters also need the [embedder], [index] and [reranker] tables
-# described in config/README.md.
+# described in config/README.md. With index set, `docingest ask` retrieves from the index
+# (embedder is then required; reranker "none" keeps the first stage's order); with "none"
+# it asks PaperQA2 to retrieve, as before. See config/examples/lab-server.toml.
 # embedder = "openai-compatible"
 # index = "local"
 # reranker = "vllm"

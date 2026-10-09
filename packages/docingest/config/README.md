@@ -161,11 +161,11 @@ Selects the implementation plugged into each port. A value is either a built-in 
 | `store` | string | `"filesystem"` | `filesystem` | `DocumentStore` | the ingestion service or `ask` is first used |
 | `qa` | string | `"paperqa"` | `paperqa` | `QuestionAnswerer` | `docingest ask` |
 | `crawler` | string | `"arxiv"` | `arxiv` | `SourceCrawler` | `docingest crawl` |
-| `embedder` | string | `"none"` | `none` (plugin `docingest-index`: `openai-compatible`) | `Embedder` | `docingest index` |
-| `index` | string | `"none"` | `none` (plugin `docingest-index`: `local`) | `ChunkIndex` | `docingest index` |
-| `reranker` | string | `"none"` | `none` (plugin `docingest-index`: `vllm`) | `Reranker` | never yet: no use case calls it |
+| `embedder` | string | `"none"` | `none` (plugin `docingest-index`: `openai-compatible`) | `Embedder` | `docingest index`, `ingest --index`, `crawl --index`, or `ask` with an index |
+| `index` | string | `"none"` | `none` (plugin `docingest-index`: `local`) | `ChunkIndex` | `docingest index`, `ingest --index`, `crawl --index`, and `docingest ask` whenever it is set |
+| `reranker` | string | `"none"` | `none` (plugin `docingest-index`: `vllm`) | `Reranker` | `docingest ask` with an index; `none` keeps the first stage's order |
 
-The three retrieval ports have only the `none` built-in, which refuses to work (`NotConfiguredError`). The `docingest-index` package brings the real adapters (`openai-compatible`, `local`, `vllm`) and reads its own tables, [`[index]`, `[embedder]` and `[reranker]`](#index-embedder-and-reranker-docingest-index).
+The three retrieval ports have only the `none` built-in, which refuses to work (`NotConfiguredError`). **`index` decides how `ask` answers:** with `index = "none"` (the default) `ask` behaves exactly as before, PaperQA2 retrieving its own evidence; with a real index it retrieves from the index and needs an `embedder` too (an index without one is an error that names the key). Selecting only an `embedder` or a `reranker` changes nothing for `ask`. The `docingest-index` package brings the real adapters (`openai-compatible`, `local`, `vllm`) and reads its own tables, [`[index]`, `[embedder]` and `[reranker]`](#index-embedder-and-reranker-docingest-index).
 
 ### `[routing]`
 
@@ -232,7 +232,7 @@ Settings of the PaperQA2 step (`docingest ask`, adapter `paperqa`). None of them
 | `embedding` | string | `null` | Any PaperQA2 embedding string, for example `"ollama/mxbai-embed-large"`. Replaces the pinned model. |
 | `chunk_chars` | int | `900` | Target chunk size in characters (page-aware chunks). With the pinned embedder, a chunk longer than the model's token window is re-split by tokens. With a custom `embedding`, it is not. |
 | `overlap` | int | `100` | Chunk overlap in characters. |
-| `evidence_k` | int | `10` | PaperQA2 `answer.evidence_k`: number of evidence chunks retrieved. |
+| `evidence_k` | int | `10` | PaperQA2 `answer.evidence_k`: number of evidence chunks retrieved. Used when PaperQA2 retrieves by itself (no index, or `ask --no-index`); with an index the number of chunks is `[index] contexts`. |
 | `answer_max_sources` | int | `3` | PaperQA2 `answer.answer_max_sources`. |
 | `max_concurrent_requests` | int | `2` | PaperQA2 `answer.max_concurrent_requests`. |
 | `temperature` | float | `0.0` | Sampling temperature sent with every LLM request (evidence summaries and the answer), for the default local model and for any `llm`. Before this key existed no temperature was sent, so the server's own default applied and the same question could get different answers. A hosted model that only accepts its default temperature needs this key set to that value. |
@@ -329,11 +329,11 @@ instruction = "Given a question about a research paper, retrieve the passage tha
 |---|---|---|---|
 | `dir` | string | `"data/index"` | Folder that holds the indexes, relative to the working directory like `output_dir`. Each embedder and chunk setting gets its own subfolder, so one `dir` can hold several indexes. |
 | `candidates` | int, at least 1 | `50` | Hits the first stage returns for the reranker. |
-| `contexts` | int, at least 1 | `10` | Chunks given to the answerer after reranking (the value of `[qa] evidence_k`). |
+| `contexts` | int, at least 1 | `10` | Chunks given to PaperQA2 after reranking; it summarizes exactly these and retrieves nothing else. Without a reranker, the first `contexts` of the first stage. If it is larger than `candidates`, there are only `candidates`. |
 | `bm25` | `"english"`, `"always"`, `"never"` | `"english"` | Fuse a BM25 ranking with the dense one (reciprocal rank fusion, k = 60) for questions that look English, for every question, or never. |
 | `max_chunks_per_paper` | int, at least 0 | `0` | At most this many chunks of one paper among the hits; `0` is no cap, as in the measured retrieval. |
 
-`candidates` and `contexts` are read by the code that retrieves for `ask` (the next change); `dir`, `bm25` and `max_chunks_per_paper` are read by the index adapter.
+`candidates` and `contexts` are read by `docingest ask` itself, through a small model in `docingest.config` (`IndexConfig`, `index_config(cfg)`) that ignores every other key; their defaults (50 and 10) are written there once, and the index adapter's own settings class inherits them. `dir`, `bm25` and `max_chunks_per_paper` are read only by the index adapter, which validates the whole table (an unknown key is an error when the adapter is built, not when `ask` reads its two keys). `docingest ask --bm25 english|always|never` overrides `bm25` for one question.
 
 `[embedder]`
 
@@ -434,6 +434,16 @@ Same ingestion as `pipeline.toml`, but PaperQA2 answers with Ollama models. It s
 ```bash
 ollama pull llama3.1 && ollama pull mxbai-embed-large
 uv run --all-extras docingest ask "What is multi-head attention?" --config config/examples/ollama-qa.toml
+```
+
+### `examples/lab-server.toml`
+
+A lab server that runs the three model servers of [`serving/`](../../../serving/README.md) (an answering model, an embedder and a reranker, all vLLM on 127.0.0.1) with the chunk index on. It selects the `openai-compatible` OCR, `openai-compatible` embedder, `local` index and `vllm` reranker; points `[ocr]`, `[qa]`, `[embedder]` and `[reranker]` at ports 8001 to 8003 with the served names `qwen-local`, `qwen-embed` and `qwen-rerank`; and writes the `[index]` table out with its defaults. Every URL is local and every path is relative to the folder you run docingest from.
+
+```bash
+uv run docingest ingest data/raw --index --config config/examples/lab-server.toml
+uv run docingest index build --config config/examples/lab-server.toml     # once, or to catch up
+uv run docingest ask "What limits T1 in transmons?" --config config/examples/lab-server.toml
 ```
 
 ## `config/benchmark.toml`
