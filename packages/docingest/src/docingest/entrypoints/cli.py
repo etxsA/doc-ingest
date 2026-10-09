@@ -84,6 +84,45 @@ def _failures(failures: list[tuple[str, str]]) -> None:
     console.print(table)
 
 
+IndexOpt = Annotated[
+    bool,
+    typer.Option(
+        "--index",
+        help="Afterwards add the new and changed papers to the chunk index "
+        "(needs the index and embedder adapters)",
+    ),
+]
+
+
+def _index_ready(container: Container) -> None:
+    """Fail before any work is done when ``--index`` cannot work."""
+    if not (container.configured("index") and container.configured("embedder")):
+        raise typer.BadParameter(
+            "--index needs [adapters] index and embedder to be set (see `docingest index --help`)"
+        )
+    try:
+        container.index_service.check_embedder()
+    except DocingestError as e:
+        console.print(f"[red]error[/]: {escape(str(e))}")
+        raise typer.Exit(1) from e
+
+
+def _index_new(container: Container, stored: list[StoredDocument]) -> None:
+    """Add what an ingest stored to the index. The papers are stored whatever happens here."""
+    if not stored:
+        return
+    try:
+        report = container.index_service.update(stored)
+    except (DocingestError, RuntimeError, ValueError) as e:
+        console.print(f"[red]error[/]: the index was not updated: {escape(str(e))}")
+        console.print("the papers are stored; run `docingest index build` to catch up")
+        raise typer.Exit(1) from e
+    console.print(
+        f"index: added {report.added}, updated {report.updated}, unchanged {report.unchanged}; "
+        f"embedded {report.chunks_embedded} chunks in {report.seconds:.1f}s"
+    )
+
+
 @app.command()
 def ingest(
     paths: Annotated[list[Path], typer.Argument(help="Files or directories")],
@@ -91,9 +130,14 @@ def ingest(
     force: Annotated[bool, typer.Option(help="Ignore cache")] = False,
     ocr_all: Annotated[bool, typer.Option(help="OCR every PDF page, even born-digital")] = False,
     max_pages: Annotated[int | None, typer.Option(min=1, help="Only first N pages")] = None,
+    *,
+    index: IndexOpt = False,
 ) -> None:
     """Detect type, route each page (text layer / OCR / converter); write Markdown + manifest."""
-    service = _container(config).ingest
+    container = _container(config)
+    if index:
+        _index_ready(container)
+    service = container.ingest
     options = IngestOptions(force=force, ocr_all=ocr_all, max_pages=max_pages)
     stored, failures = [], []
     for path in iter_inputs(paths):
@@ -108,6 +152,8 @@ def ingest(
         console.print(f"[green]ok[/] -> {escape(doc.location)}/document.md")
     if stored:
         _summary(stored)
+    if index:
+        _index_new(container, stored)
     if failures:
         _failures(failures)
         raise typer.Exit(1)
@@ -120,13 +166,22 @@ def crawl(
     config: ConfigOpt = None,
     no_ingest: Annotated[bool, typer.Option(help="Only download")] = False,
     max_pages: Annotated[int | None, typer.Option(min=1, help="Only first N pages")] = None,
+    *,
+    index: IndexOpt = False,
 ) -> None:
     """Search arXiv, download LaTeX sources (PDF fallback) with metadata, then ingest them."""
-    report = _container(config).crawl.run(
+    container = _container(config)
+    if index:
+        if no_ingest:
+            raise typer.BadParameter("--index has nothing to add with --no-ingest")
+        _index_ready(container)
+    report = container.crawl.run(
         query, limit, ingest=not no_ingest, options=IngestOptions(max_pages=max_pages)
     )
     if report.ingested:
         _summary(report.ingested)
+    if index:
+        _index_new(container, report.ingested)
     console.print(f"fetched {len(report.fetched)}, ingested {len(report.ingested)}")
     if report.stopped:
         console.print(f"[yellow]crawl stopped early[/]: {escape(report.stopped)}")
