@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        package: [docingest]
+        package: [docingest, docingest-index]
     defaults:
       run:
         working-directory: packages/${{ matrix.package }}
@@ -32,7 +32,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        package: [docingest]
+        package: [docingest, docingest-index]
     defaults:
       run:
         working-directory: packages/${{ matrix.package }}

@@ -150,6 +150,12 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "docingest never imports a plugin package (plugins are found by entry point)"
+type = "forbidden"
+source_modules = ["docingest"]
+forbidden_modules = ["docingest_index"]
+
+[[tool.importlinter.contracts]]
 name = "Only the composition root and entrypoints wire concrete adapters"
 type = "protected"
 protected_modules = ["docingest.adapters"]

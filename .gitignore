@@ -22,6 +22,8 @@ __pycache__/
 **/data/samples/*.truth.json
 !**/data/samples/.gitkeep
 
+**/data/index/
+
 # Local-only: the generated technical report and its builder, never published (any depth,
 # so they stay ignored at the old top-level paths and inside packages/docingest/)
 **/docingest_report.pdf

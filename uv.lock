@@ -15,6 +15,7 @@ supported-markers = [
 [manifest]
 members = [
     "docingest",
+    "docingest-index",
 ]
 
 [[package]]
@@ -729,6 +730,45 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7" },
     { name = "rapidfuzz", specifier = ">=3.14" },
+    { name = "ruff", specifier = ">=0.16" },
+]
+
+[[package]]
+name = "docingest-index"
+version = "0.1.0"
+source = { editable = "packages/docingest-index" }
+dependencies = [
+    { name = "docingest" },
+    { name = "httpx" },
+    { name = "numpy" },
+    { name = "pydantic" },
+    { name = "tantivy" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "import-linter" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "docingest", editable = "packages/docingest" },
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "numpy", specifier = ">=2" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "tantivy", specifier = ">=0.26.2,<0.27" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "import-linter", specifier = ">=2.15" },
+    { name = "pyright", specifier = ">=1.1.414" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-cov", specifier = ">=7" },
     { name = "ruff", specifier = ">=0.16" },
 ]
 

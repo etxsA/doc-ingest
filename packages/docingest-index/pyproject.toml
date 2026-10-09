@@ -1,0 +1,95 @@
+[project]
+name = "docingest-index"
+version = "0.1.0"
+description = "Embedding and reranker clients and a persistent chunk index (dense + BM25) for docingest"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "etxsA", email = "93368439+etxsA@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "docingest",
+    "httpx>=0.28,<1",
+    "numpy>=2",
+    "pydantic>=2",
+    "tantivy>=0.26.2,<0.27",
+]
+
+# docingest finds these by entry point: select them by name in [adapters].
+[project.entry-points."docingest.embedder"]
+openai-compatible = "docingest_index.factories:embedder"
+
+[project.entry-points."docingest.reranker"]
+vllm = "docingest_index.factories:reranker"
+
+[build-system]
+requires = ["uv_build>=0.12.2,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+docingest = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "pytest-cov>=7",
+    "ruff>=0.16",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "-ra"]
+
+[tool.coverage.run]
+source = ["docingest_index"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 85
+skip_covered = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PT", "PL", "C4"]
+ignore = [
+    "PLR0913",  # constructors take their settings explicitly
+    "PLR2004",  # magic values are fine in tests and thresholds
+    "PLC0415",  # lazy imports keep tantivy out of the way of the clients
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR0913", "PT018", "E501", "F403", "F405"]
+
+[tool.pyright]
+include = ["src"]
+venvPath = "../.."  # the workspace root, where uv keeps the shared .venv
+venv = ".venv"
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+
+[tool.importlinter]
+root_packages = ["docingest_index", "docingest"]
+include_external_packages = false
+exclude_type_checking_imports = true
+
+# The plugin sees docingest through its ports, its domain and its configuration only: not
+# through use cases, adapters, the composition root or the CLI, which may change or be absent.
+[[tool.importlinter.contracts]]
+name = "docingest_index imports only docingest.ports, docingest.domain and docingest.config"
+type = "forbidden"
+source_modules = ["docingest_index"]
+forbidden_modules = [
+    "docingest.application",
+    "docingest.adapters",
+    "docingest.bootstrap",
+    "docingest.entrypoints",
+]
