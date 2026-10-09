@@ -13,7 +13,7 @@ Related reading: [package map](../README.md), [domain types](../domain/README.md
 - [Ports grouped by concern](#ports-grouped-by-concern)
 - [Summary](#summary)
 - [Fingerprints and the cache key](#fingerprints-and-the-cache-key)
-- Port reference: [TypeDetector](#typedetector), [PdfReader, PdfDocument, PdfPage](#pdfreader-pdfdocument-pdfpage), [OcrEngine](#ocrengine), [ImageSource](#imagesource), [DocumentConverter](#documentconverter), [DocumentStore](#documentstore), [SourceCrawler](#sourcecrawler), [QuestionAnswerer](#questionanswerer), [BenchmarkSuite](#benchmarksuite)
+- Port reference: [TypeDetector](#typedetector), [PdfReader, PdfDocument, PdfPage](#pdfreader-pdfdocument-pdfpage), [OcrEngine](#ocrengine), [ImageSource](#imagesource), [DocumentConverter](#documentconverter), [DocumentStore](#documentstore), [SourceCrawler](#sourcecrawler), [QuestionAnswerer](#questionanswerer), [Embedder](#embedder), [ChunkIndex](#chunkindex), [Reranker](#reranker), [BenchmarkSuite](#benchmarksuite)
 - [Implementing a new adapter](#implementing-a-new-adapter)
 - [Registering an adapter](#registering-an-adapter)
 - [Testing an adapter](#testing-an-adapter)
@@ -45,6 +45,11 @@ flowchart LR
     subgraph QA["Answer questions"]
         QQ["QuestionAnswerer"]
     end
+    subgraph RETRIEVE["Retrieve chunks"]
+        EM["Embedder"]
+        CI["ChunkIndex"]
+        RR["Reranker"]
+    end
     subgraph EVAL["Evaluate OCR"]
         BS["BenchmarkSuite"]
     end
@@ -74,6 +79,9 @@ flowchart LR
 | `DocumentStore` | `store.py` | `store` | `filesystem`: `FilesystemStore` | `IngestService`, `AskService` | no |
 | `SourceCrawler` | `sources.py` | `crawler` | `arxiv`: `ArxivCrawler` | `CrawlService` | no |
 | `QuestionAnswerer` | `qa.py` | `qa` | `paperqa`: `PaperQAAnswerer` | `AskService` | no |
+| `Embedder` | `embedding.py` | `embedder` | `none`: `NoEmbedder` | none yet | yes |
+| `ChunkIndex` | `index.py` | `index` | `none`: `NoIndex` | none yet | yes |
+| `Reranker` | `reranking.py` | `reranker` | `none`: `NoReranker` | none yet | no |
 | `BenchmarkSuite` | `benchmark.py` | none: built by `entrypoints/bench_cli.py` | `SyntheticSuite` (`synthetic`), `OlmOcrBenchSuite` (`olmocr-bench`) | `BenchmarkRunner`, `score_run` | yes |
 
 `uv run docingest adapters` prints, for the current configuration, every `[adapters]` slot with its selected adapter and the names available for it (built-ins and installed plugins). Benchmark suites are not listed there.
@@ -86,14 +94,16 @@ Value types defined next to the Protocols (all dataclasses):
 | `OcrResult` | `ocr.py` | yes | `OcrEngine.transcribe` result |
 | `StoredDocument` | `store.py` | yes | `DocumentStore` results, `QuestionAnswerer.ask` input |
 | `SourceRecord`, `FetchedSource` | `sources.py` | yes | `SourceCrawler` results |
+| `Chunk` | `domain/chunking.py`, re-exported by `ports` | yes | `ChunkIndex`, `Reranker` |
+| `Hit` | `index.py` | yes | `ChunkIndex.search` result |
 | `Sample`, `CandidateSpec`, `Estimate` | `benchmark.py` | yes | benchmark samples, candidates, estimates |
 | `SuiteScore` | `benchmark.py` | no | `BenchmarkSuite.score` result |
 
-Reference fakes for every port except `BenchmarkSuite` live in `tests/fakes.py` (`FakeDetector`, `FakePdfReader` with `FakePdfDocument` and `FakePage`, `FakeOcr`, `FakeImages`, `FakeConverter`, `InMemoryStore`, `FakeCrawler`, `FakeQA`). They are complete, behaviour-level implementations, not mocks, and they are the shortest working example of each contract. A minimal benchmark suite, `MemSuite`, is in `tests/unit/test_benchmark.py`.
+Reference fakes for every port except `BenchmarkSuite` live in `tests/fakes.py` (`FakeDetector`, `FakePdfReader` with `FakePdfDocument` and `FakePage`, `FakeOcr`, `FakeImages`, `FakeConverter`, `InMemoryStore`, `FakeCrawler`, `FakeQA`, `FakeEmbedder`, `FakeIndex`, `FakeReranker`). They are complete, behaviour-level implementations, not mocks, and they are the shortest working example of each contract. A minimal benchmark suite, `MemSuite`, is in `tests/unit/test_benchmark.py`.
 
 ## Fingerprints and the cache key
 
-Five ports declare `fingerprint: str`. For the ingestion ports it identifies everything that can change the output: implementation name and version plus output-relevant settings. `IngestService.config_hash(kind, ocr_all=...)` hashes it into the cache key, so swapping an adapter or changing one of its settings re-processes exactly the affected documents.
+Seven ports declare `fingerprint: str`. For the ingestion ports it identifies everything that can change the output: implementation name and version plus output-relevant settings. `IngestService.config_hash(kind, ocr_all=...)` hashes it into the cache key, so swapping an adapter or changing one of its settings re-processes exactly the affected documents.
 
 | Input kind | Parts of the cache key |
 |---|---|
@@ -103,7 +113,8 @@ Five ports declare `fingerprint: str`. For the ingestion ports it identifies eve
 
 - `TypeDetector` has no fingerprint: its only output that can change a document is the detected kind, which is in the key (the MIME type is recorded in the manifest but changes no text).
 - `ImageSource` has one because decoding decides what the OCR engine sees: another image library, or another version of it, re-processes image inputs (and only those).
-- `DocumentStore`, `SourceCrawler` and `QuestionAnswerer` never change what an ingestion produces, so they have none.
+- `DocumentStore`, `SourceCrawler`, `QuestionAnswerer` and `Reranker` never change what an ingestion produces, so they have none.
+- `Embedder.fingerprint` and `ChunkIndex.fingerprint` are not part of the ingestion cache key either: they identify a chunk index, which is only valid for the embedder and chunker settings it was built with.
 - `BenchmarkSuite.fingerprint` is unrelated to the ingestion cache: it identifies a suite's data in a benchmark run directory.
 
 Rules for a fingerprint:
@@ -508,6 +519,75 @@ Contract:
 
 Implementations: `adapters/qa/paperqa.py` `PaperQAAnswerer` (`qa` extra). Test fake: `FakeQA`.
 
+### Embedder
+
+Module `embedding.py`. Turns text into vectors for the chunk index. `Vector` is `list[float]`: the port stays free of numpy, and an adapter converts at its edge.
+
+```python
+@runtime_checkable
+class Embedder(Protocol):
+    fingerprint: str  # what changes document vectors; other vectors are not comparable
+    query_instruction: str  # "" when the model takes none
+
+    def embed_documents(self, texts: Sequence[str]) -> list[Vector]: ...
+
+    def embed_query(self, text: str) -> Vector: ...
+```
+
+Contract:
+
+- `embed_documents` returns one vector per text, in order, all of one dimension, and an empty list for no texts. The vector of a text does not depend on the other texts in the call, up to the numerical noise of batched inference.
+- `embed_query` returns a vector comparable with the document vectors. A model that wants an instruction in front of questions adds it here and never in `embed_documents`.
+- `fingerprint` names everything that changes the vectors of documents: model, revision, dimensions, dtype and any document-side prefix or normalization. An index built with another fingerprint is not reused, so nothing else belongs in it: the query instruction changes only query vectors and would force a re-embedding of the corpus for nothing. It is exposed apart, as `query_instruction`, so an index can record it without keying on it.
+
+Implementations: `adapters/retrieval/none.py` `NoEmbedder` (the default, fails when used). Test fake: `FakeEmbedder`.
+
+### ChunkIndex
+
+Module `index.py`. A persistent index of chunks and the first-stage search over it. `Hit` (frozen) is a `Chunk` and its `score` (larger is better, comparable only inside one result list).
+
+```python
+@runtime_checkable
+class ChunkIndex(Protocol):
+    fingerprint: str  # embedder + chunker settings + format: an index of another one is not reused
+
+    def keys(self) -> dict[str, str]: ...
+
+    def upsert(
+        self, doc_id: str, key: str, chunks: Sequence[Chunk], vectors: Sequence[Vector]
+    ) -> None: ...
+
+    def remove(self, doc_id: str) -> None: ...
+
+    def commit(self) -> None: ...
+
+    def search(self, question: str, vector: Vector, k: int) -> list[Hit]: ...
+```
+
+Contract:
+
+- Documents are identified by `doc_id`. `keys()` returns `{doc_id: key}` for everything indexed. The `key` is chosen by the caller, for example a hash of the text the chunks were cut from: a caller skips a document whose key has not changed, so a changed document is re-embedded and an unchanged one is not.
+- `upsert` replaces everything indexed for `doc_id` with `chunks` and their `vectors` (one vector per chunk, otherwise `ValueError`); `remove` forgets a document and ignores unknown ids. Chunks must come back from `search` unchanged in every field.
+- After `commit`, `search` reflects exactly what `keys()` reports: every `upsert` and `remove` since the last commit, and also documents an earlier process stored but never committed (an adapter that writes at `upsert` time can be interrupted before the call). Until then `search` answers from the last committed state, and `keys()` already reflects the changes. An adapter that keeps a search layer apart from its stored chunks (a dense matrix, a keyword index) rebuilds it in `commit`, once per batch instead of once per document. A service that changes the index must call it.
+- `search` returns at most `k` hits, best first. `vector` is the embedded question (`Embedder.embed_query`); `question` is its text, for adapters that also match keywords. What the first stage does beyond that (for example fusing a keyword search) is the adapter's business and its settings.
+- Chunks come from `domain.chunking.chunk_pages`, so they are the chunks `docingest ask` would give PaperQA2.
+
+Implementations: `adapters/retrieval/none.py` `NoIndex` (the default, fails when used). Test fake: `FakeIndex`.
+
+### Reranker
+
+Module `reranking.py`. Scores candidate chunks against a question, usually with a cross-encoder that reads both.
+
+```python
+@runtime_checkable
+class Reranker(Protocol):
+    def rerank(self, question: str, chunks: Sequence[Chunk]) -> list[float]: ...
+```
+
+Contract: one score per chunk, in the order given, larger meaning more relevant, and an empty list for no chunks. The adapter does not sort: the caller orders by score and keeps the first-stage order for ties. Scores are comparable only within one call.
+
+Implementations: `adapters/retrieval/none.py` `NoReranker` (the default, fails when used). Test fake: `FakeReranker`.
+
 ### BenchmarkSuite
 
 Module `benchmark.py`. An OCR benchmark suite (samples, references, scoring) and the candidates it compares. The suite owns its file layout, because official scorers expect exact file names (olmOCR-bench wants `<pdf>_pg1_repeat1.md`); the runner never invents output paths.
@@ -760,9 +840,10 @@ Resolution rules (`bootstrap.factory`):
 
 ## Testing an adapter
 
-- Contract suites exist for two ports. Add your adapter to the parametrized fixture and it must pass the same tests as the built-ins:
+- Contract suites exist for five ports. Add your adapter to the parametrized fixture and it must pass the same tests as the built-ins:
   - `OcrEngine`: the `make_engine` fixture in `tests/contract/test_ocr_contract.py`.
   - `DocumentStore`: the `store` fixture in `tests/contract/test_store_contract.py`.
+  - `Embedder`, `ChunkIndex` and `Reranker`: the fixtures in `tests/contract/test_retrieval_contract.py`.
 - For the other ports, write unit tests for the adapter and, where it touches real files or services, integration tests in `tests/integration/` (existing examples: `test_magic_detector.py`, `test_pdfium_reader.py`, `test_pandoc_latex.py`, `test_openai_ocr.py`). The fakes in `tests/fakes.py` show the expected behaviour of each port.
 - Use the `model` and `network` pytest markers for tests that load multi-GB models or reach remote services; they run only with `DOCINGEST_MODEL_TESTS=1` or `DOCINGEST_NETWORK_TESTS=1`.
 - Run `./scripts/check.sh` before opening a pull request: ruff, the import-linter contracts, pyright and pytest with coverage.

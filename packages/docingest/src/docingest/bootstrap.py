@@ -101,6 +101,24 @@ def _paperqa(cfg: AppConfig):
     return PaperQAAnswerer(cfg)
 
 
+def _no_embedder(cfg: AppConfig):
+    from .adapters.retrieval.none import NoEmbedder
+
+    return NoEmbedder()
+
+
+def _no_index(cfg: AppConfig):
+    from .adapters.retrieval.none import NoIndex
+
+    return NoIndex()
+
+
+def _no_reranker(cfg: AppConfig):
+    from .adapters.retrieval.none import NoReranker
+
+    return NoReranker()
+
+
 def _arxiv(cfg: AppConfig):
     from .adapters.sources.arxiv import ArxivCrawler
 
@@ -118,6 +136,9 @@ REGISTRY: dict[str, dict[str, Factory]] = {
     "store": {"filesystem": _filesystem},
     "qa": {"paperqa": _paperqa},
     "crawler": {"arxiv": _arxiv},
+    "embedder": {"none": _no_embedder},
+    "index": {"none": _no_index},
+    "reranker": {"none": _no_reranker},
 }
 
 

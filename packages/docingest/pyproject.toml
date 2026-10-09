@@ -127,6 +127,7 @@ modules = [
     "docingest.adapters.store",
     "docingest.adapters.sources",
     "docingest.adapters.qa",
+    "docingest.adapters.retrieval",
     "docingest.adapters.datasets",
 ]
 

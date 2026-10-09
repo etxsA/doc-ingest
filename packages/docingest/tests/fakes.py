@@ -6,7 +6,10 @@ against them too), not mocks: no call assertions, just behaviour.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import math
+import re
+import zlib
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
@@ -23,12 +26,15 @@ from docingest.domain.models import (
     SourceMetadata,
 )
 from docingest.ports import (
+    Chunk,
     Conversion,
     FetchedSource,
+    Hit,
     OcrResult,
     Segment,
     SourceRecord,
     StoredDocument,
+    Vector,
 )
 
 
@@ -229,3 +235,81 @@ class FakeQA:
     async def ask(self, question, documents, warn: Callable[[str], None]) -> str:
         self.seen = [d.manifest.source_name for d, _ in documents]
         return f"answer to {question!r} from {len(documents)} docs"
+
+
+def words(text: str) -> list[str]:
+    return re.findall(r"\w+", text.lower())
+
+
+class FakeEmbedder:
+    """Hashed bag of words in ``dims`` dimensions: texts sharing words get close vectors."""
+
+    def __init__(
+        self, dims: int = 16, fingerprint: str = "fake-embedder 1", query_instruction: str = ""
+    ):
+        self.dims = dims
+        self.fingerprint = fingerprint
+        self.query_instruction = query_instruction
+        self.calls = 0
+
+    def _vector(self, text: str) -> Vector:
+        v = [0.0] * self.dims
+        for w in words(text):
+            v[zlib.crc32(w.encode()) % self.dims] += 1.0
+        return v
+
+    def embed_documents(self, texts: Sequence[str]) -> list[Vector]:
+        self.calls += 1
+        return [self._vector(t) for t in texts]
+
+    def embed_query(self, text: str) -> Vector:
+        return self._vector(text)
+
+
+class FakeIndex:
+    """Reference implementation of the ChunkIndex contract: exact cosine search in memory.
+
+    Changes are staged until ``commit()``: ``search`` sees only committed documents, so a
+    service that forgets to commit fails its tests. ``keys()`` sees every change.
+    """
+
+    def __init__(self, fingerprint: str = "fake-index 1"):
+        self.fingerprint = fingerprint
+        self._committed: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
+        self._staged: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
+
+    def keys(self) -> dict[str, str]:
+        return {doc_id: key for doc_id, (key, _, _) in self._staged.items()}
+
+    def upsert(
+        self, doc_id: str, key: str, chunks: Sequence[Chunk], vectors: Sequence[Vector]
+    ) -> None:
+        if len(chunks) != len(vectors):
+            raise ValueError("one vector per chunk")
+        self._staged[doc_id] = (key, list(chunks), list(vectors))
+
+    def remove(self, doc_id: str) -> None:
+        self._staged.pop(doc_id, None)
+
+    def commit(self) -> None:
+        self._committed = dict(self._staged)
+
+    def search(self, question: str, vector: Vector, k: int) -> list[Hit]:
+        def cosine(a: Vector, b: Vector) -> float:
+            norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
+            return sum(x * y for x, y in zip(a, b, strict=True)) / norm if norm else 0.0
+
+        hits = [
+            Hit(chunk, cosine(vector, vec))
+            for _, chunks, vectors in self._committed.values()
+            for chunk, vec in zip(chunks, vectors, strict=True)
+        ]
+        return sorted(hits, key=lambda h: -h.score)[:k]  # stable: ties keep insertion order
+
+
+class FakeReranker:
+    """Scores a chunk by the share of the question's words it contains."""
+
+    def rerank(self, question: str, chunks: Sequence[Chunk]) -> list[float]:
+        wanted = set(words(question))
+        return [len(wanted & set(words(c.text))) / len(wanted) if wanted else 0.0 for c in chunks]

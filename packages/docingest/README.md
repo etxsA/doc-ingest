@@ -601,6 +601,7 @@ Ports and their built-in adapters:
 | `store` | `DocumentStore` | `filesystem`: `FilesystemStore` | `adapters/store/filesystem.py` |
 | `crawler` | `SourceCrawler` | `arxiv`: `ArxivCrawler` | `adapters/sources/arxiv.py` |
 | `qa` | `QuestionAnswerer` | `paperqa`: `PaperQAAnswerer` | `adapters/qa/paperqa.py` |
+| `embedder`, `index`, `reranker` | `Embedder`, `ChunkIndex`, `Reranker` | `none`: `NoEmbedder`, `NoIndex`, `NoReranker` (the defaults; real ones come from plugins) | `adapters/retrieval/none.py` |
 | set in `config/benchmark.toml` | `BenchmarkSuite` | `synthetic`: `SyntheticSuite`; `olmocr-bench`: `OlmOcrBenchSuite` | `adapters/datasets/` |
 
 The layering is enforced by five import-linter contracts that run in CI (`uv run lint-imports`): inward-only layers, independent adapter subpackages, a pure domain, an application layer free of concrete libraries, and adapters imported only by `bootstrap` and `entrypoints`. Adapter modules are imported lazily inside their factories, so heavy optional dependencies (mlx-vlm, Docling, PaperQA2) load only when that adapter is selected and used.
@@ -651,7 +652,7 @@ def factory(cfg):  # (AppConfig) -> adapter
 echo-ocr = "my_pkg.ocr:factory"
 ```
 
-After installing the plugin, `ocr = "echo-ocr"` in `[adapters]` selects it, and `uv run docingest adapters` lists it. A built-in adapter wins a name clash. Behavioural tests shared by the fake and real implementations of a port live in `tests/contract/` (today for the OCR engine and the store); see [tests/README.md](tests/README.md).
+After installing the plugin, `ocr = "echo-ocr"` in `[adapters]` selects it, and `uv run docingest adapters` lists it. A built-in adapter wins a name clash. Behavioural tests shared by the fake and real implementations of a port live in `tests/contract/` (today for the OCR engine, the store, the embedder, the chunk index and the reranker); see [tests/README.md](tests/README.md).
 
 ## OCR models and benchmark
 

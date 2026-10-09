@@ -108,7 +108,7 @@ Paths are relative to the package folder, `packages/docingest`. The repository r
 | `src/docingest/ports/` | one `typing.Protocol` per port, plus the frozen dataclasses that cross it |
 | `src/docingest/application/` | use cases: `IngestService`, `CrawlService`, `AskService`, `BenchmarkRunner`; `metrics.py` and `stats.py` |
 | `src/docingest/config.py` | `AppConfig` and its sections, loaded from `config/pipeline.toml` |
-| `src/docingest/adapters/<area>/` | implementations, one subpackage per area: `detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa`, `datasets`, plus `models` (the shared Hugging Face resolver) |
+| `src/docingest/adapters/<area>/` | implementations, one subpackage per area: `detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa`, `retrieval`, `datasets`, plus `models` (the shared Hugging Face resolver) |
 | `src/docingest/bootstrap.py` | the composition root: `REGISTRY`, entry-point plugins, `Container` |
 | `src/docingest/entrypoints/` | `cli.py` (typer), `bench_cli.py` (`docingest bench ...`), `paperqa_hook.py` |
 | `config/` | `pipeline.toml`, `benchmark.toml`, `examples/` |
@@ -165,7 +165,7 @@ These rules are enforced by five import-linter contracts in `pyproject.toml` (`[
 | # | Contract name in `pyproject.toml` | Type | What it forbids | Why |
 |---|---|---|---|---|
 | 1 | Hexagonal layers: outer layers may import inner ones, never the reverse | `layers` | An inner layer importing an outer one. The order from outer to inner is `entrypoints`, `bootstrap`, `adapters`, `config`, `application`, `ports`, `domain`. For example, `application` may not import `config`, and `adapters` may not import `bootstrap`. | The core stays independent of the technology and of the way it is wired. Use cases can be tested with fakes and no configuration. |
-| 2 | Adapters are independent of each other (shared HF resolver excepted) | `independence` | Any import, in either direction, even indirect, between `adapters.detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa` and `datasets`. `adapters.models` is not in the list, so every adapter may use the Hugging Face resolver. | Replacing one adapter cannot break another, and one adapter's optional dependency never loads with another adapter. |
+| 2 | Adapters are independent of each other (shared HF resolver excepted) | `independence` | Any import, in either direction, even indirect, between `adapters.detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa`, `retrieval` and `datasets`. `adapters.models` is not in the list, so every adapter may use the Hugging Face resolver. | Replacing one adapter cannot break another, and one adapter's optional dependency never loads with another adapter. |
 | 3 | Domain is pure: no I/O or framework libraries | `forbidden` | `docingest.domain` importing, directly or through a chain, any of `pypdfium2`, `PIL`, `numpy`, `mlx`, `mlx_vlm`, `paperqa`, `docling`, `pypandoc`, `huggingface_hub`, `httpx`, `urllib`, `typer`, `rich`, `jiwer`. | The domain holds the canonical representation and the pure policies. It may use the standard library and pydantic only. |
 | 4 | Application depends on ports, not on concrete libraries | `forbidden` | `docingest.application` or `docingest.ports` importing any of `pypdfium2`, `mlx`, `mlx_vlm`, `paperqa`, `docling`, `pypandoc`, `huggingface_hub`, `httpx`, `typer`, `rich`. | Use cases talk to ports only. `PIL` (the image type that crosses the ports, an exception accepted in ADR 0001), `numpy` (`application/stats.py`) and `jiwer` (`application/metrics.py`) are deliberately not in this list. |
 | 5 | Only the composition root and entrypoints wire concrete adapters | `protected` | A direct import of `docingest.adapters` from any module except `docingest.bootstrap`, `docingest.entrypoints` and `docingest.adapters` itself. | The choice of implementation is made in one place, from configuration. It also keeps `config`, `application`, `ports` and `domain` free of adapter imports. |
@@ -226,6 +226,7 @@ Expected, reportable failures are domain exceptions from `src/docingest/domain/e
 | `ConversionError` | `DocingestError` | A converter could not produce text | `DoclingConverter.convert`, `PandocLatexConverter.convert` |
 | `SourceUnavailableError` | `DocingestError` | A remote source has no downloadable content for a record | `SourceCrawler.fetch`. The subclasses `HttpStatusError` and `RetriesExhaustedError` live in `adapters/sources/http.py`. |
 | `OcrError` | `DocingestError` | The OCR engine could not transcribe a page | `OcrServerError` in `adapters/ocr/openai_compat.py` (with `.status`) |
+| `NotConfiguredError` | `DocingestError` | A port was used whose `[adapters]` entry is `"none"`. | `NoEmbedder`, `NoIndex`, `NoReranker` in `adapters/retrieval/none.py`. |
 | `RateLimitedError` | `SourceUnavailableError` | The source asked for a pause (429 or `Retry-After`) that the crawler will not wait out. It carries `retry_after_s`. | `PoliteClient` in `adapters/sources/http.py`, the HTTP client of `ArxivCrawler`. `CrawlService` stops the crawl on it. |
 
 When a port has a specific error, the Protocol method's docstring names it. For example, `DocumentConverter.convert` says "Raise ``ConversionError`` when the document cannot be converted". `TypeDetector.detect`, `PdfReader.open`, `ImageSource.frames`, `SourceCrawler.search` and `SourceCrawler.fetch` do the same. `OcrEngine`, `DocumentStore`, `QuestionAnswerer` and `BenchmarkSuite` name no error.
@@ -337,6 +338,9 @@ This guide adds a working example, a `text` converter that splits Markdown into 
 | `office`, `latex`, `text` | `DocumentConverter` (`converters.py`) | `fingerprint`, `convert(path) -> Conversion` | yes, for its kind | `ConversionError` |
 | `store` | `DocumentStore` (`store.py`) | `lookup(doc_id, config_hash, *, max_pages, ocr_all)`, `save(manifest, markdown, *, degraded=False)`, `markdown(doc)`, `corpus()` | no | (none named) |
 | `qa` | `QuestionAnswerer` (`qa.py`) | `async ask(question, documents, warn) -> str` | no, QA never changes ingestion output | (none named) |
+| `embedder` | `Embedder` (`embedding.py`) | `fingerprint`, `query_instruction`, `embed_documents(texts) -> list[Vector]`, `embed_query(text) -> Vector` | no, it keys a chunk index instead | (none named) |
+| `index` | `ChunkIndex` (`index.py`) | `fingerprint`, `keys()`, `upsert(doc_id, key, chunks, vectors)`, `remove(doc_id)`, `commit()`, `search(question, vector, k) -> list[Hit]` | no, it keys a chunk index instead | (none named) |
+| `reranker` | `Reranker` (`reranking.py`) | `rerank(question, chunks) -> list[float]` | no | (none named) |
 | `crawler` | `SourceCrawler` (`sources.py`) | `search(query, limit)`, `fetch(record, dest_dir) -> FetchedSource` | no | `SourceUnavailableError`; `RateLimitedError` stops the crawl |
 | (`config/benchmark.toml`) | `BenchmarkSuite` (`benchmark.py`) | see [section 12](#12-guide-add-a-benchmark-candidate-or-suite) | the suite fingerprint | |
 

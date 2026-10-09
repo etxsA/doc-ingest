@@ -35,6 +35,10 @@ class AdapterSelection(BaseModel):
     store: str = "filesystem"
     qa: str = "paperqa"
     crawler: str = "arxiv"
+    # "none": no chunk index. Real ones come from packages that register entry points.
+    embedder: str = "none"
+    index: str = "none"
+    reranker: str = "none"
 
 
 class OcrConfig(BaseModel):

@@ -41,6 +41,7 @@ src/docingest/
 │   ├── ocr/           mlx-vlm and OpenAI-compatible OCR engines, per-model OCR profiles
 │   ├── pdf/           pypdfium2 PDF reader
 │   ├── qa/            PaperQA2 question answering
+│   ├── retrieval/     none adapters for the embedder, index and reranker ports
 │   ├── sources/       arXiv crawler and the polite HTTP client it uses
 │   └── store/         filesystem document store
 └── entrypoints/       typer CLI, benchmark CLI, PaperQA2 parse_pdf hook
@@ -54,7 +55,7 @@ src/docingest/
 | `config.py` | config | Pydantic models for `config/pipeline.toml` and the loader. One model per TOML section. | `AppConfig`, `AdapterSelection`, `OcrConfig`, `QaConfig`, `LatexConfig`, `ArxivConfig`, `load_config`, `DEFAULT_CONFIG`, `DEFAULT_OCR_REPO`, `DEFAULT_OCR_REVISION`, `DEFAULT_LLM_BASE` | [config/README.md](../../config/README.md) |
 | `bootstrap.py` | composition root | The only module that knows every adapter. Maps adapter names to factories, discovers entry-point plugins and builds the services. | `REGISTRY`, `Factory`, `plugins`, `available`, `factory`, `build`, `Container` | [below](#runtime-wiring-bootstrapcontainer) |
 | `domain/` | domain | `models.py` (manifest, page records, metadata, enums), `routing.py` (OCR routing policy), `text.py` (text-layer clean-up, Markdown serialization), `chunking.py` (page-aware chunks), `errors.py` (exception hierarchy). No I/O. | `DocumentManifest`, `PageRecord`, `SourceKind`, `PageMethod`, `SourceMetadata`, `RoutingPolicy`, `decide`, `render_markdown`, `split_pages`, `chunk_pages`, `DocingestError` | [domain/README.md](domain/README.md) |
-| `ports/` | ports | One module per concern, each defining `@runtime_checkable` Protocols plus the dataclasses passed through them. | `TypeDetector`, `PdfReader`, `OcrEngine`, `ImageSource`, `DocumentConverter`, `DocumentStore`, `SourceCrawler`, `QuestionAnswerer`, `BenchmarkSuite` | [ports/README.md](ports/README.md) |
+| `ports/` | ports | One module per concern, each defining `@runtime_checkable` Protocols plus the dataclasses passed through them. | `TypeDetector`, `PdfReader`, `OcrEngine`, `ImageSource`, `DocumentConverter`, `DocumentStore`, `SourceCrawler`, `QuestionAnswerer`, `Embedder`, `ChunkIndex`, `Reranker`, `BenchmarkSuite` | [ports/README.md](ports/README.md) |
 | `application/` | application | `ingest.py` (`IngestService`, `IngestOptions`), `crawl.py` (`CrawlService`, `CrawlReport`), `ask.py` (`AskService`), `benchmark.py` (`BenchmarkRunner`, scoring and reports), `metrics.py` (CER, WER, F1 on normalized text), `stats.py` (cluster bootstrap and paired tests). Depends on ports, never on adapters. | `IngestService`, `IngestOptions`, `PIPELINE_VERSION`, `CrawlService`, `AskService`, `BenchmarkRunner` | [application/README.md](application/README.md) |
 | `adapters/` | adapters | Concrete implementations of the ports. Subpackages are independent of each other (only `adapters/models` is shared). | see [adapters/README.md](adapters/README.md) | [adapters/README.md](adapters/README.md) |
 | `adapters/ocr/` | adapters | `MlxVlmOcr`, `OpenAICompatibleOcr` and the `OcrProfile` table (prompt, image size, clean-up, retry ladder per model family). | `MlxVlmOcr`, `OpenAICompatibleOcr`, `PROFILES`, `profile_for` | [adapters/ocr/README.md](adapters/ocr/README.md) |
@@ -119,7 +120,7 @@ What each arrow carries:
 
 The remaining import-linter contracts, numbered as in [docs/architecture.md](../../docs/architecture.md#4-import-contracts) and [CONTRIBUTING.md](../../CONTRIBUTING.md) (contract 1 is the `layers` contract above):
 
-2. Adapter subpackages (`detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa`, `datasets`) do not import each other. `adapters/models` is outside that list and is shared by `ocr` and `qa`.
+2. Adapter subpackages (`detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa`, `retrieval`, `datasets`) do not import each other. `adapters/models` is outside that list and is shared by `ocr` and `qa`.
 3. `domain` may not import pypdfium2, PIL, numpy, mlx, mlx_vlm, paperqa, docling, pypandoc, huggingface_hub, httpx, urllib, typer, rich or jiwer.
 4. `application` and `ports` may not import pypdfium2, mlx, mlx_vlm, paperqa, docling, pypandoc, huggingface_hub, httpx, typer or rich.
 5. Only `bootstrap`, `entrypoints` and `adapters` itself may import `docingest.adapters`.
@@ -169,7 +170,7 @@ flowchart TD
 
 Behaviour worth knowing:
 
-- Port names (the keys of `REGISTRY`, of `[adapters]` and of `overrides`) are `detector`, `pdf`, `ocr`, `images`, `office`, `latex`, `text`, `store`, `qa`, `crawler`.
+- Port names (the keys of `REGISTRY`, of `[adapters]` and of `overrides`) are `detector`, `pdf`, `ocr`, `images`, `office`, `latex`, `text`, `store`, `qa`, `crawler`, `embedder`, `index`, `reranker`.
 - An adapter is built once per container and shared: `ingest` and `ask` use the same store instance. The container copies the `overrides` dict you pass and keeps built adapters in a cache of its own, so your dict is never modified and can be passed to several containers with different configurations.
 - A built-in adapter wins a name clash with a plugin. A plugin is imported only when it is selected; if its import fails, the exception keeps its type and gets a note naming the plugin.
 - `Container.ingest` builds the detector, PDF reader, OCR engine, image source and store when first accessed. Converters are built only when a document of that kind is ingested (`_LazyConverters` maps `SourceKind.OFFICE`, `LATEX`, `TEXT` to the `office`, `latex`, `text` slots).

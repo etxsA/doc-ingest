@@ -38,7 +38,7 @@ flowchart LR
         qa["[qa]"]
         latex["[latex]"]
         arxiv["[arxiv]"]
-        extra["other top-level tables"]
+        extra["other top-level tables, among them [embedder], [index], [reranker]"]
     end
     adp --> boot["bootstrap.REGISTRY and entry-point plugins, wired by Container"]
     top --> store["FilesystemStore root and crawl download folder raw_dir/arxiv"]
@@ -161,6 +161,11 @@ Selects the implementation plugged into each port. A value is either a built-in 
 | `store` | string | `"filesystem"` | `filesystem` | `DocumentStore` | the ingestion service or `ask` is first used |
 | `qa` | string | `"paperqa"` | `paperqa` | `QuestionAnswerer` | `docingest ask` |
 | `crawler` | string | `"arxiv"` | `arxiv` | `SourceCrawler` | `docingest crawl` |
+| `embedder` | string | `"none"` | `none` | `Embedder` | never yet: no use case calls it |
+| `index` | string | `"none"` | `none` | `ChunkIndex` | never yet: no use case calls it |
+| `reranker` | string | `"none"` | `none` | `Reranker` | never yet: no use case calls it |
+
+The three retrieval ports have only the `none` built-in, which refuses to work (`NotConfiguredError`). A plugin package selected here brings the real adapters and reads its own tables, [`[embedder]`, `[index]` and `[reranker]`](#plugin-sections).
 
 ### `[routing]`
 
@@ -283,6 +288,8 @@ def make_my_ocr(cfg):                     # registered under [project.entry-poin
 
 `MyOcr` stands for your class implementing the `OcrEngine` port. See [../src/docingest/adapters/README.md](../src/docingest/adapters/README.md) for the full plugin procedure.
 
+The adapters of the `embedder`, `index` and `reranker` ports are meant to be configured this way, from three tables that docingest itself never validates: `[embedder]` (server address, served and pinned model, query instruction), `[index]` (index folder, how many candidates and contexts, keyword fusion) and `[reranker]` (server address, model, instruction). Their keys are defined and checked by the plugin that reads them, which receives the tables untouched in `cfg.model_extra["embedder"]`, `["index"]` and `["reranker"]`.
+
 ## Pinning models by revision
 
 Every model and dataset is pinned to an exact Hugging Face commit, so a run is reproducible and nothing is pulled from a moving branch.
@@ -327,6 +334,7 @@ flowchart LR
 | `[adapters] ocr` | PDFs and images (the fingerprint names the adapter) |
 | `[adapters] pdf`, `images`, `office`, `latex`, `text` | the kind that adapter handles, through its fingerprint (`images`: image inputs; the Pillow version is in its fingerprint) |
 | `[adapters] detector`, `store`, `qa`, `crawler` | nothing (these adapters carry no fingerprint; the detector's only output that matters is the kind, which is in the key) |
+| `[adapters] embedder`, `index`, `reranker` | nothing (the fingerprints of the embedder and the index identify a chunk index, not a stored document) |
 | `[latex] split_level`, `fallback`, the pandoc version (which `pandoc_path` can change) and, when `fallback` is on, the pylatexenc version | LaTeX |
 | `[latex] timeout_s`, `max_archive_mb` | nothing |
 | Docling version | office documents |

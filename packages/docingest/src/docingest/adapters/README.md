@@ -21,6 +21,7 @@ This page is the catalog. For every adapter it lists the port it implements, its
 - [sources: ArxivCrawler](#sources-arxivcrawler)
 - [sources: the polite HTTP helper](#sources-the-polite-http-helper)
 - [qa: PaperQAAnswerer](#qa-paperqaanswerer)
+- [retrieval: the none adapters](#retrieval-the-none-adapters)
 - [models: Hugging Face snapshot resolution](#models-hugging-face-snapshot-resolution)
 - [datasets: benchmark suites](#datasets-benchmark-suites)
 - [Domain errors raised by adapters](#domain-errors-raised-by-adapters)
@@ -47,6 +48,9 @@ These are the entries of `bootstrap.REGISTRY`. The first column is the key in th
 | `store` | **`filesystem`** | `FilesystemStore` | [store/filesystem.py](store/filesystem.py) | `DocumentStore` | none | stdlib |
 | `qa` | **`paperqa`** | `PaperQAAnswerer` | [qa/paperqa.py](qa/paperqa.py) | `QuestionAnswerer` | none | `qa` extra (`paper-qa[local]`) |
 | `crawler` | **`arxiv`** | `ArxivCrawler` | [sources/arxiv.py](sources/arxiv.py) | `SourceCrawler` | none | stdlib |
+| `embedder` | **`none`** | `NoEmbedder` | [retrieval/none.py](retrieval/none.py) | `Embedder` | `none` | stdlib |
+| `index` | **`none`** | `NoIndex` | [retrieval/none.py](retrieval/none.py) | `ChunkIndex` | `none` | stdlib |
+| `reranker` | **`none`** | `NoReranker` | [retrieval/none.py](retrieval/none.py) | `Reranker` | none | stdlib |
 
 "Core" means a regular dependency in `pyproject.toml`. Extras are installed with `uv sync --extra <name>` (`mlx`, `qa`, `office`), or all at once with `uv sync --all-extras`.
 
@@ -102,6 +106,9 @@ flowchart LR
 │ store    │ filesystem  │ filesystem                 │
 │ qa       │ paperqa     │ paperqa                    │
 │ crawler  │ arxiv       │ arxiv                      │
+│ embedder │ none        │ none                       │
+│ index    │ none        │ none                       │
+│ reranker │ none        │ none                       │
 └──────────┴─────────────┴────────────────────────────┘
 ```
 
@@ -112,7 +119,7 @@ The contracts in `pyproject.toml` (checked by `lint-imports`, part of `./scripts
 | Contract | Consequence for adapters |
 |---|---|
 | Hexagonal layers | Adapters may import `config`, `application`, `ports` and `domain`, never `bootstrap` or `entrypoints`. |
-| Adapters are independent of each other | `detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa` and `datasets` must not import one another. `models` is not in that list, so the shared Hugging Face resolver can be used by any of them. |
+| Adapters are independent of each other | `detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa`, `retrieval` and `datasets` must not import one another. `models` is not in that list, so the shared Hugging Face resolver can be used by any of them. |
 | Only the composition root and entrypoints wire concrete adapters | `docingest.adapters` may be imported only by `docingest.bootstrap`, `docingest.entrypoints` and other adapter modules. |
 
 ## Ports to adapters map
@@ -136,6 +143,9 @@ flowchart LR
         pStore["DocumentStore"]
         pQa["QuestionAnswerer"]
         pSrc["SourceCrawler"]
+        pEmb["Embedder"]
+        pIdx["ChunkIndex"]
+        pRrk["Reranker"]
         pSuite["BenchmarkSuite"]
     end
     subgraph adapters["Adapters"]
@@ -150,6 +160,7 @@ flowchart LR
         aFs["FilesystemStore (filesystem)"]
         aPqa["PaperQAAnswerer (paperqa)"]
         aArxiv["ArxivCrawler (arxiv)"]
+        aNone["NoEmbedder, NoIndex, NoReranker (none)"]
         aSyn["SyntheticSuite (synthetic)"]
         aOlm["OlmOcrBenchSuite (olmocr-bench)"]
     end
@@ -176,6 +187,9 @@ flowchart LR
     pStore --> aFs
     pQa --> aPqa
     pSrc --> aArxiv
+    pEmb --> aNone
+    pIdx --> aNone
+    pRrk --> aNone
     pSuite --> aSyn
     pSuite --> aOlm
 ```
@@ -195,7 +209,7 @@ flowchart LR
 
 ## Fingerprints and the cache key
 
-Ports whose output ends up in a stored document declare a `fingerprint: str` (`PdfReader`, `OcrEngine`, `ImageSource`, `DocumentConverter`), and so does `BenchmarkSuite`. `IngestService.config_hash()` in [`../application/ingest.py`](../application/ingest.py) hashes the fingerprints that can change a document of a given kind, so replacing an adapter or changing one of its settings produces a new `config_hash` and the stored result is no longer a cache hit.
+Ports whose output ends up in a stored document declare a `fingerprint: str` (`PdfReader`, `OcrEngine`, `ImageSource`, `DocumentConverter`), and so does `BenchmarkSuite`. `Embedder` and `ChunkIndex` declare one too, but it identifies a chunk index, not a stored document, and is in no cache key. `IngestService.config_hash()` in [`../application/ingest.py`](../application/ingest.py) hashes the fingerprints that can change a document of a given kind, so replacing an adapter or changing one of its settings produces a new `config_hash` and the stored result is no longer a cache hit.
 
 | Document kind | Parts hashed into `config_hash` |
 |---|---|
@@ -648,6 +662,20 @@ Details:
 
 The reverse direction, PaperQA2 calling docingest to parse PDFs, is a driving adapter: `parse_pdf_to_pages` in [`../entrypoints/paperqa_hook.py`](../entrypoints/paperqa_hook.py). See [`../entrypoints/README.md`](../entrypoints/README.md).
 
+## retrieval: the none adapters
+
+| | |
+|---|---|
+| Module | [retrieval/none.py](retrieval/none.py) |
+| Ports | `Embedder` (`NoEmbedder`), `ChunkIndex` (`NoIndex`), `Reranker` (`NoReranker`) |
+| Registry | `[adapters] embedder = "none"`, `index = "none"`, `reranker = "none"` (the defaults) |
+| Config keys | none |
+| Fingerprint | `"none"` on `NoEmbedder` and `NoIndex`; `NoReranker` has none |
+| Dependencies | stdlib only |
+| Used by | nothing yet: no use case calls these ports |
+
+They stand for "no chunk index configured" and keep `docingest` working without a package that provides real ones. Every method raises `NotConfiguredError` with the message `[adapters] <port> is "none": select an adapter to use it`, so a missing setting cannot silently return empty results. Real adapters come from plugin packages through the entry-point groups `docingest.embedder`, `docingest.index` and `docingest.reranker`, and read their settings from their own top-level tables (`[embedder]`, `[index]`, `[reranker]`), which `AppConfig` keeps untouched in `model_extra` (see [config/README.md](../../../config/README.md#plugin-sections)).
+
 ## models: Hugging Face snapshot resolution
 
 [models/huggingface.py](models/huggingface.py) has one function and no port:
@@ -810,6 +838,7 @@ Adapters translate library exceptions into the errors of [`../domain/errors.py`]
 | `ConversionError` | `DoclingConverter` (including a missing `office` extra), `PandocLatexConverter` and `converters/latex_source.py`. `PassthroughConverter` raises none. |
 | `OcrError` | `OcrServerError(message, status)` in `ocr/openai_compat.py`: unreachable server or timeout, an HTTP error status (after retries when it is retryable), a non-JSON reply or one without `choices[0].message`, an unset API key variable. `MlxVlmOcr` does not translate mlx-vlm exceptions. |
 | `SourceUnavailableError` | `ArxivCrawler` (API error, nothing downloadable, unusable record key), `PoliteClient` (oversized body), olmOCR-bench downloads. Subclasses in `sources/http.py`: `HttpStatusError(url, status)` and `RetriesExhaustedError(status)` |
+| `NotConfiguredError` | `NoEmbedder`, `NoIndex`, `NoReranker` (`retrieval/none.py`) on any call |
 | `RateLimitedError` | `PoliteClient`; carries `retry_after_s`. `CrawlService` stops the crawl on it. |
 | `LocalWriteError` | `PoliteClient` when a download cannot be written to disk (defined in `sources/http.py`; a direct subclass of `DocingestError`, not of `SourceUnavailableError`) |
 

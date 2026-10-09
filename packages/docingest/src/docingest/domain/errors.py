@@ -25,6 +25,10 @@ class SourceUnavailableError(DocingestError):
     """A remote source (e.g. arXiv) has no downloadable content for a record."""
 
 
+class NotConfiguredError(DocingestError):
+    """A port was used whose ``[adapters]`` entry is ``"none"`` (no implementation chosen)."""
+
+
 class OcrError(DocingestError):
     """The OCR engine could not transcribe a page."""
 

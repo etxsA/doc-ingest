@@ -67,7 +67,7 @@ The package has seven layers. A module may import modules of its own layer and o
 flowchart TD
     EP["entrypoints: cli, bench_cli, paperqa_hook"]
     BS["bootstrap: REGISTRY, plugins, Container"]
-    AD["adapters: detection, pdf, ocr, images, converters, store, sources, qa, datasets, models"]
+    AD["adapters: detection, pdf, ocr, images, converters, store, sources, qa, retrieval, datasets, models"]
     CF["config: AppConfig loaded from config/pipeline.toml"]
     AP["application: IngestService, CrawlService, AskService, BenchmarkRunner, metrics, stats"]
     PT["ports: typing.Protocol interfaces and the dataclasses that cross them"]
@@ -97,7 +97,7 @@ flowchart LR
         DOM["domain: manifest, routing policy, text cleanup"]
     end
     subgraph PORTS["Ports"]
-        PP["TypeDetector, PdfReader, OcrEngine, ImageSource, DocumentConverter, DocumentStore, SourceCrawler, QuestionAnswerer, BenchmarkSuite"]
+        PP["TypeDetector, PdfReader, OcrEngine, ImageSource, DocumentConverter, DocumentStore, SourceCrawler, QuestionAnswerer, Embedder, ChunkIndex, Reranker, BenchmarkSuite"]
     end
     subgraph DRIVEN["Driven adapters"]
         IMPL["magic, pdfium, mlx-vlm, openai-compatible, pillow, docling, pandoc, passthrough, filesystem, arxiv, paperqa, synthetic, olmocr-bench"]
@@ -141,7 +141,7 @@ The layering is enforced by five import-linter contracts in `[tool.importlinter]
 | # | Contract name | Type | What it enforces |
 |---|---|---|---|
 | 1 | Hexagonal layers: outer layers may import inner ones, never the reverse | `layers` | The order `entrypoints`, `bootstrap`, `adapters`, `config`, `application`, `ports`, `domain`. A module may import its own layer and the layers listed after it, never a layer listed before it. |
-| 2 | Adapters are independent of each other (shared HF resolver excepted) | `independence` | None of `adapters.detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa`, `datasets` imports another. `adapters.models` is deliberately not in the list, so `ocr.mlx_vlm` and `qa.paperqa` can share `models.huggingface.resolve`. |
+| 2 | Adapters are independent of each other (shared HF resolver excepted) | `independence` | None of `adapters.detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa`, `retrieval`, `datasets` imports another. `adapters.models` is deliberately not in the list, so `ocr.mlx_vlm` and `qa.paperqa` can share `models.huggingface.resolve`. |
 | 3 | Domain is pure: no I/O or framework libraries | `forbidden` | `docingest.domain` may not import `pypdfium2`, `PIL`, `numpy`, `mlx`, `mlx_vlm`, `paperqa`, `docling`, `pypandoc`, `huggingface_hub`, `httpx`, `urllib`, `typer`, `rich`, `jiwer`. |
 | 4 | Application depends on ports, not on concrete libraries | `forbidden` | `docingest.application` and `docingest.ports` may not import `pypdfium2`, `mlx`, `mlx_vlm`, `paperqa`, `docling`, `pypandoc`, `huggingface_hub`, `httpx`, `typer`, `rich`. |
 | 5 | Only the composition root and entrypoints wire concrete adapters | `protected` | Only `docingest.bootstrap`, `docingest.entrypoints` and the adapters themselves may import `docingest.adapters`. |
@@ -169,6 +169,9 @@ flowchart LR
         DS["DocumentStore"]
         SC["SourceCrawler"]
         QA["QuestionAnswerer"]
+        EMB["Embedder"]
+        IDX["ChunkIndex"]
+        RRK["Reranker"]
         BSU["BenchmarkSuite"]
     end
     subgraph A["Built-in adapters (docingest.adapters)"]
@@ -183,6 +186,7 @@ flowchart LR
         FS["store = filesystem: FilesystemStore"]
         ARX["crawler = arxiv: ArxivCrawler"]
         PQA["qa = paperqa: PaperQAAnswerer"]
+        NON["embedder, index, reranker = none: NoEmbedder, NoIndex, NoReranker"]
         SYN["bench suite synthetic: SyntheticSuite"]
         OLM["bench suite olmocr-bench: OlmOcrBenchSuite"]
     end
@@ -197,6 +201,9 @@ flowchart LR
     FS -.-> DS
     ARX -.-> SC
     PQA -.-> QA
+    NON -.-> EMB
+    NON -.-> IDX
+    NON -.-> RRK
     SYN -.-> BSU
     OLM -.-> BSU
 ```
@@ -214,6 +221,9 @@ flowchart LR
 | `DocumentStore` | `ports/store.py` | `store` | `filesystem` | `FilesystemStore`, `adapters/store/filesystem.py` | `IngestService`, `AskService`, `eval-ocr`, the PaperQA2 hook |
 | `SourceCrawler` | `ports/sources.py` | `crawler` | `arxiv` | `ArxivCrawler`, `adapters/sources/arxiv.py` | `CrawlService` |
 | `QuestionAnswerer` | `ports/qa.py` | `qa` | `paperqa` | `PaperQAAnswerer`, `adapters/qa/paperqa.py` | `AskService` |
+| `Embedder` | `ports/embedding.py` | `embedder` | `none` | `NoEmbedder`, `adapters/retrieval/none.py` | no use case yet |
+| `ChunkIndex` | `ports/index.py` | `index` | `none` | `NoIndex`, `adapters/retrieval/none.py` | no use case yet |
+| `Reranker` | `ports/reranking.py` | `reranker` | `none` | `NoReranker`, `adapters/retrieval/none.py` | no use case yet |
 | `BenchmarkSuite` | `ports/benchmark.py` | none | `synthetic`, `olmocr-bench` | `SyntheticSuite`, `OlmOcrBenchSuite`, `adapters/datasets/` | `BenchmarkRunner`, `score_run` |
 
 Some adapter modules are shared helpers rather than port implementations: `adapters/models/huggingface.py` (`resolve(repo_id, revision)`, an offline-first snapshot resolver), `adapters/ocr/profiles.py` (per-model prompt, image size, clean-up and retry ladder, shared by both OCR adapters), `adapters/converters/latex_source.py` (safe unpacking, main-file detection and `\input` flattening for LaTeX) and `adapters/sources/http.py` (`PoliteClient`, the rate-limited HTTP client of the arXiv crawler). See [adapters/README.md](../src/docingest/adapters/README.md), [adapters/ocr/README.md](../src/docingest/adapters/ocr/README.md) and [adapters/converters/README.md](../src/docingest/adapters/converters/README.md).
@@ -303,7 +313,7 @@ classDiagram
 
 `TypeDetector.detect` returns `(SourceKind, mime)`. `PdfPage.signals` returns `(PageSignals, raw_text)`. `DocumentStore.lookup` returns `None` on a miss, and `corpus` returns `(documents, warnings)`. `PdfDocument` also implements `__len__` (the page count). `OcrResult` has more fields than shown (`peak_memory_gb`, `first_finish_reason`, `total_gen_tokens`, `gen_seconds`, `raw_text`) that describe the whole retry ladder and resource use, mainly for benchmark telemetry.
 
-The second diagram covers the crawl, question-answering and benchmark ports.
+The second diagram covers the crawl, question-answering, retrieval and benchmark ports.
 
 ```mermaid
 classDiagram
@@ -315,6 +325,39 @@ classDiagram
     class QuestionAnswerer {
         <<Protocol>>
         +ask(question, documents, warn) str
+    }
+    class Embedder {
+        <<Protocol>>
+        +str fingerprint
+        +str query_instruction
+        +embed_documents(texts) list~Vector~
+        +embed_query(text) Vector
+    }
+    class ChunkIndex {
+        <<Protocol>>
+        +str fingerprint
+        +keys() dict
+        +upsert(doc_id, key, chunks, vectors)
+        +remove(doc_id)
+        +commit()
+        +search(question, vector, k) list~Hit~
+    }
+    class Reranker {
+        <<Protocol>>
+        +rerank(question, chunks) list~float~
+    }
+    class Chunk {
+        +str doc_id
+        +str name
+        +str text
+        +int first_page
+        +int last_page
+        +bool is_reference
+        +int start
+    }
+    class Hit {
+        +Chunk chunk
+        +float score
     }
     class BenchmarkSuite {
         <<Protocol>>
@@ -351,6 +394,9 @@ classDiagram
     SourceCrawler ..> SourceRecord : search
     SourceCrawler ..> FetchedSource : fetch
     FetchedSource *-- SourceRecord
+    ChunkIndex ..> Hit : search
+    Hit *-- Chunk
+    Reranker ..> Chunk : scores
     BenchmarkSuite ..> Sample : samples
     BenchmarkSuite ..> SuiteScore : score
 ```
@@ -359,7 +405,7 @@ classDiagram
 
 ### Fingerprints
 
-Five ports carry a `fingerprint`: `PdfReader`, `OcrEngine`, `ImageSource`, `DocumentConverter` and `BenchmarkSuite`. The first four feed the ingestion cache key ([section 8](#8-caching-and-fingerprints)). The suite fingerprint identifies a benchmark run's data ([section 12](#12-the-benchmark-subsystem)). The other ports have no fingerprint and are not part of any cache key: the detector's only output that matters is the kind, which is in the key, and the store, question answering and the crawler do not change what is written.
+Seven ports carry a `fingerprint`: `PdfReader`, `OcrEngine`, `ImageSource`, `DocumentConverter`, `Embedder`, `ChunkIndex` and `BenchmarkSuite`. The first four feed the ingestion cache key ([section 8](#8-caching-and-fingerprints)). The suite fingerprint identifies a benchmark run's data ([section 12](#12-the-benchmark-subsystem)); the embedder and index fingerprints identify a chunk index, which is valid only for the model and chunker settings it was built with. The other ports have no fingerprint and are not part of any cache key: the detector's only output that matters is the kind, which is in the key, and the store, question answering, the crawler and the reranker do not change what is written.
 
 | Adapter | Fingerprint contents |
 |---|---|
@@ -393,6 +439,9 @@ REGISTRY: dict[str, dict[str, Factory]] = {
     "store": {"filesystem": _filesystem},
     "qa": {"paperqa": _paperqa},
     "crawler": {"arxiv": _arxiv},
+    "embedder": {"none": _no_embedder},
+    "index": {"none": _no_index},
+    "reranker": {"none": _no_reranker},
 }
 ```
 
@@ -945,6 +994,7 @@ classDiagram
     DocingestError <|-- ConversionError
     DocingestError <|-- SourceUnavailableError
     DocingestError <|-- OcrError
+    DocingestError <|-- NotConfiguredError
     SourceUnavailableError <|-- RateLimitedError
     SourceUnavailableError <|-- HttpStatusError
     SourceUnavailableError <|-- RetriesExhaustedError
@@ -952,7 +1002,7 @@ classDiagram
     OcrError <|-- OcrServerError
 ```
 
-`DocingestError` and its seven subclasses `UnsupportedInputError`, `InvalidQueryError`, `DocumentOpenError`, `ConversionError`, `SourceUnavailableError`, `OcrError` and `RateLimitedError` live in `domain/errors.py`. `HttpStatusError`, `RetriesExhaustedError` and `LocalWriteError` are defined in `adapters/sources/http.py`, and `OcrServerError` in `adapters/ocr/openai_compat.py`.
+`DocingestError` and its eight subclasses `UnsupportedInputError`, `InvalidQueryError`, `DocumentOpenError`, `ConversionError`, `SourceUnavailableError`, `OcrError`, `NotConfiguredError` and `RateLimitedError` live in `domain/errors.py`. `HttpStatusError`, `RetriesExhaustedError` and `LocalWriteError` are defined in `adapters/sources/http.py`, and `OcrServerError` in `adapters/ocr/openai_compat.py`.
 
 | Error | Meaning | Raised by | Handled by |
 |---|---|---|---|
@@ -963,6 +1013,7 @@ classDiagram
 | `SourceUnavailableError` | A remote source has no downloadable content for a record. | `ArxivCrawler`, `PoliteClient`, olmOCR-bench subset preparation | `CrawlService` records the failure and moves to the next record. A search failure ends the crawl with a report. |
 | `RateLimitedError` | The source asked for a pause the crawler will not sit out. Carries `retry_after_s`. | `PoliteClient` | `CrawlService` stops the whole crawl (next section) |
 | `OcrError` | The OCR engine could not transcribe a page. | `OpenAICompatibleOcr` (as `OcrServerError`, with the HTTP `status` when there was one) | not caught by `IngestService`, so the document fails. `BenchmarkRunner` records it in telemetry and continues. |
+| `NotConfiguredError` | A port was used whose `[adapters]` entry is `"none"`. | `NoEmbedder`, `NoIndex`, `NoReranker` | not caught: nothing uses these ports yet |
 
 `IngestService` does not catch processing errors: a failure on any page fails the whole document, and nothing is saved for it. Isolation happens one level up, in the driving code:
 

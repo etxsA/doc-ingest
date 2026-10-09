@@ -90,7 +90,7 @@ flowchart LR
 | `test_arxiv_fixes.py` | Regression tests for the arXiv crawler, same fakes |
 | `test_bench_fixes.py` | Benchmark regressions: clustered statistics, the OCR retry ladder in telemetry, page furniture and LaTeX / `<img>` normalisation, stale saved scores. The MLX adapter runs against stub modules, never a model |
 | `test_benchmark.py` | `BenchmarkRunner`, score persistence and report aggregation on an in-memory suite (`MemSuite`) |
-| `test_bootstrap.py` | `REGISTRY` defaults, unknown adapter names, `Container` overrides, entry-point plugins including broken ones |
+| `test_bootstrap.py` | `REGISTRY` defaults, unknown adapter names, `Container` overrides, entry-point plugins including broken ones, the `none` retrieval adapters and the `[index]`, `[embedder]` and `[reranker]` tables reaching a plugin |
 | `test_chunking.py` | `domain.chunking.chunk_pages`: chunk names and page ranges, overlap, page breaks, invalid settings |
 | `test_core_fixes.py` | Regressions: config loading, the pipeline version against `pyproject.toml` and `uv.lock`, QA LLM parameters, metadata refresh and degraded results through the real `FilesystemStore` |
 | `test_domain_models.py` | `SourceMetadata` citation formatting |
@@ -109,6 +109,7 @@ flowchart LR
 | Module | Implementations under test |
 |---|---|
 | `test_ocr_contract.py` | `FakeOcr`, `OpenAICompatibleOcr` against a local stub `/v1/chat/completions` server, `MlxVlmOcr` with a pinned Qwen3-VL-2B 4-bit model (`model` marker) |
+| `test_retrieval_contract.py` | `FakeEmbedder`, `FakeIndex` and `FakeReranker` (from `fakes.py`): the `Embedder`, `ChunkIndex` and `Reranker` contracts |
 | `test_store_contract.py` | `InMemoryStore` (from `fakes.py`) and `FilesystemStore` |
 
 ### integration/
@@ -169,6 +170,9 @@ The module docstring states the rule: the fakes are real implementations of the 
 | `InMemoryStore()` | `DocumentStore` | Reference implementation of the store contract: canonical results, variants (partial or forced-OCR runs) and degraded fallbacks kept apart; locations are `mem://...` strings | `canonical`, `variants`, `degraded` dictionaries |
 | `FakeCrawler(records, payload=..., fail_keys=set())` | `SourceCrawler` | `search()` returns the first `limit` records; `fetch()` writes `<key>.tex` with `payload` into `dest_dir` and returns format `"latex"`; keys in `fail_keys` raise `DocumentOpenError` | |
 | `record(key, title="A paper")` | helper | A `SourceRecord` with `SourceMetadata(title=title, arxiv_id=key, year=2024)` | |
+| `FakeEmbedder(dims=16, fingerprint=..., query_instruction="")` | `Embedder` | A hashed bag of words (`crc32` of each word modulo `dims`): texts that share words get close vectors; the same text always gives the same vector | `calls` counts `embed_documents` calls |
+| `FakeIndex(fingerprint=...)` | `ChunkIndex` | Reference implementation of the index contract: documents kept in memory, exact cosine search, ties in insertion order; `upsert` and `remove` are staged and only `commit()` makes them visible to `search` | `keys()` shows staged changes |
+| `FakeReranker()` | `Reranker` | Scores a chunk by the share of the question's words it contains | |
 | `FakeQA()` | `QuestionAnswerer` | Async `ask()` returns `f"answer to {question!r} from {len(documents)} docs"` | `seen` holds the source names of the documents it received |
 
 There is no shared fake for `BenchmarkSuite`. `tests/unit/test_benchmark.py` defines `MemSuite` (samples whose reference is their id, scored by exact match), `TaggedSuite` (images tagged with their sample id) and `EchoOcr` (a `FakeOcr` subclass that returns that id, can fail every Nth call and counts `unload()` calls), plus the `spec()` and `runner()` helpers for `BenchmarkRunner`. A new unit test in `tests/unit/` can import them with `from test_benchmark import ...`, as `test_bench_fixes.py` does.
@@ -339,6 +343,7 @@ flowchart LR
     OT --> F3["MlxVlmOcr, model marker"]
     ST["test_store_contract.py"] --> S1["InMemoryStore"]
     ST --> S2["FilesystemStore"]
+    RT["test_retrieval_contract.py"] --> R1["FakeEmbedder, FakeIndex, FakeReranker"]
 ```
 
 **A new `DocumentStore`**: add a parameter to the `store` fixture in `tests/contract/test_store_contract.py`. `MyStore` below stands for your adapter:
@@ -365,7 +370,7 @@ Also add an integration module in `tests/integration/` for the behaviour specifi
 
 ### Writing a contract for a port that has none yet
 
-Only `OcrEngine` and `DocumentStore` have contract modules today. A new one follows the same shape: one parametrized fixture that yields every implementation, and tests that use only the port's methods. This complete example for `DocumentConverter`, placed at `tests/contract/test_converter_contract.py`, runs against the current code:
+`OcrEngine`, `DocumentStore` and the three retrieval ports (`test_retrieval_contract.py`) have contract modules today. A new one follows the same shape: one parametrized fixture that yields every implementation, and tests that use only the port's methods. This complete example for `DocumentConverter`, placed at `tests/contract/test_converter_contract.py`, runs against the current code:
 
 ```python
 """DocumentConverter contract: every converter implementation must pass the same tests."""
