@@ -19,6 +19,7 @@ from typing import Any, ClassVar
 
 from .application.ask import AskService
 from .application.crawl import CrawlService
+from .application.index import IndexService
 from .application.ingest import IngestService, Log
 from .config import AppConfig
 from .domain.models import ModelRef, SourceKind
@@ -211,6 +212,17 @@ class Container:
     @cached_property
     def ask(self) -> AskService:
         return AskService(store=self.adapter("store"), qa=self.adapter("qa"))
+
+    @cached_property
+    def index_service(self) -> IndexService:
+        return IndexService(
+            store=self.adapter("store"),
+            embedder=self.adapter("embedder"),
+            index=self.adapter("index"),
+            chunk_chars=self.cfg.qa.chunk_chars,  # the chunks of the index are the ones ask uses
+            overlap=self.cfg.qa.overlap,
+            log=self.log,
+        )
 
     @cached_property
     def crawl(self) -> CrawlService:

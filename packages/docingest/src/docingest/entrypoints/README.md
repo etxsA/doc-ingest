@@ -4,8 +4,9 @@ This package holds the **driving adapters**: the code that turns a user action i
 
 | File | What it contains |
 |---|---|
-| `cli.py` | The Typer application `app`, installed as the `docingest` console script (`[project.scripts] docingest = "docingest.entrypoints.cli:app"` in `pyproject.toml`). Commands: `ingest`, `crawl`, `make-scan`, `eval-ocr`, `ask`, `adapters`, `model-path`. Mounts `bench`. |
+| `cli.py` | The Typer application `app`, installed as the `docingest` console script (`[project.scripts] docingest = "docingest.entrypoints.cli:app"` in `pyproject.toml`). Commands: `ingest`, `crawl`, `make-scan`, `eval-ocr`, `ask`, `adapters`, `model-path`. Mounts `bench` and `index`. |
 | `bench_cli.py` | The Typer sub-application `bench_app`, mounted as `docingest bench`. It is also the benchmark's composition root: it reads `config/benchmark.toml`, builds the suite adapters and builds each candidate's OCR engine through `bootstrap.build("ocr", ...)`. |
+| `index_cli.py` | The Typer sub-application `index_app`, mounted as `docingest index`: `build`, `status`, `remove`. It builds `Container.index_service` and prints its reports; an expected failure is a one-line message and exit code 1. |
 | `paperqa_hook.py` | `parse_pdf_to_pages`, a drop-in for PaperQA2's `settings.parsing.parse_pdf`. |
 | `__init__.py` | Package marker. |
 
@@ -15,7 +16,7 @@ Contents:
 - [Command tree](#command-tree)
 - [How a command runs](#how-a-command-runs)
 - [Conventions shared by all commands](#conventions-shared-by-all-commands)
-- [Command reference](#command-reference): [ingest](#docingest-ingest), [crawl](#docingest-crawl), [make-scan](#docingest-make-scan), [eval-ocr](#docingest-eval-ocr), [ask](#docingest-ask), [adapters](#docingest-adapters), [model-path](#docingest-model-path), [bench](#docingest-bench)
+- [Command reference](#command-reference): [ingest](#docingest-ingest), [crawl](#docingest-crawl), [make-scan](#docingest-make-scan), [eval-ocr](#docingest-eval-ocr), [ask](#docingest-ask), [adapters](#docingest-adapters), [model-path](#docingest-model-path), [index](#docingest-index), [bench](#docingest-bench)
 - [Benchmark workflow](#benchmark-workflow)
 - [PaperQA2 `parse_pdf` hook](#paperqa2-parse_pdf-hook)
 - [Adding or changing a command](#adding-or-changing-a-command)
@@ -52,6 +53,10 @@ flowchart LR
     root --> ask["ask QUESTION"]
     root --> adapters["adapters"]
     root --> modelpath["model-path [ROLE]"]
+    root --> index["index"]
+    index --> ibuild["build"]
+    index --> istatus["status"]
+    index --> iremove["remove DOC_ID"]
     root --> bench["bench"]
     bench --> prepare["prepare"]
     bench --> run["run --run-id ID"]
@@ -72,6 +77,7 @@ flowchart LR
     evalocr["docingest eval-ocr"] --> IS
     evalocr --> MET["application.metrics.score"]
     ask["docingest ask"] --> AS["AskService.ask"]
+    index["docingest index"] --> IXS["IndexService.build, status, remove"]
     makescan["docingest make-scan"] --> MS["adapters.datasets.synthetic.make_scan"]
     adapters["docingest adapters"] --> REG["bootstrap.REGISTRY and entry-point plugins"]
     modelpath["docingest model-path"] --> HF["adapters.models.huggingface.resolve"]
@@ -391,6 +397,28 @@ The `llm` role always resolves the `[ocr]` repository; `[qa] llm` does not chang
 uv run docingest model-path              # llm
 uv run docingest model-path embedding
 uv run docingest model-path ocr --config config/examples/remote-ocr.toml   # value for [ocr] served_model
+```
+
+### `docingest index`
+
+```
+docingest index [OPTIONS] COMMAND [ARGS]...
+```
+
+The persistent chunk index: every chunk of the corpus embedded once and kept on disk. It needs `[adapters] embedder` and `index` set to real adapters (the `docingest-index` package provides `openai-compatible` and `local`); with the default `none` adapters each command stops with ``[adapters] index is "none"``.
+
+| Command | What it does |
+|---|---|
+| `build [--no-prune]` | `IndexService.build`: chunks every stored document like `ask` does, embeds the new and changed ones, removes the ones that left the corpus (kept with `--no-prune`) and commits. Unchanged documents cost no request. |
+| `status` | `IndexService.status`: the index and embedder fingerprints, whether the configured embedder is the one the index holds, documents and chunks stored and searchable, the commit time, and what a build would add, update, prune and embed. Changes nothing. |
+| `remove DOC_ID` | `IndexService.remove`: forgets one document and commits. `DOC_ID` is the full id or a unique prefix of at least 8 characters. |
+
+All three accept `--config` / `-c`. **Exit behaviour.** 0 on success; 1 for an expected failure (no index or embedder selected, an index of another embedder, no ingested documents, an unknown or ambiguous document id); 2 for usage errors.
+
+```bash
+uv run docingest index build
+uv run docingest index status
+uv run docingest index remove 3fa9c2d1
 ```
 
 ### `docingest bench`

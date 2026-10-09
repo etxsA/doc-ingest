@@ -31,7 +31,7 @@ src/docingest/
 ├── bootstrap.py       composition root: adapter REGISTRY, entry-point plugins, Container
 ├── domain/            pure models, OCR routing policy, text functions, chunker, errors
 ├── ports/             typing.Protocol interfaces and the value types that cross them
-├── application/       use cases: ingest, crawl, ask, benchmark (plus metrics and statistics)
+├── application/       use cases: ingest, crawl, ask, index, benchmark (plus metrics and statistics)
 ├── adapters/          implementations of the ports, one subpackage per concern
 │   ├── converters/    office (Docling), LaTeX (pandoc + pylatexenc fallback), text (passthrough)
 │   ├── datasets/      benchmark suites: synthetic scans, olmOCR-bench
@@ -56,11 +56,11 @@ src/docingest/
 | `bootstrap.py` | composition root | The only module that knows every adapter. Maps adapter names to factories, discovers entry-point plugins and builds the services. | `REGISTRY`, `Factory`, `plugins`, `available`, `factory`, `build`, `Container` | [below](#runtime-wiring-bootstrapcontainer) |
 | `domain/` | domain | `models.py` (manifest, page records, metadata, enums), `routing.py` (OCR routing policy), `text.py` (text-layer clean-up, Markdown serialization), `chunking.py` (page-aware chunks), `errors.py` (exception hierarchy). No I/O. | `DocumentManifest`, `PageRecord`, `SourceKind`, `PageMethod`, `SourceMetadata`, `RoutingPolicy`, `decide`, `render_markdown`, `split_pages`, `chunk_pages`, `DocingestError` | [domain/README.md](domain/README.md) |
 | `ports/` | ports | One module per concern, each defining `@runtime_checkable` Protocols plus the dataclasses passed through them. | `TypeDetector`, `PdfReader`, `OcrEngine`, `ImageSource`, `DocumentConverter`, `DocumentStore`, `SourceCrawler`, `QuestionAnswerer`, `Embedder`, `ChunkIndex`, `Reranker`, `BenchmarkSuite` | [ports/README.md](ports/README.md) |
-| `application/` | application | `ingest.py` (`IngestService`, `IngestOptions`), `crawl.py` (`CrawlService`, `CrawlReport`), `ask.py` (`AskService`), `benchmark.py` (`BenchmarkRunner`, scoring and reports), `metrics.py` (CER, WER, F1 on normalized text), `stats.py` (cluster bootstrap and paired tests). Depends on ports, never on adapters. | `IngestService`, `IngestOptions`, `PIPELINE_VERSION`, `CrawlService`, `AskService`, `BenchmarkRunner` | [application/README.md](application/README.md) |
+| `application/` | application | `ingest.py` (`IngestService`, `IngestOptions`), `crawl.py` (`CrawlService`, `CrawlReport`), `ask.py` (`AskService`), `index.py` (`IndexService`), `benchmark.py` (`BenchmarkRunner`, scoring and reports), `metrics.py` (CER, WER, F1 on normalized text), `stats.py` (cluster bootstrap and paired tests). Depends on ports, never on adapters. | `IngestService`, `IngestOptions`, `PIPELINE_VERSION`, `CrawlService`, `AskService`, `IndexService`, `BenchmarkRunner` | [application/README.md](application/README.md) |
 | `adapters/` | adapters | Concrete implementations of the ports. Subpackages are independent of each other (only `adapters/models` is shared). | see [adapters/README.md](adapters/README.md) | [adapters/README.md](adapters/README.md) |
 | `adapters/ocr/` | adapters | `MlxVlmOcr`, `OpenAICompatibleOcr` and the `OcrProfile` table (prompt, image size, clean-up, retry ladder per model family). | `MlxVlmOcr`, `OpenAICompatibleOcr`, `PROFILES`, `profile_for` | [adapters/ocr/README.md](adapters/ocr/README.md) |
 | `adapters/converters/` | adapters | `DoclingConverter`, `PandocLatexConverter` (with `latex_source.py`, which unpacks, flattens and prepares the LaTeX source without calling pandoc), `PassthroughConverter`. | as listed | [adapters/converters/README.md](adapters/converters/README.md) |
-| `entrypoints/` | entrypoints | `cli.py` (the `docingest` typer app), `bench_cli.py` (`docingest bench ...`, also the benchmark's composition root), `paperqa_hook.py` (`parse_pdf_to_pages` for PaperQA2). | `app`, `bench_app`, `parse_pdf_to_pages` | [entrypoints/README.md](entrypoints/README.md) |
+| `entrypoints/` | entrypoints | `cli.py` (the `docingest` typer app), `bench_cli.py` (`docingest bench ...`, also the benchmark's composition root), `index_cli.py` (`docingest index ...`), `paperqa_hook.py` (`parse_pdf_to_pages` for PaperQA2). | `app`, `bench_app`, `index_app`, `parse_pdf_to_pages` | [entrypoints/README.md](entrypoints/README.md) |
 
 The console script `docingest` is declared in `pyproject.toml` as `docingest.entrypoints.cli:app`.
 
@@ -127,7 +127,7 @@ The remaining import-linter contracts, numbered as in [docs/architecture.md](../
 
 ## Runtime wiring: `bootstrap.Container`
 
-`Container(cfg, log=print, overrides=None)` is a lazily built object graph for one `AppConfig`. Its three `functools.cached_property` services are the entry points of the library.
+`Container(cfg, log=print, overrides=None)` is a lazily built object graph for one `AppConfig`. Its `functools.cached_property` services (`ingest`, `crawl`, `ask`, `index_service`) are the entry points of the library.
 
 ```mermaid
 flowchart LR
@@ -135,6 +135,7 @@ flowchart LR
     C -->|ingest| ING["IngestService"]
     C -->|crawl| CR["CrawlService"]
     C -->|ask| ASK["AskService"]
+    C -->|index_service| IDX["IndexService"]
     ING --> DET["detector: TypeDetector"]
     ING --> PDF["pdf: PdfReader"]
     ING --> OCR["ocr: OcrEngine"]
@@ -144,6 +145,9 @@ flowchart LR
     ING --> POL["policy: cfg.routing"]
     ASK --> STORE
     ASK --> QA["qa: QuestionAnswerer"]
+    IDX --> STORE
+    IDX --> EMB["embedder: Embedder"]
+    IDX --> CIX["index: ChunkIndex"]
     CR --> CRAWLER["crawler: SourceCrawler"]
     CR -.->|only when ingest is requested| ING
 ```

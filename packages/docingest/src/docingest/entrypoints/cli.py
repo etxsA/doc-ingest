@@ -19,9 +19,11 @@ from ..config import load_config
 from ..domain.text import split_pages
 from ..ports import StoredDocument
 from .bench_cli import bench_app
+from .index_cli import index_app
 
 app = typer.Typer(add_completion=False, help="Normalize any research document to Markdown.")
 app.add_typer(bench_app, name="bench")
+app.add_typer(index_app, name="index")
 console = Console()
 
 # exists=True: a mistyped --config is an error, never a silent switch to the defaults.

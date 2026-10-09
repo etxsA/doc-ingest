@@ -221,8 +221,8 @@ flowchart LR
 | `DocumentStore` | `ports/store.py` | `store` | `filesystem` | `FilesystemStore`, `adapters/store/filesystem.py` | `IngestService`, `AskService`, `eval-ocr`, the PaperQA2 hook |
 | `SourceCrawler` | `ports/sources.py` | `crawler` | `arxiv` | `ArxivCrawler`, `adapters/sources/arxiv.py` | `CrawlService` |
 | `QuestionAnswerer` | `ports/qa.py` | `qa` | `paperqa` | `PaperQAAnswerer`, `adapters/qa/paperqa.py` | `AskService` |
-| `Embedder` | `ports/embedding.py` | `embedder` | `none` | `NoEmbedder`, `adapters/retrieval/none.py` | no use case yet |
-| `ChunkIndex` | `ports/index.py` | `index` | `none` | `NoIndex`, `adapters/retrieval/none.py` | no use case yet |
+| `Embedder` | `ports/embedding.py` | `embedder` | `none` | `NoEmbedder`, `adapters/retrieval/none.py` | `IndexService` |
+| `ChunkIndex` | `ports/index.py` | `index` | `none` | `NoIndex`, `adapters/retrieval/none.py` | `IndexService` |
 | `Reranker` | `ports/reranking.py` | `reranker` | `none` | `NoReranker`, `adapters/retrieval/none.py` | no use case yet |
 | `BenchmarkSuite` | `ports/benchmark.py` | none | `synthetic`, `olmocr-bench` | `SyntheticSuite`, `OlmOcrBenchSuite`, `adapters/datasets/` | `BenchmarkRunner`, `score_run` |
 
@@ -501,6 +501,8 @@ flowchart LR
     CT --> PI["ingest: IngestService"]
     CT --> PA["ask: AskService"]
     CT --> PC["crawl: CrawlService"]
+    CT --> PX["index_service: IndexService"]
+    PX --> A8["adapters store, embedder, index; chunk_chars and overlap from [qa]"]
     PI --> A1["adapter detector"]
     PI --> A2["adapter pdf"]
     PI --> A3["adapter ocr (cheap: weights load on first transcribe)"]
@@ -997,6 +999,7 @@ classDiagram
     DocingestError <|-- SourceUnavailableError
     DocingestError <|-- OcrError
     DocingestError <|-- NotConfiguredError
+    DocingestError <|-- IndexMismatchError
     SourceUnavailableError <|-- RateLimitedError
     SourceUnavailableError <|-- HttpStatusError
     SourceUnavailableError <|-- RetriesExhaustedError
@@ -1004,7 +1007,7 @@ classDiagram
     OcrError <|-- OcrServerError
 ```
 
-`DocingestError` and its eight subclasses `UnsupportedInputError`, `InvalidQueryError`, `DocumentOpenError`, `ConversionError`, `SourceUnavailableError`, `OcrError`, `NotConfiguredError` and `RateLimitedError` live in `domain/errors.py`. `HttpStatusError`, `RetriesExhaustedError` and `LocalWriteError` are defined in `adapters/sources/http.py`, and `OcrServerError` in `adapters/ocr/openai_compat.py`.
+`DocingestError` and its nine subclasses `UnsupportedInputError`, `InvalidQueryError`, `DocumentOpenError`, `ConversionError`, `SourceUnavailableError`, `OcrError`, `NotConfiguredError`, `IndexMismatchError` and `RateLimitedError` live in `domain/errors.py`. `HttpStatusError`, `RetriesExhaustedError` and `LocalWriteError` are defined in `adapters/sources/http.py`, and `OcrServerError` in `adapters/ocr/openai_compat.py`.
 
 | Error | Meaning | Raised by | Handled by |
 |---|---|---|---|
@@ -1015,7 +1018,8 @@ classDiagram
 | `SourceUnavailableError` | A remote source has no downloadable content for a record. | `ArxivCrawler`, `PoliteClient`, olmOCR-bench subset preparation | `CrawlService` records the failure and moves to the next record. A search failure ends the crawl with a report. |
 | `RateLimitedError` | The source asked for a pause the crawler will not sit out. Carries `retry_after_s`. | `PoliteClient` | `CrawlService` stops the whole crawl (next section) |
 | `OcrError` | The OCR engine could not transcribe a page. | `OpenAICompatibleOcr` (as `OcrServerError`, with the HTTP `status` when there was one) | not caught by `IngestService`, so the document fails. `BenchmarkRunner` records it in telemetry and continues. |
-| `NotConfiguredError` | A port was used whose `[adapters]` entry is `"none"`. | `NoEmbedder`, `NoIndex`, `NoReranker` | not caught: nothing uses these ports yet |
+| `NotConfiguredError` | A port was used whose `[adapters]` entry is `"none"`. | `NoEmbedder`, `NoIndex`, `NoReranker` | `docingest index` prints it and exits with 1. The reranker has no use case yet. |
+| `IndexMismatchError` | The chunk index holds vectors of another embedder than the configured one. | `IndexService.build` | `docingest index build` prints it and exits with 1 |
 
 `IngestService` does not catch processing errors: a failure on any page fails the whole document, and nothing is saved for it. Isolation happens one level up, in the driving code:
 
