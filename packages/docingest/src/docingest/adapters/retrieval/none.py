@@ -12,7 +12,7 @@ from typing import NoReturn
 
 from ...domain.chunking import Chunk
 from ...domain.errors import NotConfiguredError
-from ...ports import Hit, Vector
+from ...ports import Hit, IndexStats, Vector
 
 
 def _not_configured(port: str) -> NoReturn:
@@ -32,6 +32,7 @@ class NoEmbedder:
 
 class NoIndex:
     fingerprint = "none"
+    embedder_fingerprint = "none"
 
     def keys(self) -> dict[str, str]:
         _not_configured("index")
@@ -45,6 +46,9 @@ class NoIndex:
         _not_configured("index")
 
     def commit(self) -> None:
+        _not_configured("index")
+
+    def stats(self) -> IndexStats:
         _not_configured("index")
 
     def search(self, question: str, vector: Vector, k: int) -> list[Hit]:

@@ -336,10 +336,12 @@ classDiagram
     class ChunkIndex {
         <<Protocol>>
         +str fingerprint
+        +str embedder_fingerprint
         +keys() dict
         +upsert(doc_id, key, chunks, vectors)
         +remove(doc_id)
         +commit()
+        +stats() IndexStats
         +search(question, vector, k) list~Hit~
     }
     class Reranker {

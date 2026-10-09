@@ -1,5 +1,12 @@
-"""Embedder, ChunkIndex and Reranker contracts: every implementation must pass the same tests."""
+"""Embedder, ChunkIndex and Reranker contracts: every implementation must pass the same tests.
 
+Each implementation supplies the fixtures ``make_embedder`` (a factory that takes the
+``query_instruction``), ``index`` and ``reranker``. The ``index`` must be empty and built for
+the embedder that ``make_embedder()`` returns. The ``docingest-index`` package imports this
+module and overrides the fixtures with its real adapters.
+"""
+
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
@@ -20,10 +27,18 @@ TEXTS = {
 
 
 @pytest.fixture(params=["fake"])
-def embedder(request) -> Embedder:
-    impl = FakeEmbedder()
-    assert isinstance(impl, Embedder)
-    return impl
+def make_embedder(request) -> Callable[..., Embedder]:
+    def make(query_instruction: str = "") -> Embedder:
+        impl = FakeEmbedder(query_instruction=query_instruction)
+        assert isinstance(impl, Embedder)
+        return impl
+
+    return make
+
+
+@pytest.fixture
+def embedder(make_embedder) -> Embedder:
+    return make_embedder()
 
 
 @pytest.fixture(params=["fake"])
@@ -72,8 +87,9 @@ def test_the_embedder_names_its_settings(embedder):
     assert isinstance(embedder.query_instruction, str)
 
 
-def test_the_query_instruction_is_not_part_of_the_document_fingerprint():
-    plain, instructed = FakeEmbedder(), FakeEmbedder(query_instruction="Instruct: find")
+def test_the_query_instruction_is_not_part_of_the_document_fingerprint(make_embedder):
+    plain, instructed = make_embedder(), make_embedder("find the passage that answers it")
+    assert instructed.query_instruction == "find the passage that answers it"
     assert plain.fingerprint == instructed.fingerprint
     assert plain.embed_documents(["x y"]) == instructed.embed_documents(["x y"])
 
@@ -82,6 +98,27 @@ def test_the_index_starts_empty_and_keeps_the_key_of_each_document(index, embedd
     assert index.keys() == {} and isinstance(index.fingerprint, str)
     fill(index, embedder)
     assert index.keys() == {PAPER_A: "k1", PAPER_B: "k1"}
+
+
+def test_the_index_names_the_embedder_it_was_built_for(index, embedder):
+    assert index.embedder_fingerprint == embedder.fingerprint
+
+
+def test_stats_count_what_is_stored_and_what_is_searchable(index, embedder):
+    empty = index.stats()
+    assert (empty.documents, empty.chunks, empty.searchable_documents) == (0, 0, 0)
+    assert empty.searchable_chunks == 0 and empty.committed_at is None
+    chunks = chunks_of(PAPER_A)
+    index.upsert(PAPER_A, "k1", chunks, embedder.embed_documents([c.text for c in chunks]))
+    staged = index.stats()
+    assert (staged.documents, staged.chunks) == (1, len(chunks))
+    assert (staged.searchable_documents, staged.searchable_chunks) == (0, 0)
+    index.commit()
+    done = index.stats()
+    assert (done.searchable_documents, done.searchable_chunks) == (1, len(chunks))
+    assert isinstance(done.committed_at, str) and done.committed_at
+    index.remove(PAPER_A)
+    assert (index.stats().documents, index.stats().searchable_documents) == (0, 1)
 
 
 def test_search_finds_the_matching_chunk_first(index, embedder):
@@ -130,6 +167,54 @@ def test_changes_reach_search_only_at_commit_but_keys_see_them_at_once(index, em
     assert len(index.search("softmax", query, 10)) == len(chunks)
     index.commit()
     assert index.search("softmax", query, 10) == []
+
+
+def test_search_answers_from_the_last_commit_whatever_happens_to_the_index_after_it(
+    index, embedder
+):
+    """No search before the change: nothing may be cached from it. Each case reads the
+    committed chunks only, so the old text of a document stays with its old vector."""
+    fill(index, embedder)
+    committed = {c for d in TEXTS for c in chunks_of(d)}
+    query = embedder.embed_query("softmax attention qubits")
+
+    def searched():
+        return {h.chunk for h in index.search("anything", query, 100)}
+
+    new = chunk_pages(PAPER_A, {1: "Replaced text about graphs."}, chunk_chars=60, overlap=10)
+    vectors = embedder.embed_documents([c.text for c in new])
+    index.upsert(PAPER_A, "k2", new, vectors)  # another key
+    assert searched() == committed
+    index.upsert(PAPER_A, "k1", new, vectors)  # the same key, other chunks
+    assert searched() == committed
+    index.remove(PAPER_B)
+    assert searched() == committed
+    index.commit()
+    assert searched() == set(new)
+
+
+def test_a_removal_committed_and_then_searched_for_the_first_time(index, embedder):
+    fill(index, embedder)
+    index.remove(PAPER_A)
+    index.commit()
+    hits = index.search("anything", embedder.embed_query("attention"), 100)
+    assert {h.chunk.doc_id for h in hits} == {PAPER_B}
+
+
+def test_pending_tells_changes_that_counts_cannot(index, embedder):
+    assert index.stats().pending is False
+    fill(index, embedder)
+    assert index.stats().pending is False
+    new = chunk_pages(PAPER_A, {1: "Replaced text about graphs."}, chunk_chars=60, overlap=10)
+    index.upsert(PAPER_A, "k2", new, embedder.embed_documents([c.text for c in new]))
+    stats = index.stats()  # one document replaced by one: the counts of documents are equal
+    assert stats.documents == stats.searchable_documents and stats.pending is True
+    index.commit()
+    assert index.stats().pending is False
+    index.remove(PAPER_A)
+    assert index.stats().pending is True
+    index.commit()
+    assert index.stats().pending is False
 
 
 def test_upsert_replaces_everything_indexed_for_the_document(index, embedder):

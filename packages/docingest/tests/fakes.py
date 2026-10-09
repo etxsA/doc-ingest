@@ -30,6 +30,7 @@ from docingest.ports import (
     Conversion,
     FetchedSource,
     Hit,
+    IndexStats,
     OcrResult,
     Segment,
     SourceRecord,
@@ -277,8 +278,12 @@ class FakeIndex:
     service that forgets to commit fails its tests. ``keys()`` sees every change.
     """
 
-    def __init__(self, fingerprint: str = "fake-index 1"):
+    def __init__(
+        self, fingerprint: str = "fake-index 1", embedder_fingerprint: str = "fake-embedder 1"
+    ):
         self.fingerprint = fingerprint
+        self.embedder_fingerprint = embedder_fingerprint
+        self.committed_at: str | None = None
         self._committed: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
         self._staged: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
 
@@ -297,6 +302,17 @@ class FakeIndex:
 
     def commit(self) -> None:
         self._committed = dict(self._staged)
+        self.committed_at = "2026-01-01T00:00:00+00:00"
+
+    def stats(self) -> IndexStats:
+        return IndexStats(
+            documents=len(self._staged),
+            chunks=sum(len(c) for _, c, _ in self._staged.values()),
+            searchable_documents=len(self._committed),
+            searchable_chunks=sum(len(c) for _, c, _ in self._committed.values()),
+            committed_at=self.committed_at,
+            pending=self._staged != self._committed,
+        )
 
     def search(self, question: str, vector: Vector, k: int) -> list[Hit]:
         def cosine(a: Vector, b: Vector) -> float:

@@ -96,6 +96,7 @@ Value types defined next to the Protocols (all dataclasses):
 | `SourceRecord`, `FetchedSource` | `sources.py` | yes | `SourceCrawler` results |
 | `Chunk` | `domain/chunking.py`, re-exported by `ports` | yes | `ChunkIndex`, `Reranker`, `QuestionAnswerer.ask` |
 | `Hit` | `index.py` | yes | `ChunkIndex.search` result |
+| `IndexStats` | `index.py` | yes | `ChunkIndex.stats` result |
 | `Sample`, `CandidateSpec`, `Estimate` | `benchmark.py` | yes | benchmark samples, candidates, estimates |
 | `SuiteScore` | `benchmark.py` | no | `BenchmarkSuite.score` result |
 
@@ -552,6 +553,7 @@ Module `index.py`. A persistent index of chunks and the first-stage search over 
 @runtime_checkable
 class ChunkIndex(Protocol):
     fingerprint: str  # embedder + chunker settings + format: an index of another one is not reused
+    embedder_fingerprint: str  # of the embedder whose vectors it holds
 
     def keys(self) -> dict[str, str]: ...
 
@@ -563,6 +565,8 @@ class ChunkIndex(Protocol):
 
     def commit(self) -> None: ...
 
+    def stats(self) -> IndexStats: ...
+
     def search(self, question: str, vector: Vector, k: int) -> list[Hit]: ...
 ```
 
@@ -571,6 +575,8 @@ Contract:
 - Documents are identified by `doc_id`. `keys()` returns `{doc_id: key}` for everything indexed. The `key` is chosen by the caller, for example a hash of the text the chunks were cut from: a caller skips a document whose key has not changed, so a changed document is re-embedded and an unchanged one is not.
 - `upsert` replaces everything indexed for `doc_id` with `chunks` and their `vectors` (one vector per chunk, otherwise `ValueError`); `remove` forgets a document and ignores unknown ids. Chunks must come back from `search` unchanged in every field.
 - After `commit`, `search` reflects exactly what `keys()` reports: every `upsert` and `remove` since the last commit, and also documents an earlier process stored but never committed (an adapter that writes at `upsert` time can be interrupted before the call). Until then `search` answers from the last committed state, and `keys()` already reflects the changes. An adapter that keeps a search layer apart from its stored chunks (a dense matrix, a keyword index) rebuilds it in `commit`, once per batch instead of once per document. A service that changes the index must call it.
+- `embedder_fingerprint` is the `Embedder.fingerprint` the index holds vectors of. A caller that would add vectors from another embedder compares the two first and refuses (`IndexService` does), because vectors of different models are not comparable.
+- `stats()` returns an `IndexStats`: documents and chunks as `keys()` reports them, documents and chunks `search` answers from (the last commit), the time of the last commit (`None` before the first), and `pending`: true when `keys()` differs in any way from what `search` answers from (a document added, removed or stored again under another key since the last commit, also by an earlier process). Counts alone cannot tell, because an update keeps them equal.
 - `search` returns at most `k` hits, best first. `vector` is the embedded question (`Embedder.embed_query`); `question` is its text, for adapters that also match keywords. What the first stage does beyond that (for example fusing a keyword search) is the adapter's business and its settings.
 - Chunks come from `domain.chunking.chunk_pages`, so they are the chunks `docingest ask` would give PaperQA2.
 
@@ -845,7 +851,7 @@ Resolution rules (`bootstrap.factory`):
 - Contract suites exist for five ports. Add your adapter to the parametrized fixture and it must pass the same tests as the built-ins:
   - `OcrEngine`: the `make_engine` fixture in `tests/contract/test_ocr_contract.py`.
   - `DocumentStore`: the `store` fixture in `tests/contract/test_store_contract.py`.
-  - `Embedder`, `ChunkIndex` and `Reranker`: the fixtures in `tests/contract/test_retrieval_contract.py`.
+  - `Embedder`, `ChunkIndex` and `Reranker`: the fixtures `make_embedder` (a factory taking `query_instruction`), `index` and `reranker` in `tests/contract/test_retrieval_contract.py`. A plugin overrides them in its own test module and imports the contract tests (see `tests/README.md`, "Plugin tests reusing the contracts").
 - For the other ports, write unit tests for the adapter and, where it touches real files or services, integration tests in `tests/integration/` (existing examples: `test_magic_detector.py`, `test_pdfium_reader.py`, `test_pandoc_latex.py`, `test_openai_ocr.py`). The fakes in `tests/fakes.py` show the expected behaviour of each port.
 - Use the `model` and `network` pytest markers for tests that load multi-GB models or reach remote services; they run only with `DOCINGEST_MODEL_TESTS=1` or `DOCINGEST_NETWORK_TESTS=1`.
 - Run `./scripts/check.sh` before opening a pull request: ruff, the import-linter contracts, pyright and pytest with coverage.

@@ -16,9 +16,25 @@ class Hit:
     score: float  # larger is better; comparable only within one result list
 
 
+@dataclass(frozen=True)
+class IndexStats:
+    documents: int  # as keys() reports: every upsert and remove counted
+    chunks: int
+    searchable_documents: int  # what search() answers from: the last commit
+    searchable_chunks: int
+    committed_at: str | None  # UTC time of the last commit as ISO 8601, None before the first
+    # True when what keys() reports differs from what search answers from, in any way: a
+    # document added, removed or stored again under another key since the last commit, also
+    # by an earlier process. Counts alone cannot tell (an update keeps them equal).
+    pending: bool = False
+
+
 @runtime_checkable
 class ChunkIndex(Protocol):
     fingerprint: str  # embedder + chunker settings + format: an index of another one is not reused
+    # The fingerprint of the embedder whose vectors this index holds. A caller that embeds
+    # with another embedder must not add to it: the vectors would not be comparable.
+    embedder_fingerprint: str
 
     def keys(self) -> dict[str, str]:
         """``{doc_id: key}`` of every indexed document, where ``key`` is what ``upsert`` got.
@@ -46,6 +62,11 @@ class ChunkIndex(Protocol):
         time can be interrupted before this call). An adapter that keeps a search layer apart
         from its stored chunks (a dense matrix, a keyword index) rebuilds it here, once per
         batch instead of once per document."""
+        ...
+
+    def stats(self) -> IndexStats:
+        """Counts for ``docingest index status``, telling a built index from one with
+        changes that no ``commit`` has made searchable yet."""
         ...
 
     def search(self, question: str, vector: Vector, k: int) -> list[Hit]:

@@ -109,7 +109,7 @@ flowchart LR
 | Module | Implementations under test |
 |---|---|
 | `test_ocr_contract.py` | `FakeOcr`, `OpenAICompatibleOcr` against a local stub `/v1/chat/completions` server, `MlxVlmOcr` with a pinned Qwen3-VL-2B 4-bit model (`model` marker) |
-| `test_retrieval_contract.py` | `FakeEmbedder`, `FakeIndex` and `FakeReranker` (from `fakes.py`): the `Embedder`, `ChunkIndex` and `Reranker` contracts |
+| `test_retrieval_contract.py` | `FakeEmbedder`, `FakeIndex` and `FakeReranker` (from `fakes.py`): the `Embedder`, `ChunkIndex` and `Reranker` contracts. The `docingest-index` package imports this module and runs it against its real adapters (see [Plugin tests](#plugin-tests-reusing-the-contracts)) |
 | `test_store_contract.py` | `InMemoryStore` (from `fakes.py`) and `FilesystemStore` |
 
 ### integration/
@@ -171,7 +171,7 @@ The module docstring states the rule: the fakes are real implementations of the 
 | `FakeCrawler(records, payload=..., fail_keys=set())` | `SourceCrawler` | `search()` returns the first `limit` records; `fetch()` writes `<key>.tex` with `payload` into `dest_dir` and returns format `"latex"`; keys in `fail_keys` raise `DocumentOpenError` | |
 | `record(key, title="A paper")` | helper | A `SourceRecord` with `SourceMetadata(title=title, arxiv_id=key, year=2024)` | |
 | `FakeEmbedder(dims=16, fingerprint=..., query_instruction="")` | `Embedder` | A hashed bag of words (`crc32` of each word modulo `dims`): texts that share words get close vectors; the same text always gives the same vector | `calls` counts `embed_documents` calls |
-| `FakeIndex(fingerprint=...)` | `ChunkIndex` | Reference implementation of the index contract: documents kept in memory, exact cosine search, ties in insertion order; `upsert` and `remove` are staged and only `commit()` makes them visible to `search` | `keys()` shows staged changes |
+| `FakeIndex(fingerprint=..., embedder_fingerprint=...)` | `ChunkIndex` | Reference implementation of the index contract: documents kept in memory, exact cosine search, ties in insertion order; `upsert` and `remove` are staged and only `commit()` makes them visible to `search` | `keys()` shows staged changes |
 | `FakeReranker()` | `Reranker` | Scores a chunk by the share of the question's words it contains | |
 | `FakeQA()` | `QuestionAnswerer` | Async `ask()` returns `f"answer to {question!r} from {len(documents)} docs"` | `seen` holds the source names of the documents it received, `contexts` the chunks it was given |
 
@@ -367,6 +367,12 @@ def store(request, tmp_path):
 The contract then checks that the engine satisfies `OcrEngine` at runtime (`isinstance`), exposes a `ModelRef` with a revision, a positive integer `dpi` and a non-empty `fingerprint`, returns a well-formed `OcrResult`, accepts `L` and `RGBA` images, and keeps its fingerprint stable across calls and across instances with the same settings.
 
 Also add an integration module in `tests/integration/` for the behaviour specific to the adapter (error mapping, retries, parsing of real files), as `test_openai_ocr.py` and `test_pdfium_reader.py` do.
+
+### Plugin tests reusing the contracts
+
+A plugin in this repository (`packages/docingest-index`) runs the retrieval contract against its real adapters instead of copying it. Its `tests/conftest.py` puts this package's `tests/` and `tests/contract/` on `sys.path`; its `test_retrieval_contract.py` imports the contract tests and overrides the fixtures `make_embedder` (a factory taking `query_instruction`), `index` and `reranker`. Pytest resolves a fixture by name in the module that holds the test, so the imported tests run against the plugin's adapters. A plugin outside this repository copies `test_retrieval_contract.py` and `fakes.py` and overrides the same three fixtures.
+
+The contract fixtures therefore have a shape other packages depend on: `make_embedder(query_instruction="")` returns an `Embedder`, `index` an empty `ChunkIndex` built for the embedder that `make_embedder()` returns, `reranker` a `Reranker`.
 
 ### Writing a contract for a port that has none yet
 
