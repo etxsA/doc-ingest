@@ -63,7 +63,7 @@ The codebase uses a hexagonal (ports and adapters) architecture, so the OCR mode
 - **LaTeX-first arXiv crawler.** Search by arXiv query syntax or by id list, polite rate limiting shared by every request, source-first download with PDF fallback, license lookup through OAI-PMH, and metadata sidecars ([crawl](#arxiv-crawl), [ADR 0003](docs/adr/0003-latex-first-for-arxiv.md)).
 - **Robust LaTeX conversion.** Safe archive extraction, arXiv-style main-file detection, a Python flattener for includes, pandoc in `--sandbox` mode with a timeout and heap cap, and a pylatexenc plain-text fallback ([LaTeX](#latex-conversion)).
 - **Content-addressed cache.** Outputs are keyed by the input's sha256 and by the fingerprints of the adapters that produce that kind of input. Partial and forced-OCR runs are stored as variants and never replace a complete result ([caching](#caching-and-invalidation)).
-- **PaperQA2 integration.** A corpus mode (`docingest ask`) with page-aware chunks, and a native `parse_pdf` hook for PaperQA2's own `Docs.aadd` ([PaperQA2](#paperqa2-integration)).
+- **PaperQA2 integration.** A corpus mode (`docingest ask`) with page-aware chunks, an index mode that retrieves from a persistent chunk index and reranks before PaperQA2 answers, and a native `parse_pdf` hook for PaperQA2's own `Docs.aadd` ([PaperQA2](#paperqa2-integration)).
 - **Replaceable components.** Every pipeline port has a named slot in `[adapters]` (benchmark suites are declared in `config/benchmark.toml` instead), third-party adapters plug in through Python entry points, and six import-linter contracts enforce the layering in CI ([architecture](#architecture-overview)).
 - **Reproducible OCR benchmark.** `docingest bench` runs every configured candidate model on two suites, resumably, and reports comparisons with clustered bootstrap confidence intervals ([benchmark flow](#benchmark-flow), [docs/benchmark.md](docs/benchmark.md)).
 
@@ -300,7 +300,7 @@ flowchart TD
     end
 ```
 
-The PaperQA2 index is built in memory on every `ask` call; nothing from it is written to disk. Usage and settings are in [PaperQA2 integration](#paperqa2-integration).
+Without a chunk index, the PaperQA2 index is built in memory on every `ask` call and nothing from it is written to disk. With one (`docingest index build`), `ask` retrieves from the persistent index instead. Usage and settings are in [PaperQA2 integration](#paperqa2-integration).
 
 ### Where files go on disk
 
@@ -513,9 +513,9 @@ documents, warnings = container.adapter("store").corpus()   # the whole normaliz
 
 | Command | What it does | Main options |
 |---|---|---|
-| `docingest ingest PATHS...` | Normalize files and directories into Markdown plus manifest. Exits with status 1 if any input failed, after processing the others. | `--force`, `--ocr-all`, `--max-pages N` |
-| `docingest crawl QUERY` | Search arXiv, download sources (PDF fallback) with metadata, then ingest them. Exits with status 1 on any failure. | `--limit` (default 5), `--no-ingest`, `--max-pages N` |
-| `docingest ask QUESTION` | Answer a question with PaperQA2 over the normalized corpus. Needs the `qa` extra. | `--config` |
+| `docingest ingest PATHS...` | Normalize files and directories into Markdown plus manifest. Exits with status 1 if any input failed, after processing the others. With `--index`, the papers stored by this run are then added to the chunk index. | `--force`, `--ocr-all`, `--max-pages N`, `--index` |
+| `docingest crawl QUERY` | Search arXiv, download sources (PDF fallback) with metadata, then ingest them. Exits with status 1 on any failure. | `--limit` (default 5), `--no-ingest`, `--max-pages N`, `--index` |
+| `docingest ask QUESTION` | Answer a question with PaperQA2 over the normalized corpus. With `[adapters] index` set, the evidence is retrieved from the chunk index and reranked first ([index mode](#paperqa2-integration)). Needs the `qa` extra. | `--config`, `--no-index`, `--bm25 english\|always\|never` |
 | `docingest index build\|status\|remove DOC_ID` | The persistent chunk index of the [docingest-index](../docingest-index/README.md) package: embed the new and changed documents, show the state of the index, forget one document. Needs `[adapters] embedder` and `index` set to real adapters. | `--config`, `build --no-prune` |
 | `docingest adapters` | List every port, its selected adapter and the available ones, including installed plugins. | `--config` |
 | `docingest model-path [ROLE]` | Print the local snapshot path of the pinned `llm` (default), `embedding` or `ocr` model, downloading it if it is not cached. Used by `scripts/serve_llm.sh`. | `--config` |
@@ -703,13 +703,36 @@ Install the `qa` extra (`uv sync --locked --all-extras`, or `--extra qa`).
 
 **Corpus mode.** `uv run docingest ask "..."` reads every document in the store (the canonical result, or else the variant or degraded result with the most pages, with a warning), splits each `document.md` at its page markers and chunks it with PaperQA2's page-aware `chunk_pdf`, so citations point at page ranges. With the pinned embedder, any chunk longer than the embedder's token window is re-split by tokens so no text goes unembedded. The documents are added with `Docs.aadd_texts`, and the question is answered with `Docs.aquery`. Each document's citation comes from its manifest; a partial document's citation says which pages were ingested. PaperQA2's network metadata lookups and multimodal parsing are turned off.
 
+**Index mode.** With a chunk index configured (`[adapters] embedder`, `index`, optionally `reranker`; the [docingest-index](../docingest-index/README.md) package provides them) `ask` does not chunk and embed the corpus for every question. It retrieves from the index built once by `docingest index build`, in two stages, and PaperQA2 only summarizes and answers:
+
+```mermaid
+flowchart LR
+    Q["question"] --> E["Embedder: embed the question once"]
+    E --> S["ChunkIndex.search: dense, plus BM25 for English, top candidates (50)"]
+    S --> R["Reranker: score the 50, stable sort"]
+    R --> C["first contexts (10)"]
+    C --> P["PaperQA2: evidence summaries and cited answer, its own retrieval off"]
+```
+
+```bash
+uv run docingest index build -c config/examples/lab-server.toml     # once; later runs embed only what changed
+uv run docingest ask "What limits T1 in transmons?" -c config/examples/lab-server.toml
+uv run docingest ingest data/raw --index -c config/examples/lab-server.toml    # keep the index in step
+```
+
+- `[index] candidates` (default 50) and `contexts` (default 10) set the two cuts. Reranker `none` means the first `contexts` of the first stage. The chunks go to PaperQA2 as they are, so the answer cites the same page ranges, and the corpus Markdown is not read for the question.
+- `ask` checks the index first and says what to run: an index built for another embedder, an empty index, or one whose documents were never committed is an error that names `docingest index build`. Documents of the corpus that are not in the index, changes not yet committed, and chunks of papers that left the corpus are warnings; the question is still answered from the rest.
+- `--no-index` answers with PaperQA2's own retrieval even when an index is configured. `--bm25 english|always|never` overrides `[index] bm25` for one question. With `[adapters] index = "none"`, the default, `ask` behaves exactly as described under Corpus mode.
+- `ingest --index` and `crawl --index` (off by default) add the papers a run stored to the index and commit, without reading the rest of the corpus. The flag is checked before any work: without an index and an embedder in `[adapters]`, or with an index built for another embedder, the command stops first. If the index update fails after the papers were stored, they stay stored and the message says to run `docingest index build`.
+- In index mode `[qa] evidence_k` does not apply: the number of summarized chunks is `[index] contexts`. `ask` prints no timings in either mode.
+
 **Model selection.**
 
 | Setting | Default | Alternatives |
 |---|---|---|
 | LLM | the pinned `[ocr]` model snapshot, served at `http://127.0.0.1:8080/v1` by `scripts/serve_llm.sh` (`mlx_vlm.server`, with `HF_HUB_OFFLINE=1`) | any litellm model in `[qa].llm` or `DOCINGEST_LLM`, e.g. `ollama/llama3.1` with `[qa].llm_base = "http://localhost:11434"` |
 | Embedding | pinned `sentence-transformers/all-MiniLM-L6-v2` snapshot | any PaperQA2 embedding string in `[qa].embedding` or `DOCINGEST_EMBEDDING`, e.g. `ollama/mxbai-embed-large` |
-| Retrieval | `chunk_chars = 900`, `overlap = 100`, `evidence_k = 10`, `answer_max_sources = 3`, `max_concurrent_requests = 2` | `[qa]` keys |
+| Retrieval | `chunk_chars = 900`, `overlap = 100`, `evidence_k = 10`, `answer_max_sources = 3`, `max_concurrent_requests = 2` (`evidence_k` is for PaperQA2's own retrieval; with an index see Index mode) | `[qa]` keys |
 | Temperature | `temperature = 0.0`, sent on every request | `[qa].temperature` |
 
 `[qa]` settings do not affect ingestion output and are not part of any cache key.

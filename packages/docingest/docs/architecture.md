@@ -344,7 +344,7 @@ classDiagram
         +commit()
         +close()
         +stats() IndexStats
-        +search(question, vector, k) list~Hit~
+        +search(question, vector, k, keywords) list~Hit~
     }
     class Reranker {
         <<Protocol>>
@@ -1002,6 +1002,10 @@ classDiagram
     DocingestError <|-- OcrError
     DocingestError <|-- NotConfiguredError
     DocingestError <|-- IndexMismatchError
+    DocingestError <|-- IndexNotReadyError
+    DocingestError <|-- InvalidConfigError
+    ValueError <|-- InvalidConfigError
+    DocingestError <|-- RetrievalError
     SourceUnavailableError <|-- RateLimitedError
     SourceUnavailableError <|-- HttpStatusError
     SourceUnavailableError <|-- RetriesExhaustedError
@@ -1009,7 +1013,7 @@ classDiagram
     OcrError <|-- OcrServerError
 ```
 
-`DocingestError` and its nine subclasses `UnsupportedInputError`, `InvalidQueryError`, `DocumentOpenError`, `ConversionError`, `SourceUnavailableError`, `OcrError`, `NotConfiguredError`, `IndexMismatchError` and `RateLimitedError` live in `domain/errors.py`. `HttpStatusError`, `RetriesExhaustedError` and `LocalWriteError` are defined in `adapters/sources/http.py`, and `OcrServerError` in `adapters/ocr/openai_compat.py`.
+`DocingestError` and its twelve subclasses `UnsupportedInputError`, `InvalidQueryError`, `DocumentOpenError`, `ConversionError`, `SourceUnavailableError`, `OcrError`, `NotConfiguredError`, `IndexMismatchError`, `IndexNotReadyError`, `InvalidConfigError`, `RetrievalError` and `RateLimitedError` live in `domain/errors.py`. `HttpStatusError`, `RetriesExhaustedError` and `LocalWriteError` are defined in `adapters/sources/http.py`, and `OcrServerError` in `adapters/ocr/openai_compat.py`.
 
 | Error | Meaning | Raised by | Handled by |
 |---|---|---|---|
@@ -1020,8 +1024,11 @@ classDiagram
 | `SourceUnavailableError` | A remote source has no downloadable content for a record. | `ArxivCrawler`, `PoliteClient`, olmOCR-bench subset preparation | `CrawlService` records the failure and moves to the next record. A search failure ends the crawl with a report. |
 | `RateLimitedError` | The source asked for a pause the crawler will not sit out. Carries `retry_after_s`. | `PoliteClient` | `CrawlService` stops the whole crawl (next section) |
 | `OcrError` | The OCR engine could not transcribe a page. | `OpenAICompatibleOcr` (as `OcrServerError`, with the HTTP `status` when there was one) | not caught by `IngestService`, so the document fails. `BenchmarkRunner` records it in telemetry and continues. |
-| `NotConfiguredError` | A port was used whose `[adapters]` entry is `"none"`. | `NoEmbedder`, `NoIndex`, `NoReranker` | `docingest index` prints it and exits with 1. The reranker has no use case yet. |
-| `IndexMismatchError` | The chunk index holds vectors of another embedder than the configured one. | `IndexService.build` | `docingest index build` prints it and exits with 1 |
+| `NotConfiguredError` | A port was used whose `[adapters]` entry is `"none"`, or an index is selected without an embedder. | `NoEmbedder`, `NoIndex`, `NoReranker`, `Container` | `docingest index` and `docingest ask` with an index print it and exit with 1 |
+| `IndexMismatchError` | The chunk index holds vectors of another embedder than the configured one. | `IndexService`, `AskService` | `docingest index build`, `ingest --index` and `ask` print it and exit with 1 |
+| `IndexNotReadyError` | The chunk index cannot answer yet: it is empty, nothing in it is committed, or nothing it returned belongs to the corpus. The message says to run `docingest index build`. | `AskService` | `docingest ask` prints it and exits with 1 |
+| `InvalidConfigError` | A configuration table holds a value that cannot be used (also a `ValueError`); the message names the table and key. | `index_config`, `Container` when it builds the retrieval adapters | `docingest ask` with an index prints it and exits with 1 |
+| `RetrievalError` | A retrieval step returned something unusable: a reranker that scores another number of chunks, or an index that returns no hit. | `AskService` | `docingest ask` prints it and exits with 1 |
 
 `IngestService` does not catch processing errors: a failure on any page fails the whole document, and nothing is saved for it. Isolation happens one level up, in the driving code:
 

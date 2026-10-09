@@ -76,7 +76,7 @@ flowchart LR
     CS --> IS
     evalocr["docingest eval-ocr"] --> IS
     evalocr --> MET["application.metrics.score"]
-    ask["docingest ask"] --> AS["AskService.ask"]
+    ask["docingest ask"] --> AS["AskService.ask, retrieve with an index"]
     index["docingest index"] --> IXS["IndexService.build, status, remove"]
     makescan["docingest make-scan"] --> MS["adapters.datasets.synthetic.make_scan"]
     adapters["docingest adapters"] --> REG["bootstrap.REGISTRY and entry-point plugins"]
@@ -89,7 +89,7 @@ flowchart LR
 
 ## How a command runs
 
-The pipeline commands share one path: load the configuration, build a `Container`, take a use case from it (`ingest`, `crawl` or `ask`). The `Container` builds adapters from the names selected in `[adapters]` (see `bootstrap.REGISTRY`) only when the use case that needs them is first used: `crawl --no-ingest` never builds the ingestion service or the OCR engine, `ask` builds only the store and the QA adapter, a converter is built only when a document of its kind appears, and the OCR model itself loads on the first page that needs OCR. The sequence below is `docingest ingest`.
+The pipeline commands share one path: load the configuration, build a `Container`, take a use case from it (`ingest`, `crawl` or `ask`). The `Container` builds adapters from the names selected in `[adapters]` (see `bootstrap.REGISTRY`) only when the use case that needs them is first used: `crawl --no-ingest` never builds the ingestion service or the OCR engine, `ask` builds only the store and the QA adapter (and, with an index, the embedder, index and reranker when the question is asked), a converter is built only when a document of its kind appears, and the OCR model itself loads on the first page that needs OCR. The sequence below is `docingest ingest`.
 
 ```mermaid
 sequenceDiagram
@@ -159,6 +159,7 @@ Detect type, route each page (text layer / OCR / converter); write Markdown + ma
 | `--force / --no-force` | flag | `--no-force` | Ignore cache. |
 | `--ocr-all / --no-ocr-all` | flag | `--no-ocr-all` | OCR every PDF page, even born-digital. |
 | `--max-pages` | integer, at least 1 | none (all pages) | Only first N pages. |
+| `--index` | flag | off | After the batch, add the papers this run stored to the chunk index (`IndexService.update`). Needs `[adapters] index` and `embedder`. |
 
 **What it does.**
 
@@ -170,6 +171,7 @@ Detect type, route each page (text layer / OCR / converter); write Markdown + ma
 **Option behaviour.**
 
 - `--force` skips the cache lookup and re-processes even when a cached result exists.
+- `--index` is checked before any input is processed: without a real `index` and `embedder` in `[adapters]` it is a usage error (exit 2), and an index built for another embedder stops the command (exit 1). After the summary, the stored papers (not the rest of the corpus) are embedded if new or changed and committed, each as the version the corpus serves (a `--max-pages` or `--ocr-all` run beside a complete canonical result does not replace it in the index); the line `index: added N, updated M, unchanged K; embedded C chunks in S s` reports it. If that step fails (the embedding server is down), the papers stay stored, the message says `run docingest index build` to catch up, and the exit code is 1.
 - `--ocr-all` applies only to PDFs (other kinds ignore it). Every page is sent to OCR; a page that no routing rule would have sent to OCR gets the reason `forced (--ocr-all)`. The result is stored as a variant, never as the canonical result.
 - `--max-pages N` limits PDF pages, image frames or converter segments to the first N. A partial result is stored as a variant. A complete canonical result already in the store satisfies a `--max-pages` request.
 
@@ -213,6 +215,7 @@ Search arXiv, download LaTeX sources (PDF fallback) with metadata, then ingest t
 | `--config`, `-c` | file | `config/pipeline.toml` | Pipeline configuration. |
 | `--no-ingest / --no-no-ingest` | flag | `--no-no-ingest` (ingest) | Only download. |
 | `--max-pages` | integer, at least 1 | none | Only first N pages (passed to ingestion). |
+| `--index` | flag | off | Add the papers this crawl ingested to the chunk index, as for `ingest --index`. An error with `--no-ingest`. |
 
 **What it does.**
 
@@ -220,6 +223,8 @@ Search arXiv, download LaTeX sources (PDF fallback) with metadata, then ingest t
 2. For each record it downloads the source into `<raw_dir>/arxiv/` (`raw_dir` defaults to `data/raw`), preferring the formats in `[arxiv] prefer` (LaTeX first, PDF fallback, by default), and writes the record's metadata to a `<file>.meta.json` sidecar. A later plain `docingest ingest` of that file reads the sidecar.
 3. Unless `--no-ingest` is given, each downloaded file is ingested with its metadata. With `--no-ingest` the ingestion service (and the OCR model) is never built.
 4. Prints the ingestion summary, then `fetched N, ingested M`. If the source asked the crawler to back off (rate limit), the crawl stops, prints `crawl stopped early: ...` and lists the remaining records as not attempted. A failed search is reported the same way (`crawl stopped early: search failed: ...`). One failing record does not stop the others.
+
+With `--index`, the papers that were ingested (also when the crawl stopped early) are then added to the index and the line `index: added N, ...` is printed.
 
 Request pacing, retries, the contact address in the User-Agent and license lookup are configured in `[arxiv]` ([../../../config/README.md](../../../config/README.md#arxiv)).
 
@@ -312,13 +317,17 @@ Answer a question with PaperQA2 over the normalized corpus (needs the 'qa' extra
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `--config`, `-c` | file | `config/pipeline.toml` | Pipeline configuration (`output_dir` and `[qa]`). |
+| `--config`, `-c` | file | `config/pipeline.toml` | Pipeline configuration (`output_dir`, `[qa]` and, with an index, `[adapters]`, `[index]`, `[embedder]`, `[reranker]`). |
+| `--no-index` | flag | off | Use PaperQA2's own retrieval even when a chunk index is configured. |
+| `--bm25` | `english`, `always` or `never` | the `[index] bm25` setting | When the index adds keyword matching (BM25) to the dense search, for this question. An error (exit 2) without a configured index or with `--no-index`. |
 
 **What it does.** `AskService.ask` reads the corpus from the store: for every document id it takes the canonical result, or else the largest partial or degraded one, and prints a `warning:` line for each document that has no complete result or has an unreadable manifest. It then hands the documents to the question-answering adapter (`[adapters] qa`, `paperqa` by default), which chunks each document page by page, embeds the chunks and asks the LLM configured in `[qa]`. The formatted answer with citations is printed. Nothing is ingested by this command.
 
+**With an index.** When `[adapters] index` is not `none` (and no `--no-index`), the service embeds the question once, searches the chunk index for `[index] candidates` hits, reranks them with `[adapters] reranker` (a stable sort by score; with `none` the first stage's order is kept) and hands the first `[index] contexts` chunks to the answerer, which summarizes exactly those and writes the cited answer. The corpus Markdown is not read; only the manifests of the cited papers go to the answerer. Before searching it checks that the index belongs to the configured embedder and holds committed documents: otherwise it prints `error: ...` naming `docingest index build` and exits with 1. Warnings (documents missing from the index, uncommitted changes, chunks of papers that left the corpus) go through the same `warning:` lines.
+
 With the default `[qa]` settings the LLM is the pinned `[ocr]` model served locally at `http://127.0.0.1:8080/v1` by `scripts/serve_llm.sh` (see [../../../scripts/README.md](../../../scripts/README.md)); start it first. `config/examples/ollama-qa.toml` uses Ollama models instead. The environment variables `DOCINGEST_LLM` and `DOCINGEST_EMBEDDING` override the LLM and embedding (see [../../../config/README.md](../../../config/README.md#environment-variables)).
 
-**Exit behaviour.** 0 on success. 1 when there are no ingested documents (``no ingested documents; run `docingest ingest` first``), when the `qa` extra is not installed, or when the LLM or embedding call fails. 2 for usage errors.
+**Exit behaviour.** 0 on success. 1 when there are no ingested documents (``no ingested documents; run `docingest ingest` first``), when the `qa` extra is not installed, or when the LLM or embedding call fails; with an index, 1 also for an expected retrieval failure (a `DocingestError`: an index of another embedder, an empty or uncommitted index, an index without an embedder, an invalid `[index]`, `[embedder]` or `[reranker]` table, a reranker that scores the wrong number of chunks, a model server that does not answer), printed as `error: ...` without a traceback. Any other exception, including one raised while PaperQA2 answers, shows its traceback as on the plain path. 2 for usage errors.
 
 **Examples.**
 
@@ -326,6 +335,9 @@ With the default `[qa]` settings the LLM is the pinned `[ocr]` model served loca
 ./scripts/serve_llm.sh &
 uv run docingest ask "What are the main failure modes of retrieval-augmented generation?"
 uv run --all-extras docingest ask "What is multi-head attention?" --config config/examples/ollama-qa.toml
+uv run docingest ask "What limits T1 in transmons?" --config config/examples/lab-server.toml  # from the chunk index
+uv run docingest ask "What limits T1 in transmons?" --config config/examples/lab-server.toml --no-index
+uv run docingest ask "coherencia transmon" --config config/examples/lab-server.toml --bm25 never
 ```
 
 ### `docingest adapters`

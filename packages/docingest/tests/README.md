@@ -88,19 +88,22 @@ flowchart LR
 |---|---|
 | `test_arxiv.py` | `ArxivCrawler` against a fake transport and a fake clock: feed parsing, id normalisation, query parameters, retries, source format detection. No network, no real sleeping |
 | `test_arxiv_fixes.py` | Regression tests for the arXiv crawler, same fakes |
+| `test_ask_retrieval.py` | `AskService` with fakes: the plain path unchanged, the two-stage retrieval (one query embedding, `candidates`, rerank by a stable sort, `contexts`, no reranker), the keyword override, the errors for an empty, uncommitted or foreign index, the warnings, and that the index is closed |
 | `test_bench_fixes.py` | Benchmark regressions: clustered statistics, the OCR retry ladder in telemetry, page furniture and LaTeX / `<img>` normalisation, stale saved scores. The MLX adapter runs against stub modules, never a model |
 | `test_benchmark.py` | `BenchmarkRunner`, score persistence and report aggregation on an in-memory suite (`MemSuite`) |
 | `test_bootstrap.py` | `REGISTRY` defaults, unknown adapter names, `Container` overrides, entry-point plugins including broken ones, the `none` retrieval adapters and the `[index]`, `[embedder]` and `[reranker]` tables reaching a plugin |
 | `test_chunking.py` | `domain.chunking.chunk_pages`: chunk names and page ranges, overlap, page breaks, invalid settings |
 | `test_core_fixes.py` | Regressions: config loading, the pipeline version against `pyproject.toml` and `uv.lock`, QA LLM parameters, metadata refresh and degraded results through the real `FilesystemStore` |
 | `test_domain_models.py` | `SourceMetadata` citation formatting |
+| `test_index_config.py` | `index_config`: `candidates` and `contexts` read without the index adapter, other keys ignored, bad values named |
+| `test_index_service.py` | `IndexService`: incremental `build`, `update` of given documents, pruning, `status`, `remove`, the mismatch refusal, and `close()` on every path including a failing embedder |
 | `test_ingest_service.py` | `IngestService` with fakes for every port: per-page routing, the cache and its invalidation, partial and forced-OCR variants, images, converters, metadata sidecars, degraded conversions, domain errors |
 | `test_latex_fixes.py` | Regressions of the LaTeX adapter (`latex_source`, `pandoc_latex`) |
 | `test_latex_source.py` | Pure LaTeX-source helpers and the pandoc adapter's Markdown helpers |
 | `test_metrics.py` | `application.metrics`: normalisation (Markdown, hyphenation), capping of runaway output, `char3_f1`, `bootstrap_ci` |
 | `test_ocr_profiles.py` | OCR profile clean-up code pinned against each profile's `code_version` (an edit fails until it is re-pinned, with a bump if results can change), and `code_version` in both engine fingerprints |
 | `test_routing_policy.py` | `domain.routing.decide`, configurable `RoutingPolicy` thresholds, unknown `[routing]` keys rejected |
-| `test_services.py` | `AskService` and `CrawlService` with fakes |
+| `test_services.py` | `AskService` (plain path) and `CrawlService` with fakes |
 | `test_stats.py` | `application.stats`: paired bootstrap, `quantile`, `bootstrap_ci` |
 | `test_text.py` | `domain.text`: garbled-text detection, de-hyphenation, page splitting |
 
@@ -118,9 +121,12 @@ flowchart LR
 |---|---|
 | `test_arxiv_network.py` | `ArxivCrawler` over real HTTP against a local stand-in server (redirects, gzip, retries with `Retry-After`); one live arXiv test (`network`) |
 | `test_bench_datasets.py` | The synthetic and olmOCR-bench suite adapters, scorer output parsing, and the `docingest bench` sub-app end to end with a fake OCR engine; one dataset download test (`network`) |
+| `test_ask_cli.py` | `docingest ask` through the real CLI and store with fake plugins: the plain path, the index path, `--no-index`, `--bm25`, and the messages for an unbuilt index, another embedder and an index without an embedder |
 | `test_cli.py` | `docingest ingest` batch behaviour, option validation, the `adapters` command, a missing `--config` file (pipeline and `bench` commands), a `crawl` query that cannot be sent, a broken plugin |
 | `test_chunking_parity.py` | `chunk_pages` gives the same chunks as PaperQA2's `chunk_pdf` on the repository's own documents, an ingested LaTeX paper and random pages (hypothesis); skipped when `paperqa` is not installed |
 | `test_filesystem_store.py` | `FilesystemStore` file permissions, no leftover temp files, a corrupt cached manifest treated as a cache miss |
+| `test_index_cli.py` | `docingest index build`, `status` and `remove` with fake plugins |
+| `test_index_on_ingest.py` | `ingest --index` and `crawl --index`: off by default, only the papers of the run, checked before any work, a failing update keeps the papers |
 | `test_magic_detector.py` | `MagicBytesDetector` on real files |
 | `test_openai_ocr.py` | `OpenAICompatibleOcr` against a scripted local OpenAI-compatible server: request shape, retries, the `finish_reason="length"` ladder, authentication |
 | `test_pandoc_latex.py` | `PandocLatexConverter` with the real pandoc (pypandoc-binary) and pylatexenc on `tests/fixtures/latex`; optional real arXiv sources (`slow`) |
@@ -170,10 +176,11 @@ The module docstring states the rule: the fakes are real implementations of the 
 | `InMemoryStore()` | `DocumentStore` | Reference implementation of the store contract: canonical results, variants (partial or forced-OCR runs) and degraded fallbacks kept apart; locations are `mem://...` strings | `canonical`, `variants`, `degraded` dictionaries |
 | `FakeCrawler(records, payload=..., fail_keys=set())` | `SourceCrawler` | `search()` returns the first `limit` records; `fetch()` writes `<key>.tex` with `payload` into `dest_dir` and returns format `"latex"`; keys in `fail_keys` raise `DocumentOpenError` | |
 | `record(key, title="A paper")` | helper | A `SourceRecord` with `SourceMetadata(title=title, arxiv_id=key, year=2024)` | |
+| `add_doc(store, doc_id, pages, name=None)` | helper | Stores a text document in a store like an ingested one; `pages` is `[(text, section title)]` | returns the manifest |
 | `FakeEmbedder(dims=16, fingerprint=..., query_instruction="")` | `Embedder` | A hashed bag of words (`crc32` of each word modulo `dims`): texts that share words get close vectors; the same text always gives the same vector | `calls` counts `embed_documents` calls |
-| `FakeIndex(fingerprint=..., embedder_fingerprint=...)` | `ChunkIndex` | Reference implementation of the index contract: documents kept in memory, exact cosine search, ties in insertion order; `upsert` and `remove` are staged and only `commit()` makes them visible to `search` | `keys()` shows staged changes |
+| `FakeIndex(fingerprint=..., embedder_fingerprint=...)` | `ChunkIndex` | Reference implementation of the index contract: documents kept in memory, exact cosine search, ties in insertion order; `upsert` and `remove` are staged and only `commit()` makes them visible to `search` | `keys()` shows staged changes; `closed` counts `close()` calls and `keywords` records the `keywords` argument of each `search` |
 | `FakeReranker()` | `Reranker` | Scores a chunk by the share of the question's words it contains | |
-| `FakeQA()` | `QuestionAnswerer` | Async `ask()` returns `f"answer to {question!r} from {len(documents)} docs"` | `seen` holds the source names of the documents it received, `contexts` the chunks it was given |
+| `FakeQA()` | `QuestionAnswerer` | Async `ask()` returns `f"answer to {question!r} from {len(documents)} docs"` | `seen` holds the source names of the documents it received, `markdown` their Markdown texts, `contexts` the chunks it was given |
 
 There is no shared fake for `BenchmarkSuite`. `tests/unit/test_benchmark.py` defines `MemSuite` (samples whose reference is their id, scored by exact match), `TaggedSuite` (images tagged with their sample id) and `EchoOcr` (a `FakeOcr` subclass that returns that id, can fail every Nth call and counts `unload()` calls), plus the `spec()` and `runner()` helpers for `BenchmarkRunner`. A new unit test in `tests/unit/` can import them with `from test_benchmark import ...`, as `test_bench_fixes.py` does.
 

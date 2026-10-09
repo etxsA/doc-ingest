@@ -33,7 +33,7 @@ case.
 |---|---|---|---|
 | `ingest.py` | `IngestService`, `IngestOptions`, `PIPELINE_VERSION`, `SIDECAR_SUFFIX`, `sha256_file`, `read_sidecar`, `retitle_markdown`, `Log` | Turn one file (PDF, image, office, LaTeX, text) into Markdown plus a `DocumentManifest`, with a content-addressed cache | `bootstrap.Container.ingest`, `docingest ingest`, `docingest eval-ocr`, the PaperQA2 hook, `CrawlService` |
 | `crawl.py` | `CrawlService`, `CrawlReport` | Search a remote source, download each record, write a metadata sidecar, ingest it | `bootstrap.Container.crawl`, `docingest crawl` |
-| `ask.py` | `AskService` | Answer a question over every stored document | `bootstrap.Container.ask`, `docingest ask` |
+| `ask.py` | `AskService`, `Retrieval`, `retrieve` | Answer a question over every stored document, or from the chunk index when one is configured | `bootstrap.Container.ask`, `docingest ask` |
 | `index.py` | `IndexService`, `IndexStatus`, `BuildReport`, `content_key`, `BATCH_CHUNKS` | Chunk every stored document like `ask` does, embed the new and changed ones, drop the vanished ones, and report the state of the index | `bootstrap.Container.index_service`, `docingest index` |
 | `benchmark.py` | `BenchmarkRunner`, `CandidateRun`, `RunMismatchError`, `score_run`, `needs_scoring`, `load_scores`, `rank`, `compare`, `throughput`, `build_summary`, `render_report`, `write_report`, `read_manifest`, `read_telemetry`, `telemetry_path`, `telemetry_stamp`, `latest_by_sample`, `machine_info`, `library_versions` | Transcribe benchmark samples with each OCR candidate (resumable), record telemetry, score, and write `summary.json` and `report.md` | `docingest bench run`, `bench score`, `bench report` (in `entrypoints/bench_cli.py`); `scripts/bench_docs.py` reads `load_scores` and `compare` |
 | `metrics.py` | `score`, `normalize`, `plain_text`, `latex_to_text`, `word_f1`, `char3_f1`, `running_lines`, `strip_furniture`, `bootstrap_ci`, `FURNITURE_ZONE` | Format-neutral text comparison: CER, WER, word F1, character 3-gram F1 | the synthetic benchmark suite, `docingest eval-ocr` |
@@ -128,7 +128,15 @@ classDiagram
         +run(query, limit, ingest, options) CrawlReport
     }
     class AskService {
-        +ask(question, warn) str
+        +has_index bool
+        +ask(question, warn, use_index, keywords) str
+    }
+    class Retrieval {
+        +Embedder embedder
+        +ChunkIndex index
+        +Reranker reranker
+        +int candidates
+        +int contexts
     }
     class CandidateRun {
         +str suite
@@ -176,7 +184,7 @@ from the adapter names selected in `[adapters]` of `config/pipeline.toml` (see
 |---|---|---|
 | `Container.ingest` | `IngestService` | `detector`, `pdf`, `ocr`, `images`, the office / latex / text converters (built lazily, only when a document of that kind arrives), `store`, and `cfg.routing` as `policy` |
 | `Container.crawl` | `CrawlService` | `crawler`, `ingest=lambda: self.ingest` (so `--no-ingest` never builds the OCR engine), `raw_dir=Path(cfg.raw_dir) / "arxiv"` (default `data/raw/arxiv`) |
-| `Container.ask` | `AskService` | `store`, `qa` |
+| `Container.ask` | `AskService` | `store`, `qa`, and when `[adapters] index` is set a `retrieval` callable that builds a `Retrieval` (`embedder`, `index`, `reranker` or none, `candidates` and `contexts` from `index_config(cfg)`) on the first question that uses the index |
 
 All three are `cached_property`, so one `Container` builds each service once and shares
 the adapters between them. Building `IngestService` builds the OCR adapter, which is
@@ -796,30 +804,61 @@ for key, error in report.failures:
 
 ## `ask.py`: question answering over the corpus
 
-`AskService(*, store, qa)` has one coroutine:
+`AskService(*, store, qa, retrieval=None)` has one coroutine and one property:
 
-`async ask(question, warn=print) -> str`
+`async ask(question, warn=print, *, use_index=True, keywords=None) -> str`
+
+`has_index` is true when a `retrieval` callable was given (`[adapters] index` is set).
 
 1. `store.corpus()` returns one `StoredDocument` per document (the canonical result, else
    the most complete partial or degraded one) and a list of warnings (for example
    "only a partial run exists"). Each warning is passed to `warn`.
 2. If there are no documents it raises
    ``RuntimeError("no ingested documents; run `docingest ingest` first")``.
-3. It reads every document's Markdown with `store.markdown(doc)` and awaits
-   `qa.ask(question, [(document, markdown), ...], warn)`.
-4. It returns the answerer's text unchanged.
+3. **Without an index** (none configured, or `use_index=False`) it reads every document's
+   Markdown with `store.markdown(doc)` and awaits
+   `qa.ask(question, [(document, markdown), ...], warn)`. `keywords` is then a `ValueError`: it
+   belongs to the index.
+4. **With an index** it calls `retrieval()` and `retrieve(...)`, closes the index in a
+   `finally`, and awaits `qa.ask(question, [(document, "")...], warn, contexts=chunks)` with
+   the manifests of the papers the chunks come from (in order of first appearance) and no
+   Markdown: the corpus text is not read.
+5. It returns the answerer's text unchanged.
 
-All Markdown is loaded in memory before the `QuestionAnswerer` is called. The default
-answerer (PaperQA2) splits each document back into pages with `split_pages`, so its
-citations can name page ranges, and labels partial runs in the citation ("pages 1-N of
-M"). `AskService` writes nothing. The `[qa]` configuration is described in
-[config/README.md](../../../config/README.md).
+`retrieve(retrieval, question, documents, warn, keywords)` is the two-stage retrieval:
+
+1. It checks the index before spending a request: `IndexMismatchError` when
+   `index.embedder_fingerprint` is not `embedder.fingerprint`;
+   `IndexNotReadyError` when `stats().searchable_documents` is 0, either because nothing is
+   stored ("the index is empty") or because nothing was committed ("none is committed");
+   every message ends with ``run `docingest index build` ``. A warning (not an error) when
+   `stats().pending` says changes are not committed, and when documents of the corpus are
+   not in `index.keys()`.
+2. It embeds the question once (`embedder.embed_query`) and calls
+   `index.search(question, vector, candidates, keywords=keywords)`. An index that returns no
+   hit at all is a `RetrievalError` (a rebuild would not help, so the message has no hint).
+3. It drops hits whose paper is no longer in the corpus (a warning says how many; an index
+   built with `--no-prune` or before a paper was removed), and raises `IndexNotReadyError` if
+   nothing is left. `candidates` counts the first stage's hits before this filter, so the
+   reranker can see fewer.
+4. With a reranker it asks for one score per remaining chunk and sorts by
+   `(-score, first-stage position)`, so ties keep the first stage's order as in the measured
+   run; a reranker that returns another number of scores is a `RetrievalError`; with
+   `reranker=None` the first stage's order is final.
+5. It returns the first `contexts` chunks and their documents.
+
+The default answerer (PaperQA2) splits each document back into pages with `split_pages`
+(plain mode), so its citations can name page ranges, and labels partial runs in the citation
+("pages 1-N of M"); in index mode it summarizes exactly the given chunks and retrieves
+nothing. `AskService` writes nothing and times nothing. The `[qa]` and `[index]` configuration
+is described in [config/README.md](../../../config/README.md).
 
 ```mermaid
 sequenceDiagram
     participant CLI as docingest ask
     participant Ask as AskService
     participant Store as DocumentStore
+    participant Idx as Embedder, ChunkIndex, Reranker
     participant QA as QuestionAnswerer
     CLI->>Ask: asyncio.run(ask(question, warn))
     Ask->>Store: corpus()
@@ -827,7 +866,7 @@ sequenceDiagram
     Ask->>CLI: warn(message) for each warning
     alt no documents
         Ask-->>CLI: raises RuntimeError
-    else at least one document
+    else no index (or use_index=False)
         loop each document
             Ask->>Store: markdown(document)
             Store-->>Ask: Markdown text
@@ -835,8 +874,15 @@ sequenceDiagram
         Ask->>QA: await ask(question, document and Markdown pairs, warn)
         Note over QA: the PaperQA2 adapter splits pages, chunks, embeds and queries
         QA-->>Ask: formatted answer
-        Ask-->>CLI: answer text
+    else an index is configured
+        Ask->>Idx: check the index, embed_query, search(candidates), rerank
+        Idx-->>Ask: the first contexts chunks
+        Ask->>Idx: index.close()
+        Ask->>QA: await ask(question, manifests only, warn, contexts=chunks)
+        Note over QA: PaperQA2 summarizes exactly these chunks and answers
+        QA-->>Ask: formatted answer
     end
+    Ask-->>CLI: answer text
 ```
 
 ```bash
@@ -888,7 +934,10 @@ it talks to the `DocumentStore`, `Embedder` and `ChunkIndex` ports only.
 
 `update(documents) -> BuildReport` is `build` for just the given documents (what an ingest or
 a crawl stored): the new or changed ones are embedded, the rest is skipped, nothing is pruned,
-no other document of the corpus is read, then it commits. `check_embedder()` is step 1 on its
+no other document of the corpus is read, then it commits. Each given document is replaced by
+the version the corpus serves (`store.corpus()`, manifests only): a partial or forced-OCR run
+stored as a variant beside a complete canonical result does not replace that result in the
+index; a document the corpus does not serve is skipped. `check_embedder()` is step 1 on its
 own, for a caller that wants to fail before it spends time.
 
 `status() -> IndexStatus` changes nothing: the index's `IndexStats`, whether its embedder is

@@ -4,6 +4,7 @@ Ports are the interfaces the application layer depends on. Adapters implement th
 
 - `isinstance(obj, SomePort)` works for every port, but it only checks that the members exist, not their signatures. Pyright (`uv run pyright`) checks signatures only where an object is statically typed as the port. The `bootstrap` factories return `Any`, so built-in adapters are not checked that way (the benchmark suites are, through the `BenchmarkSuite` return type of `build_suite()` in `entrypoints/bench_cli.py`). To get the check for your adapter, assign an instance to a variable annotated with the port, for example `engine: OcrEngine = MyOcr(...)`.
 - Ports import only `docingest.domain`, each other, the standard library and, as the one third-party type, `PIL.Image.Image` for images ([ADR 0001](../../../docs/adr/0001-hexagonal-architecture.md)). The import-linter contract "Application depends on ports, not on concrete libraries" forbids them to import concrete libraries such as pypdfium2, mlx, paperqa, docling or pypandoc.
+- **The three retrieval ports (`Embedder`, `ChunkIndex`, `Reranker`) are unstable until the first release.** Their members still change between pull requests (`close()` and the `keywords` argument of `search` were added after `stats()` and `embedder_fingerprint`), so a plugin written against an earlier revision needs updating. The other ports are not affected.
 - Everything is re-exported from the package: `from docingest.ports import OcrEngine, OcrResult, DocumentStore, ...`.
 
 Related reading: [package map](../README.md), [domain types](../domain/README.md), [application services](../application/README.md), [adapters](../adapters/README.md), [OCR adapters](../adapters/ocr/README.md), [converters](../adapters/converters/README.md).
@@ -569,7 +570,9 @@ class ChunkIndex(Protocol):
 
     def stats(self) -> IndexStats: ...
 
-    def search(self, question: str, vector: Vector, k: int) -> list[Hit]: ...
+    def search(
+        self, question: str, vector: Vector, k: int, *, keywords: KeywordMode | None = None
+    ) -> list[Hit]: ...
 ```
 
 Contract:
@@ -580,7 +583,7 @@ Contract:
 - `close()` releases what the index holds (the write lock and open files of an adapter that has them). It is safe at any time and more than once, `commit` already does it, and the index stays usable: the next call takes again what it needs. A caller that may stop between two writes, or that opened the index only to read, calls it in a `finally` (`IndexService` and `AskService` do), so a failed run does not keep the next one out until the object is collected.
 - `embedder_fingerprint` is the `Embedder.fingerprint` the index holds vectors of. A caller that would add vectors from another embedder compares the two first and refuses (`IndexService` does), because vectors of different models are not comparable.
 - `stats()` returns an `IndexStats`: documents and chunks as `keys()` reports them, documents and chunks `search` answers from (the last commit), the time of the last commit (`None` before the first), and `pending`: true when `keys()` differs in any way from what `search` answers from (a document added, removed or stored again under another key since the last commit, also by an earlier process). Counts alone cannot tell, because an update keeps them equal.
-- `search` returns at most `k` hits, best first. `vector` is the embedded question (`Embedder.embed_query`); `question` is its text, for adapters that also match keywords. What the first stage does beyond that (for example fusing a keyword search) is the adapter's business and its settings.
+- `search` returns at most `k` hits, best first. `vector` is the embedded question (`Embedder.embed_query`); `question` is its text, for adapters that also match keywords. `keywords` (`KeywordMode`: `"english"`, `"always"` or `"never"`) overrides for this call when the adapter adds its keyword part; `None` keeps the adapter's own setting, and an adapter without a keyword part ignores it. `docingest ask --bm25` is how a user sets it. What the first stage does beyond that (for example fusing a keyword search) is the adapter's business and its settings.
 - Chunks come from `domain.chunking.chunk_pages`, so they are the chunks `docingest ask` would give PaperQA2.
 
 Implementations: `adapters/retrieval/none.py` `NoIndex` (the default, fails when used) and, in the `docingest-index` package, `LocalIndex` (`local`). Test fake: `FakeIndex`.

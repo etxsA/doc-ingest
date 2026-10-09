@@ -568,6 +568,9 @@ classDiagram
     class OcrError
     class NotConfiguredError
     class IndexMismatchError
+    class IndexNotReadyError
+    class InvalidConfigError
+    class RetrievalError
     class OcrServerError {
         +int status
     }
@@ -591,6 +594,10 @@ classDiagram
     DocingestError <|-- OcrError
     DocingestError <|-- NotConfiguredError
     DocingestError <|-- IndexMismatchError
+    DocingestError <|-- IndexNotReadyError
+    DocingestError <|-- InvalidConfigError
+    ValueError <|-- InvalidConfigError
+    DocingestError <|-- RetrievalError
     OcrError <|-- OcrServerError
     SourceUnavailableError <|-- HttpStatusError
     SourceUnavailableError <|-- RetriesExhaustedError
@@ -609,8 +616,11 @@ classDiagram
 | `SourceUnavailableError` | `DocingestError` | A remote source has no downloadable content for a record. | `ArxivCrawler` (API error, malformed XML, no usable format); the olmOCR-bench dataset download. | `CrawlService` records the record as failed and moves on. |
 | `RateLimitedError` | `SourceUnavailableError` | The source asked for a pause (HTTP 429 or `Retry-After`) that the crawler will not sit out. `retry_after_s: float \| None` is the pause still owed, if the server named one. | `PoliteClient` in `adapters/sources/http.py`. | `CrawlService` stops the crawl: the pause concerns every later request to the same source. Remaining records are reported as not attempted. |
 | `OcrError` | `DocingestError` | The OCR engine could not transcribe a page. | `OpenAICompatibleOcr` (as `OcrServerError`). | The CLI records the file as failed; `BenchmarkRunner` records the sample as an error and continues. |
-| `NotConfiguredError` | `DocingestError` | A port was used whose `[adapters]` entry is `"none"`: no implementation was chosen. | `NoEmbedder`, `NoIndex`, `NoReranker` (`adapters/retrieval/none.py`). | `docingest index` prints the message and exits with 1. The reranker has no use case yet. |
-| `IndexMismatchError` | `DocingestError` | A chunk index holds vectors of another embedder than the configured one. | `IndexService.build`. | `docingest index build` prints the message and exits with 1. |
+| `NotConfiguredError` | `DocingestError` | A port was used whose `[adapters]` entry is `"none"`: no implementation was chosen. Also an index selected without an embedder. | `NoEmbedder`, `NoIndex`, `NoReranker` (`adapters/retrieval/none.py`); `Container`. | `docingest index` and `docingest ask` with an index print the message and exit with 1. |
+| `IndexMismatchError` | `DocingestError` | A chunk index holds vectors of another embedder than the configured one. | `IndexService`, `AskService`. | `docingest index build`, `ingest --index` and `docingest ask` print the message and exit with 1. |
+| `IndexNotReadyError` | `DocingestError` | The chunk index cannot answer yet: empty, nothing committed, or no returned chunk belongs to the corpus. The message names `docingest index build`. | `AskService`. | `docingest ask` prints the message and exits with 1. |
+| `InvalidConfigError` | `DocingestError`, `ValueError` | A configuration table holds a value that cannot be used; the message names the table and key. | `index_config`; `Container` when an adapter cannot be built from its table. | `docingest ask` with an index prints the message and exits with 1. |
+| `RetrievalError` | `DocingestError` | A retrieval step returned something unusable: a reranker that scores another number of chunks, or an index that returns no hit. | `AskService`. | `docingest ask` prints the message and exits with 1. |
 
 `RateLimitedError` is part of the `SourceCrawler` contract: a crawler raises it instead of waiting out a long pause.
 

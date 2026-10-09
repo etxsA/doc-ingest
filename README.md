@@ -7,7 +7,7 @@ A local research engine for scientific papers. It turns papers into clean Markdo
 | Path | What it is | Status |
 |---|---|---|
 | [`packages/docingest/`](packages/docingest/README.md) | Document normalization: PDF, scanned PDF, LaTeX source, Office files and images become Markdown plus a provenance manifest. Also crawls arXiv and answers questions with PaperQA2. Command: `docingest`. | Available (0.3.1) |
-| [`packages/docingest-index/`](packages/docingest-index/README.md) | Embedding and reranker clients (OpenAI-compatible `/v1/embeddings`, vLLM `/rerank`) and a persistent chunk index (dense vectors plus BM25), plugged into docingest as adapters. Command: `docingest index build`. | Available (0.1.0); `ask` does not use it yet |
+| [`packages/docingest-index/`](packages/docingest-index/README.md) | Embedding and reranker clients (OpenAI-compatible `/v1/embeddings`, vLLM `/rerank`) and a persistent chunk index (dense vectors plus BM25), plugged into docingest as adapters. Command: `docingest index build`. | Available (0.1.0); `docingest ask` retrieves from it when configured |
 | [`serving/`](serving/README.md) | Start and stop script for the local model servers (answering model, embedder, reranker), pinned model list, reranker templates and a configuration example. | Available |
 | `experiments/` | Benchmark runners, a timing harness and retrieval and question-answering evaluations. | Planned |
 
@@ -18,7 +18,8 @@ flowchart LR
     SRC["Papers: arXiv, PDF, scans, LaTeX, Office"] --> ING["docingest ingest / crawl"]
     ING --> CORPUS[("Normalized corpus: Markdown + manifest per document")]
     CORPUS --> IDX[("Chunk index: vectors + BM25 (docingest index build)")]
-    CORPUS --> ASK["docingest ask (PaperQA2)"]
+    IDX -->|"search, rerank"| ASK["docingest ask (PaperQA2)"]
+    CORPUS -->|"no index configured"| ASK
     ASK --> LLM["Local LLM server (OpenAI-compatible)"]
     LLM --> ANS["Answer with cited pages"]
 ```
@@ -36,6 +37,19 @@ uv run docingest --help
 ```
 
 Each package documents its own setup and commands; start with the [docingest README](packages/docingest/README.md).
+
+### Ask with the chunk index
+
+With the model servers of [`serving/`](serving/README.md) running (an answering model, an embedder and a reranker, all on 127.0.0.1), the example configuration [`lab-server.toml`](packages/docingest/config/examples/lab-server.toml) turns the index on. Build it once, then ask:
+
+```bash
+cd packages/docingest
+uv run docingest ingest data/raw --index -c config/examples/lab-server.toml    # ingest, and index the new papers
+uv run docingest index build -c config/examples/lab-server.toml                # embed what is not in the index yet
+uv run docingest ask "What limits T1 in transmons?" -c config/examples/lab-server.toml
+```
+
+`ask` embeds the question, takes the 50 best chunks from the index (dense vectors plus BM25), reranks them and gives the best 10 to PaperQA2, which writes the cited answer. Without `index` in `[adapters]` (the default) `ask` works as before, and `ask --no-index` skips a configured index for one question. The keys are in the [configuration reference](packages/docingest/config/README.md#index-embedder-and-reranker-docingest-index) and the design in [ADR 0004](packages/docingest/docs/adr/0004-chunk-index-and-two-stage-retrieval.md).
 
 ## Development
 
