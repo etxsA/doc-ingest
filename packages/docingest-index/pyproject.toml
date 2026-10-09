@@ -20,6 +20,9 @@ dependencies = [
 [project.entry-points."docingest.embedder"]
 openai-compatible = "docingest_index.factories:embedder"
 
+[project.entry-points."docingest.index"]
+local = "docingest_index.factories:index"
+
 [project.entry-points."docingest.reranker"]
 vllm = "docingest_index.factories:reranker"
 
