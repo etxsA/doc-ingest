@@ -627,6 +627,29 @@ def test_a_second_writer_is_refused_until_the_first_commits_or_closes(tmp_path):
     assert set(first.keys()) == {DOC_A, DOC_B, DOC_C}  # first saw what second wrote
 
 
+def test_close_gives_up_the_lock_after_writes_that_were_not_committed(tmp_path):
+    first, second = make(tmp_path / "idx"), make(tmp_path / "idx")
+    first.upsert(DOC_A, "k", [chunk(DOC_A, "x")], [unit(1, 0, 0, 0)])
+    first.close()
+    first.close()  # twice is fine
+    second.upsert(DOC_B, "k", [chunk(DOC_B, "y")], [unit(0, 1, 0, 0)])
+    second.commit()
+    assert second.keys() == {DOC_A: "k", DOC_B: "k"}  # what first wrote is not lost by closing
+    first.upsert(DOC_C, "k", [chunk(DOC_C, "z")], [unit(0, 0, 1, 0)])  # and first writes again
+    assert set(first.keys()) == {DOC_A, DOC_B, DOC_C}
+
+
+def test_close_after_a_search_releases_the_files_and_the_index_searches_again(tmp_path):
+    index = make(tmp_path / "idx")
+    zebra_corpus(index)
+    assert index.search("zebra", unit(0, 1, 0, 0), 2)
+    records = index._search._records  # the file a search keeps open
+    index.close()
+    assert records is None or records.closed
+    assert index._search is None
+    assert index.search("zebra", unit(0, 1, 0, 0), 2)
+
+
 def test_removing_from_an_index_that_does_not_exist_creates_nothing(tmp_path):
     index = make(tmp_path / "idx")
     index.remove(DOC_A)

@@ -201,6 +201,22 @@ def test_a_removal_committed_and_then_searched_for_the_first_time(index, embedde
     assert {h.chunk.doc_id for h in hits} == {PAPER_B}
 
 
+def test_close_is_safe_at_any_time_and_the_index_stays_usable(index, embedder):
+    index.close()  # nothing opened yet
+    fill(index, embedder)
+    index.close()
+    index.close()
+    query = embedder.embed_query("softmax")
+    assert len(index.search("softmax", query, 100)) == sum(len(chunks_of(d)) for d in TEXTS)
+    chunks = chunks_of(PAPER_A)
+    index.upsert(PAPER_A, "k2", chunks, embedder.embed_documents([c.text for c in chunks]))
+    index.close()  # writes that are not committed are not lost by closing
+    assert index.keys()[PAPER_A] == "k2"
+    index.commit()
+    index.close()
+    assert index.stats().pending is False
+
+
 def test_pending_tells_changes_that_counts_cannot(index, embedder):
     assert index.stats().pending is False
     fill(index, embedder)

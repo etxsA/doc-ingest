@@ -64,6 +64,14 @@ class ChunkIndex(Protocol):
         batch instead of once per document."""
         ...
 
+    def close(self) -> None:
+        """Release what the index holds: the write lock and open files of an adapter that
+        has them. Safe to call at any time and more than once; ``commit`` already does it,
+        so a caller needs it after writes it does not commit (an error between two
+        ``upsert`` calls) and after reading. The index stays usable: the next call takes
+        again what it needs."""
+        ...
+
     def stats(self) -> IndexStats:
         """Counts for ``docingest index status``, telling a built index from one with
         changes that no ``commit`` has made searchable yet."""

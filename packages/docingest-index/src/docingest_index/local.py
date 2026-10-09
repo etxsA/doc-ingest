@@ -204,11 +204,15 @@ class LocalIndex:
             self.close()
 
     def close(self) -> None:
-        """Release the write lock. ``commit`` does it; call this to give up after writing
-        without committing."""
+        """Release the write lock and the files a search keeps open. ``commit`` does it; call
+        this to give up after writing without committing, and after reading. The index stays
+        usable: the next call takes again what it needs."""
         if self._lock is not None:
             self._lock.close()  # closing the file releases the flock
             self._lock = None
+        if self._search is not None:
+            self._search.close()
+            self._search = None
 
     def stats(self) -> IndexStats:
         shards = self._shards()
@@ -533,6 +537,11 @@ class _Search:
         self._offsets = np.load(folder / "chunks.offsets.npy") if self.rows else None
         self._records = (folder / "chunks.jsonl").open("rb") if self.rows else None
         self._bm25: tuple[Any, Any] | None = None
+
+    def close(self) -> None:
+        if self._records is not None:
+            self._records.close()
+            self._records = None
 
     def query(self, vector: Vector) -> np.ndarray:
         v = np.asarray(vector, dtype=np.float32)

@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 from ..domain.chunking import Chunk, chunk_pages
@@ -91,51 +91,57 @@ class IndexService:
     def build(self, *, prune: bool = True) -> BuildReport:
         """Embed the new and changed documents, drop the ones that left the corpus (unless
         ``prune`` is false) and commit. Safe to interrupt and run again: what was embedded
-        before stays."""
-        self._check_embedder()
+        before stays. The index is closed on the way out, also when an error stops the run,
+        so a retry in the same process is not locked out by the failed one."""
+        self.check_embedder()
         started = time.perf_counter()
         documents, warnings = self.store.corpus()
         if not documents:
             raise RuntimeError("no ingested documents; run `docingest ingest` first")
         report = BuildReport(warnings=list(warnings))
-        indexed = self.index.keys()
-        batch: list[_Pending] = []
-        in_batch = 0
-        todo = 0
-        for doc in documents:
-            pages = split_pages(self.store.markdown(doc))
-            key = content_key(pages)
-            doc_id = doc.manifest.doc_id
-            if indexed.get(doc_id) == key:
-                report.unchanged += 1
-                continue
-            if doc_id in indexed:
-                report.updated += 1
-            else:
-                report.added += 1
-            chunks = self._chunks(doc, pages)
-            batch.append(_Pending(doc, key, chunks))
-            in_batch += len(chunks)
-            todo += len(chunks)
-            if in_batch >= self.batch_chunks:
-                report.chunks_embedded += self._flush(batch)
-                self.log(f"embedded {report.chunks_embedded} chunks")
-                batch, in_batch = [], 0
-        report.chunks_embedded += self._flush(batch)
-        if prune:
-            current = {d.manifest.doc_id for d in documents}
-            report.pruned = sorted(set(indexed) - current)
-            for doc_id in report.pruned:
-                self.index.remove(doc_id)
-        stats = self.index.stats()
-        changed = report.added or report.updated or report.pruned
-        if changed or stats.pending or not stats.committed_at:
-            self.index.commit()
-            report.committed = True
+        try:
+            indexed = self.index.keys()
+            self._add(documents, indexed, report)
+            if prune:
+                current = {d.manifest.doc_id for d in documents}
+                report.pruned = sorted(set(indexed) - current)
+                for doc_id in report.pruned:
+                    self.index.remove(doc_id)
+            self._commit(report)
+        finally:
+            self.index.close()
+        report.seconds = time.perf_counter() - started
+        return report
+
+    def update(self, documents: Sequence[StoredDocument]) -> BuildReport:
+        """Index just ``documents`` (the ones an ingest or a crawl stored): those that are
+        new or changed are embedded, the rest is skipped, nothing is pruned, then commit.
+        Reads no other document of the corpus, so it costs the same however large the
+        corpus is.
+
+        What is indexed for each document is the version the corpus serves (and ``ask``
+        cuts), not necessarily the one given: a partial or forced-OCR run is stored as a
+        variant beside a complete canonical result, which stays the one served."""
+        self.check_embedder()
+        served = {d.manifest.doc_id: d for d in self.store.corpus()[0]}  # manifests only
+        documents = [served[d.manifest.doc_id] for d in documents if d.manifest.doc_id in served]
+        started = time.perf_counter()
+        report = BuildReport()
+        try:
+            self._add(documents, self.index.keys(), report)
+            self._commit(report)
+        finally:
+            self.index.close()
         report.seconds = time.perf_counter() - started
         return report
 
     def status(self) -> IndexStatus:
+        try:
+            return self._status()
+        finally:
+            self.index.close()
+
+    def _status(self) -> IndexStatus:
         documents, warnings = self.store.corpus()
         indexed = self.index.keys()
         new = changed = unchanged = to_embed = 0
@@ -168,26 +174,64 @@ class IndexService:
     def remove(self, doc_id: str) -> str:
         """Forget one document and commit. ``doc_id`` may be a unique prefix (at least 8
         characters). Returns the full id."""
-        indexed = self.index.keys()
-        if doc_id in indexed:
-            full = doc_id
-        else:
-            matches = [d for d in indexed if len(doc_id) >= 8 and d.startswith(doc_id)]
-            if len(matches) != 1:
-                reason = "is ambiguous" if matches else "is not in the index"
-                raise ValueError(f"document {doc_id!r} {reason}")
-            full = matches[0]
-        self.index.remove(full)
-        self.index.commit()
-        return full
+        try:
+            indexed = self.index.keys()
+            if doc_id in indexed:
+                full = doc_id
+            else:
+                matches = [d for d in indexed if len(doc_id) >= 8 and d.startswith(doc_id)]
+                if len(matches) != 1:
+                    reason = "is ambiguous" if matches else "is not in the index"
+                    raise ValueError(f"document {doc_id!r} {reason}")
+                full = matches[0]
+            self.index.remove(full)
+            self.index.commit()
+            return full
+        finally:
+            self.index.close()
 
-    def _check_embedder(self) -> None:
+    def check_embedder(self) -> None:
+        """Raise :class:`IndexMismatchError` unless the index holds vectors of the configured
+        embedder. Cheap: callers that will spend time before indexing run it first."""
         held, configured = self.index.embedder_fingerprint, self.embedder.fingerprint
         if held != configured:
             raise IndexMismatchError(
                 f"the index holds vectors of embedder {held!r} but the configured one is "
                 f"{configured!r}; use another [index] dir or restore the [embedder] settings"
             )
+
+    def _add(
+        self, documents: Sequence[StoredDocument], indexed: Mapping[str, str], report: BuildReport
+    ) -> None:
+        """Embed and store the documents whose key differs from the indexed one."""
+        batch: list[_Pending] = []
+        in_batch = 0
+        for doc in documents:
+            pages = split_pages(self.store.markdown(doc))
+            key = content_key(pages)
+            doc_id = doc.manifest.doc_id
+            if indexed.get(doc_id) == key:
+                report.unchanged += 1
+                continue
+            if doc_id in indexed:
+                report.updated += 1
+            else:
+                report.added += 1
+            chunks = self._chunks(doc, pages)
+            batch.append(_Pending(doc, key, chunks))
+            in_batch += len(chunks)
+            if in_batch >= self.batch_chunks:
+                report.chunks_embedded += self._flush(batch)
+                self.log(f"embedded {report.chunks_embedded} chunks")
+                batch, in_batch = [], 0
+        report.chunks_embedded += self._flush(batch)
+
+    def _commit(self, report: BuildReport) -> None:
+        stats = self.index.stats()
+        changed = report.added or report.updated or report.pruned
+        if changed or stats.pending or not stats.committed_at:
+            self.index.commit()
+            report.committed = True
 
     def _chunks(self, doc: StoredDocument, pages: Mapping[int, str]) -> list[Chunk]:
         titles = {p.index + 1: p.title or "" for p in doc.manifest.pages}

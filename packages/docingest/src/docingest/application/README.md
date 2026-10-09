@@ -882,6 +882,14 @@ it talks to the `DocumentStore`, `Embedder` and `ChunkIndex` ports only.
 6. It calls `index.commit()` once, if anything changed, if `stats().pending` says the index
    holds changes that `search` cannot see yet (an interrupted build, also one that only
    replaced documents, which leaves the document counts equal), or if it never committed.
+7. It calls `index.close()` in a `finally`, so an error between two documents (the embedding
+   server went away) does not keep the write lock until the object is collected. `status`,
+   `remove` and `update` close the index the same way.
+
+`update(documents) -> BuildReport` is `build` for just the given documents (what an ingest or
+a crawl stored): the new or changed ones are embedded, the rest is skipped, nothing is pruned,
+no other document of the corpus is read, then it commits. `check_embedder()` is step 1 on its
+own, for a caller that wants to fail before it spends time.
 
 `status() -> IndexStatus` changes nothing: the index's `IndexStats`, whether its embedder is
 the configured one, how many corpus documents are up to date, new or changed, which indexed

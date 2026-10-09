@@ -342,6 +342,7 @@ classDiagram
         +upsert(doc_id, key, chunks, vectors)
         +remove(doc_id)
         +commit()
+        +close()
         +stats() IndexStats
         +search(question, vector, k) list~Hit~
     }

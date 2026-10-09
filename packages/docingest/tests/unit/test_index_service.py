@@ -289,6 +289,119 @@ def test_remove_refuses_an_ambiguous_prefix(store):
     assert len(index.keys()) == 3
 
 
+class FailingEmbedder(FakeEmbedder):
+    """Embeds ``ok`` calls, then fails like a server that went away."""
+
+    def __init__(self, ok: int):
+        super().__init__()
+        self.ok = ok
+
+    def embed_documents(self, texts):
+        if self.calls >= self.ok:
+            raise ConnectionError("embedding server went away")
+        return super().embed_documents(texts)
+
+
+def test_the_index_is_closed_when_a_build_fails_between_two_batches(store):
+    embedder = FailingEmbedder(ok=1)
+    service, index, _ = make(store, embedder=embedder, batch_chunks=3)
+    with pytest.raises(ConnectionError):
+        service.build()
+    assert index.closed == 1
+    assert index.keys() and index.stats().searchable_documents == 0  # stored, never committed
+
+
+def test_a_build_that_works_closes_the_index_and_so_do_status_remove_and_update(store):
+    service, index, _ = make(store)
+    service.build()
+    assert index.closed == 1
+    service.status()
+    assert index.closed == 2
+    service.remove(PAPER_A)
+    assert index.closed == 3
+    with pytest.raises(ValueError, match="not in the index"):
+        service.remove(PAPER_A)
+    assert index.closed == 4
+    service.update(store.corpus()[0])
+    assert index.closed == 5
+
+
+def test_a_mismatch_stops_before_the_index_is_touched(store):
+    service, index, _ = make(
+        store, index=FakeIndex(embedder_fingerprint="old"), embedder=FakeEmbedder(fingerprint="new")
+    )
+    with pytest.raises(IndexMismatchError):
+        service.update(store.corpus()[0])
+    with pytest.raises(IndexMismatchError):
+        service.check_embedder()
+    assert index.closed == 0
+
+
+def test_update_indexes_only_the_given_documents_and_prunes_nothing(store):
+    service, index, embedder = make(store)
+    service.build()
+    add_doc(store, PAPER_C, [("Graph spectra and the Laplacian of a graph.", "Intro")])
+    remove_doc(store, PAPER_A)  # gone from the corpus: update must not prune it
+    [new] = [d for d in store.corpus()[0] if d.manifest.doc_id == PAPER_C]
+    reads = []
+    original = store.markdown
+    store.markdown = lambda doc: (reads.append(doc.manifest.doc_id), original(doc))[1]
+    report = service.update([new])
+    assert (report.added, report.updated, report.unchanged, report.pruned) == (1, 0, 0, [])
+    assert report.committed and reads == [PAPER_C]  # no other document was read
+    assert set(index.keys()) == {PAPER_A, PAPER_B, PAPER_C}
+    question = "Graph spectra and the Laplacian of a graph."
+    assert index.search(question, embedder.embed_query(question), 1)[0].chunk.doc_id == PAPER_C
+    again = service.update([new])
+    assert (again.added, again.unchanged, again.committed) == (0, 1, False)
+
+
+def test_update_indexes_the_version_the_corpus_serves_not_the_variant_it_was_given(store):
+    service, index, _ = make(store)
+    service.build()
+    canonical = index.keys()[PAPER_B]
+    [doc] = [d for d in store.corpus()[0] if d.manifest.doc_id == PAPER_B]
+    first = doc.manifest.model_copy(
+        update={"n_pages": 1, "max_pages": 1, "pages": doc.manifest.pages[:1]}
+    )
+    partial = store.save(first, render_markdown(first, [TEXT_B[0][0]]))  # a --max-pages 1 run
+    assert partial.canonical is False
+    assert [d.manifest.n_pages for d in store.corpus()[0] if d.manifest.doc_id == PAPER_B] == [2]
+    report = service.update([partial])
+    assert (report.added, report.updated, report.unchanged, report.committed) == (0, 0, 1, False)
+    assert index.keys()[PAPER_B] == canonical  # still the two-page paper
+    assert service.status().changed == 0
+
+
+def test_a_first_result_that_is_only_a_variant_is_indexed_because_the_corpus_serves_it(store):
+    service, index, _ = make(store)
+    only = InMemoryStore()
+    add_doc(only, PAPER_C, [("Graph spectra.", "Intro"), ("More about graphs.", "Body")])
+    [full] = only.corpus()[0]
+    first = full.manifest.model_copy(
+        update={"n_pages": 1, "max_pages": 1, "pages": full.manifest.pages[:1]}
+    )
+    del only.canonical[PAPER_C]
+    partial = only.save(first, render_markdown(first, ["Graph spectra."]))
+    service.store = only
+    report = service.update([partial])
+    assert report.added == 1 and set(index.keys()) == {PAPER_C}
+
+
+def test_update_ignores_a_document_the_corpus_does_not_serve(store):
+    service, index, _ = make(store)
+    [doc] = [d for d in store.corpus()[0] if d.manifest.doc_id == PAPER_A]
+    del store.canonical[PAPER_A]
+    report = service.update([doc])
+    assert (report.added, report.unchanged) == (0, 0) and index.keys() == {}
+
+
+def test_update_with_nothing_to_index_is_fine(store):
+    service, index, embedder = make(store)
+    report = service.update([])
+    assert report.committed and embedder.calls == 0 and index.stats().committed_at
+
+
 def test_the_key_depends_on_page_numbers_and_texts_only():
     pages = {1: "one", 2: "two"}
     assert content_key(pages) == content_key(dict(pages))

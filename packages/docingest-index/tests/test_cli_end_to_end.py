@@ -11,11 +11,12 @@ from docingest.bootstrap import Container
 from docingest.config import load_config
 from docingest.domain.errors import IndexMismatchError
 from docingest.entrypoints.cli import app
-from servers import EmbeddingServer
+from servers import EmbeddingServer, json_response
 from typer.testing import CliRunner
 
 from docingest_index import factories
 from docingest_index.embedder import OpenAICompatibleEmbedder
+from docingest_index.http import RemoteServiceError
 
 ATTENTION = "Attention weights are computed with a softmax over scaled dot products. " * 30
 QUBITS = "Superconducting qubits decohere when they couple to their environment. " * 30
@@ -138,3 +139,33 @@ def test_building_one_corpus_never_prunes_the_index_of_another(setup, tmp_path):
     assert set(mine.keys()) != set(theirs.keys())
     again = runner.invoke(app, ["index", "build", "-c", str(cfg)])
     assert "unchanged 1" in again.output and "pruned 0" in again.output
+
+
+def test_a_build_that_fails_between_two_papers_does_not_lock_a_retry_in_the_same_process(
+    setup, tmp_path
+):
+    """The embedding server goes away after the first paper was stored: the failed build
+    must give the write lock back, so building again in this process works."""
+    runner, cfg, server, raw = setup
+    (raw / "qubits.md").write_text("# Qubits\n" + QUBITS)
+    assert runner.invoke(app, ["ingest", str(raw), "-c", str(cfg)]).exit_code == 0
+    answer, calls = server.answer, []
+
+    def flaky(request, body):
+        calls.append(body)
+        if len(calls) > 1:
+            return json_response(400, {"error": "the model is not loaded"})
+        return answer(request, body)
+
+    server.answer = flaky
+    failing = Container(load_config(cfg), log=lambda _: None)
+    failing.index_service.batch_chunks = 1  # one paper per embedding call
+    with pytest.raises(RemoteServiceError):
+        failing.index_service.build()
+    assert len(failing.adapter("index").keys()) == 1  # the first paper was stored, not committed
+
+    server.answer = answer
+    retry = Container(load_config(cfg), log=lambda _: None)  # a new LocalIndex, as a retry makes
+    report = retry.index_service.build()
+    assert (report.added, report.unchanged) == (1, 1) and report.committed
+    assert retry.adapter("index").stats().searchable_documents == 2

@@ -284,6 +284,7 @@ class FakeIndex:
         self.fingerprint = fingerprint
         self.embedder_fingerprint = embedder_fingerprint
         self.committed_at: str | None = None
+        self.closed = 0  # how many times close() was called
         self._committed: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
         self._staged: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
 
@@ -303,6 +304,9 @@ class FakeIndex:
     def commit(self) -> None:
         self._committed = dict(self._staged)
         self.committed_at = "2026-01-01T00:00:00+00:00"
+
+    def close(self) -> None:
+        self.closed += 1
 
     def stats(self) -> IndexStats:
         return IndexStats(

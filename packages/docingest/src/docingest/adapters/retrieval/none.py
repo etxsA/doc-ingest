@@ -48,6 +48,9 @@ class NoIndex:
     def commit(self) -> None:
         _not_configured("index")
 
+    def close(self) -> None:
+        """Nothing is held, so there is nothing to fail: callers close in a ``finally``."""
+
     def stats(self) -> IndexStats:
         _not_configured("index")
 

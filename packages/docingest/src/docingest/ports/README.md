@@ -565,6 +565,8 @@ class ChunkIndex(Protocol):
 
     def commit(self) -> None: ...
 
+    def close(self) -> None: ...
+
     def stats(self) -> IndexStats: ...
 
     def search(self, question: str, vector: Vector, k: int) -> list[Hit]: ...
@@ -575,6 +577,7 @@ Contract:
 - Documents are identified by `doc_id`. `keys()` returns `{doc_id: key}` for everything indexed. The `key` is chosen by the caller, for example a hash of the text the chunks were cut from: a caller skips a document whose key has not changed, so a changed document is re-embedded and an unchanged one is not.
 - `upsert` replaces everything indexed for `doc_id` with `chunks` and their `vectors` (one vector per chunk, otherwise `ValueError`); `remove` forgets a document and ignores unknown ids. Chunks must come back from `search` unchanged in every field.
 - After `commit`, `search` reflects exactly what `keys()` reports: every `upsert` and `remove` since the last commit, and also documents an earlier process stored but never committed (an adapter that writes at `upsert` time can be interrupted before the call). Until then `search` answers from the last committed state, and `keys()` already reflects the changes. An adapter that keeps a search layer apart from its stored chunks (a dense matrix, a keyword index) rebuilds it in `commit`, once per batch instead of once per document. A service that changes the index must call it.
+- `close()` releases what the index holds (the write lock and open files of an adapter that has them). It is safe at any time and more than once, `commit` already does it, and the index stays usable: the next call takes again what it needs. A caller that may stop between two writes, or that opened the index only to read, calls it in a `finally` (`IndexService` and `AskService` do), so a failed run does not keep the next one out until the object is collected.
 - `embedder_fingerprint` is the `Embedder.fingerprint` the index holds vectors of. A caller that would add vectors from another embedder compares the two first and refuses (`IndexService` does), because vectors of different models are not comparable.
 - `stats()` returns an `IndexStats`: documents and chunks as `keys()` reports them, documents and chunks `search` answers from (the last commit), the time of the last commit (`None` before the first), and `pending`: true when `keys()` differs in any way from what `search` answers from (a document added, removed or stored again under another key since the last commit, also by an earlier process). Counts alone cannot tell, because an update keeps them equal.
 - `search` returns at most `k` hits, best first. `vector` is the embedded question (`Embedder.embed_query`); `question` is its text, for adapters that also match keywords. What the first stage does beyond that (for example fusing a keyword search) is the adapter's business and its settings.

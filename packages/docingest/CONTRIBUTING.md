@@ -340,7 +340,7 @@ This guide adds a working example, a `text` converter that splits Markdown into 
 | `store` | `DocumentStore` (`store.py`) | `lookup(doc_id, config_hash, *, max_pages, ocr_all)`, `save(manifest, markdown, *, degraded=False)`, `markdown(doc)`, `corpus()` | no | (none named) |
 | `qa` | `QuestionAnswerer` (`qa.py`) | `async ask(question, documents, warn, contexts=None) -> str` | no, QA never changes ingestion output | (none named) |
 | `embedder` | `Embedder` (`embedding.py`) | `fingerprint`, `query_instruction`, `embed_documents(texts) -> list[Vector]`, `embed_query(text) -> Vector` | no, it keys a chunk index instead | (none named) |
-| `index` | `ChunkIndex` (`index.py`) | `fingerprint`, `embedder_fingerprint`, `keys()`, `upsert(doc_id, key, chunks, vectors)`, `remove(doc_id)`, `commit()`, `stats() -> IndexStats`, `search(question, vector, k) -> list[Hit]` | no, it keys a chunk index instead | (none named) |
+| `index` | `ChunkIndex` (`index.py`) | `fingerprint`, `embedder_fingerprint`, `keys()`, `upsert(doc_id, key, chunks, vectors)`, `remove(doc_id)`, `commit()`, `close()`, `stats() -> IndexStats`, `search(question, vector, k) -> list[Hit]` | no, it keys a chunk index instead | (none named) |
 | `reranker` | `Reranker` (`reranking.py`) | `rerank(question, chunks) -> list[float]` | no | (none named) |
 | `crawler` | `SourceCrawler` (`sources.py`) | `search(query, limit)`, `fetch(record, dest_dir) -> FetchedSource` | no | `SourceUnavailableError`; `RateLimitedError` stops the crawl |
 | (`config/benchmark.toml`) | `BenchmarkSuite` (`benchmark.py`) | see [section 12](#12-guide-add-a-benchmark-candidate-or-suite) | the suite fingerprint | |
