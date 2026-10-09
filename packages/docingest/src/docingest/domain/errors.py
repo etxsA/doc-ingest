@@ -58,3 +58,15 @@ class IndexMismatchError(DocingestError):
 class InvalidConfigError(DocingestError, ValueError):
     """A configuration table holds a value that cannot be used; the message names the table
     and the key (for example ``[index] contexts``)."""
+
+
+class RetrievalError(DocingestError):
+    """A retrieval step returned something the use case cannot work with (for example a
+    reranker that scores a different number of chunks than it was given)."""
+
+
+class IndexNotReadyError(DocingestError):
+    """The chunk index cannot answer yet: it is empty, or nothing in it was committed.
+
+    The message says what to run (``docingest index build``).
+    """

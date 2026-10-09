@@ -7,7 +7,7 @@ from docingest.adapters.retrieval.none import NoIndex
 from docingest.bootstrap import REGISTRY, Container, available, build
 from docingest.config import AppConfig, OcrConfig, load_config
 from docingest.domain.chunking import Chunk
-from docingest.domain.errors import NotConfiguredError
+from docingest.domain.errors import InvalidConfigError, NotConfiguredError
 from docingest.ports import ChunkIndex, Embedder, Reranker
 
 
@@ -144,6 +144,7 @@ def test_the_none_adapters_refuse_to_work_and_name_the_setting(cfg):
             lambda a: a.commit(),
             lambda a: a.stats(),
             lambda a: a.search("q", [0.0], 5),
+            lambda a: a.search("q", [0.0], 5, keywords="never"),
         ],
         "reranker": [lambda a: a.rerank("q", [chunk])],
     }
@@ -187,3 +188,70 @@ def test_the_retrieval_tables_reach_a_plugin_untouched(tmp_path, monkeypatch):
     )
     build("index", cfg)
     assert seen == cfg.model_extra
+
+
+def test_closing_the_none_index_is_not_an_error(cfg):
+    NoIndex().close()  # callers close in a finally, also when nothing is configured
+
+
+def test_ask_has_no_index_unless_one_is_selected(cfg):
+    assert Container(cfg, log=lambda _: None).ask.has_index is False
+    cfg.adapters.embedder = "fake"  # an embedder alone does not change how ask answers
+    assert Container(cfg, log=lambda _: None).ask.has_index is False
+
+
+def test_selecting_an_index_makes_ask_retrieve_with_the_configured_stages(cfg):
+    from fakes import FakeEmbedder, FakeIndex, FakeReranker
+
+    cfg = AppConfig.model_validate(
+        {"adapters": {"index": "fake"}, "index": {"candidates": 7, "contexts": 3, "bm25": "never"}}
+    )
+    parts = {"embedder": FakeEmbedder(), "index": FakeIndex(), "reranker": FakeReranker()}
+    container = Container(cfg, log=lambda _: None, overrides=parts)
+    assert container.ask.has_index is True
+    retrieval = container.ask._retrieval()
+    assert (retrieval.candidates, retrieval.contexts) == (7, 3)
+    assert retrieval.embedder is parts["embedder"] and retrieval.index is parts["index"]
+    assert retrieval.reranker is parts["reranker"]
+
+
+def test_a_reranker_that_is_none_is_no_reranker_at_all():
+    from fakes import FakeEmbedder, FakeIndex
+
+    cfg = AppConfig.model_validate({"adapters": {"index": "fake"}})
+    container = Container(
+        cfg, log=lambda _: None, overrides={"embedder": FakeEmbedder(), "index": FakeIndex()}
+    )
+    retrieval = container.ask._retrieval()
+    assert retrieval.reranker is None
+    assert (retrieval.candidates, retrieval.contexts) == (50, 10)
+
+
+def test_an_index_without_an_embedder_is_reported_when_the_question_needs_it(cfg):
+    from fakes import FakeIndex
+
+    cfg = AppConfig.model_validate({"adapters": {"index": "fake"}})
+    container = Container(cfg, log=lambda _: None, overrides={"index": FakeIndex()})
+    assert container.ask.has_index is True  # building the service raises nothing ...
+    with pytest.raises(NotConfiguredError, match=r'index is "fake" but embedder is "none"'):
+        container.ask._retrieval()  # ... using the index does
+
+
+def test_a_bad_index_table_is_an_error_naming_it():
+    from fakes import FakeEmbedder, FakeIndex
+
+    cfg = AppConfig.model_validate({"adapters": {"index": "fake"}, "index": {"contexts": 0}})
+    container = Container(
+        cfg, log=lambda _: None, overrides={"embedder": FakeEmbedder(), "index": FakeIndex()}
+    )
+    with pytest.raises(InvalidConfigError, match=r"\[index\] contexts"):
+        container.ask._retrieval()
+
+
+def test_an_adapter_that_cannot_be_built_from_its_table_is_a_config_error():
+    from fakes import FakeIndex
+
+    cfg = AppConfig.model_validate({"adapters": {"index": "fake", "embedder": "no-such-adapter"}})
+    container = Container(cfg, log=lambda _: None, overrides={"index": FakeIndex()})
+    with pytest.raises(InvalidConfigError, match="unknown embedder adapter"):
+        container.ask._retrieval()

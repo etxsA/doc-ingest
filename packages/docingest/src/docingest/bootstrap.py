@@ -17,11 +17,12 @@ from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
 from typing import Any, ClassVar
 
-from .application.ask import AskService
+from .application.ask import AskService, Retrieval
 from .application.crawl import CrawlService
 from .application.index import IndexService
 from .application.ingest import IngestService, Log
-from .config import AppConfig
+from .config import AppConfig, index_config
+from .domain.errors import InvalidConfigError, NotConfiguredError
 from .domain.models import ModelRef, SourceKind
 
 Factory = Callable[[AppConfig], Any]
@@ -209,9 +210,38 @@ class Container:
             log=self.log,
         )
 
+    def configured(self, port: str) -> bool:
+        """Whether ``port`` has a real adapter: selected in ``[adapters]`` (not ``none``) or
+        given as an override."""
+        return port in self._overrides or getattr(self.cfg.adapters, port) != "none"
+
     @cached_property
     def ask(self) -> AskService:
-        return AskService(store=self.adapter("store"), qa=self.adapter("qa"))
+        """Answers from the chunk index when ``[adapters] index`` is set, else as before."""
+        return AskService(
+            store=self.adapter("store"),
+            qa=self.adapter("qa"),
+            retrieval=self._retrieval if self.configured("index") else None,
+        )
+
+    def _retrieval(self) -> Retrieval:
+        if not self.configured("embedder"):
+            raise NotConfiguredError(
+                f'[adapters] index is "{self.cfg.adapters.index}" but embedder is "none": '
+                "select the embedder the index was built with"
+            )
+        settings = index_config(self.cfg)
+        try:
+            return Retrieval(
+                embedder=self.adapter("embedder"),
+                index=self.adapter("index"),
+                # reranker "none": the first stage's order is final
+                reranker=self.adapter("reranker") if self.configured("reranker") else None,
+                candidates=settings.candidates,
+                contexts=settings.contexts,
+            )
+        except ValueError as e:  # an adapter's table ([embedder], [index], ...) or a name
+            raise InvalidConfigError(str(e)) from e
 
     @cached_property
     def index_service(self) -> IndexService:

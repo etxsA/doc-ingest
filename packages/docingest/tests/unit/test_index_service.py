@@ -1,7 +1,7 @@
 """IndexService with fakes: incremental build, pruning, status, removal."""
 
 import pytest
-from fakes import FakeEmbedder, FakeIndex, InMemoryStore
+from fakes import FakeEmbedder, FakeIndex, InMemoryStore, add_doc
 
 from docingest.application.index import IndexService, content_key
 from docingest.domain.chunking import chunk_pages
@@ -10,29 +10,6 @@ from docingest.domain.models import DocumentManifest, PageMethod, PageRecord, So
 from docingest.domain.text import render_markdown, split_pages
 
 CHARS, OVERLAP = 60, 10
-
-
-def add_doc(store, doc_id, pages, name=None):
-    """``pages``: ``[(text, section title)]``; the document is stored like an ingested one."""
-    records = [
-        PageRecord(index=i, method=PageMethod.PASSTHROUGH, n_chars=len(t), seconds=0.0, title=title)
-        for i, (t, title) in enumerate(pages)
-    ]
-    manifest = DocumentManifest(
-        doc_id=doc_id,
-        source_path=f"{doc_id[:4]}.txt",
-        source_name=name or f"{doc_id[:4]}.txt",
-        source_kind=SourceKind.TEXT,
-        mime="text/plain",
-        size_bytes=1,
-        n_pages=len(pages),
-        source_pages=len(pages),
-        pages=records,
-        pipeline_version="t",
-        config_hash="h",
-    )
-    store.save(manifest, render_markdown(manifest, [t for t, _ in pages]))
-    return manifest
 
 
 def remove_doc(store, doc_id):

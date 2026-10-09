@@ -3,6 +3,7 @@
 Only the embedding server is scripted (httpx.MockTransport); everything else is the code a
 user runs, on a temporary folder."""
 
+import asyncio
 import json
 import re
 
@@ -11,12 +12,13 @@ from docingest.bootstrap import Container
 from docingest.config import load_config
 from docingest.domain.errors import IndexMismatchError
 from docingest.entrypoints.cli import app
-from servers import EmbeddingServer, json_response
+from servers import EmbeddingServer, RerankServer, json_response
 from typer.testing import CliRunner
 
 from docingest_index import factories
 from docingest_index.embedder import OpenAICompatibleEmbedder
 from docingest_index.http import RemoteServiceError
+from docingest_index.reranker import VllmReranker
 
 ATTENTION = "Attention weights are computed with a softmax over scaled dot products. " * 30
 QUBITS = "Superconducting qubits decohere when they couple to their environment. " * 30
@@ -169,3 +171,70 @@ def test_a_build_that_fails_between_two_papers_does_not_lock_a_retry_in_the_same
     report = retry.index_service.build()
     assert (report.added, report.unchanged) == (1, 1) and report.committed
     assert retry.adapter("index").stats().searchable_documents == 2
+
+
+@pytest.fixture
+def asking(setup, monkeypatch):
+    """The setup above, a second paper, a scripted reranker and a fake answerer."""
+    from fakes import FakeQA
+
+    runner, cfg, embedding, raw = setup
+    reranker = RerankServer()
+    monkeypatch.setattr(
+        factories, "VllmReranker", lambda s: VllmReranker(s, transport=reranker.transport)
+    )
+    (raw / "qubits.md").write_text("# Qubits\n" + QUBITS)
+    assert runner.invoke(app, ["ingest", str(raw), "-c", str(cfg)]).exit_code == 0
+    assert runner.invoke(app, ["index", "build", "-c", str(cfg)]).exit_code == 0
+    text = cfg.read_text().replace('index = "local"', 'index = "local"\nreranker = "vllm"')
+    cfg.write_text(text.replace("[index]\n", "[index]\ncandidates = 4\ncontexts = 2\n"))
+    qa = FakeQA()
+    container = Container(load_config(cfg), log=lambda _: None, overrides={"qa": qa})
+    return container, qa, embedding, reranker
+
+
+def test_ask_retrieves_through_the_real_embedder_index_and_reranker(asking):
+    container, qa, embedding, rerank = asking
+    before = len(embedding.requests)
+    question = "superconducting qubits decohere environment"
+    warnings: list[str] = []
+    answer = asyncio.run(container.ask.ask(question, warnings.append))
+    assert "answer to" in answer and warnings == []
+    queries = embedding.bodies[before:]
+    assert len(queries) == 1 and queries[0]["encoding_format"] == "float"  # one question, once
+    assert queries[0]["input"] == [question]
+    [rerank_body] = rerank.bodies
+    assert rerank_body["query"] == question and len(rerank_body["documents"]) == 4  # candidates
+    assert qa.contexts is not None and len(qa.contexts) == 2  # contexts
+    assert all("qubits" in c.text for c in qa.contexts)  # the reranker's choice
+    assert set(qa.markdown) == {""}
+    assert container.adapter("index")._lock is None  # nothing is held after the question
+
+
+def test_ask_can_force_the_keyword_part_for_one_question(asking):
+    container, *_ = asking
+    index = container.adapter("index")
+    modes = []
+    original = index.search
+
+    def spy(question, vector, k, *, keywords=None):
+        modes.append(keywords)
+        return original(question, vector, k, keywords=keywords)
+
+    index.search = spy
+    question = "où vivent les qubits supraconducteurs"
+    asyncio.run(container.ask.ask(question, lambda _: None))
+    asyncio.run(container.ask.ask(question, lambda _: None, keywords="always"))
+    assert modes == [None, "always"]
+
+
+def test_ask_on_an_unbuilt_index_names_the_command(setup):
+    from docingest.domain.errors import IndexNotReadyError
+    from fakes import FakeQA
+
+    _, cfg, *_ = setup
+    qa = FakeQA()
+    container = Container(load_config(cfg), log=lambda _: None, overrides={"qa": qa})
+    with pytest.raises(IndexNotReadyError, match="docingest index build"):
+        asyncio.run(container.ask.ask("what is attention", lambda _: None))
+    assert qa.seen == []

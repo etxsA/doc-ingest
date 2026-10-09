@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import Counter
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -16,6 +17,7 @@ from rich.table import Table
 from ..application.ingest import SIDECAR_SUFFIX, IngestOptions
 from ..bootstrap import REGISTRY, Container, available, factory, plugins
 from ..config import load_config
+from ..domain.errors import DocingestError
 from ..domain.text import split_pages
 from ..ports import StoredDocument
 from .bench_cli import bench_app
@@ -196,14 +198,56 @@ def eval_ocr(
     console.print(f"report -> {escape(stored.location)}/ocr_eval.json")
 
 
+class KeywordChoice(StrEnum):
+    english = "english"
+    always = "always"
+    never = "never"
+
+
 @app.command()
-def ask(question: str, config: ConfigOpt = None) -> None:
-    """Answer a question with PaperQA2 over the normalized corpus (needs the 'qa' extra)."""
+def ask(
+    question: str,
+    config: ConfigOpt = None,
+    no_index: Annotated[
+        bool,
+        typer.Option(
+            "--no-index", help="Use PaperQA2's own retrieval even when a chunk index is configured"
+        ),
+    ] = False,
+    bm25: Annotated[
+        KeywordChoice | None,
+        typer.Option(
+            help="When the index adds keyword (BM25) matching: for English questions, always "
+            "or never. Overrides [index] bm25 for this question."
+        ),
+    ] = None,
+) -> None:
+    """Answer a question with PaperQA2 over the normalized corpus (needs the 'qa' extra).
+
+    With an index configured ([adapters] index, built by `docingest index build`), the
+    evidence is retrieved from it and reranked; without one PaperQA2 retrieves it itself.
+    """
 
     def warn(msg: str) -> None:
         console.print(f"[yellow]warning[/]: {escape(msg)}")
 
-    answer = asyncio.run(_container(config).ask.ask(question, warn=warn))
+    service = _container(config).ask
+    using_index = service.has_index and not no_index
+    if bm25 is not None and not using_index:
+        raise typer.BadParameter("--bm25 needs a configured index, and not --no-index")
+    try:
+        answer = asyncio.run(
+            service.ask(
+                question, warn=warn, use_index=not no_index, keywords=bm25.value if bm25 else None
+            )
+        )
+    except DocingestError as e:
+        # Expected failures of the retrieval are messages; the answering step, like the plain
+        # path, keeps its tracebacks.
+        if not using_index:
+            raise
+        console.print(f"[red]error[/]: {escape(str(e))}")
+        raise typer.Exit(1) from e
     console.print(answer, markup=False, highlight=False)  # LLM text may contain [brackets]
 
 

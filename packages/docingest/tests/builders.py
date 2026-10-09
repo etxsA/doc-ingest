@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PIL import Image, ImageDraw
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def one_line(output: str) -> str:
+    """CLI output as one line of words: no color codes, no panel borders, no line breaks.
+
+    typer renders a usage error in a rich panel that CI colors (it highlights the options in
+    the message, which splits the text with escape codes) and wraps at the terminal width.
+    Assert on ``one_line(result.output)`` for such messages."""
+    return " ".join(_ANSI.sub("", output).replace("│", " ").split())
+
 
 LONG = "Attention is all you need and the transformer architecture works well. " * 3
 

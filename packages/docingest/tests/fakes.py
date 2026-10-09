@@ -21,10 +21,12 @@ from docingest.domain.models import (
     DocumentManifest,
     ModelRef,
     PageMethod,
+    PageRecord,
     PageSignals,
     SourceKind,
     SourceMetadata,
 )
+from docingest.domain.text import render_markdown
 from docingest.ports import (
     Chunk,
     Conversion,
@@ -208,6 +210,29 @@ class InMemoryStore:
         return docs + list(best.values()), warnings
 
 
+def add_doc(store, doc_id, pages, name=None):
+    """``pages``: ``[(text, section title)]``; the document is stored like an ingested one."""
+    records = [
+        PageRecord(index=i, method=PageMethod.PASSTHROUGH, n_chars=len(t), seconds=0.0, title=title)
+        for i, (t, title) in enumerate(pages)
+    ]
+    manifest = DocumentManifest(
+        doc_id=doc_id,
+        source_path=f"{doc_id[:4]}.txt",
+        source_name=name or f"{doc_id[:4]}.txt",
+        source_kind=SourceKind.TEXT,
+        mime="text/plain",
+        size_bytes=1,
+        n_pages=len(pages),
+        source_pages=len(pages),
+        pages=records,
+        pipeline_version="t",
+        config_hash="h",
+    )
+    store.save(manifest, render_markdown(manifest, [t for t, _ in pages]))
+    return manifest
+
+
 @dataclass
 class FakeCrawler:
     records: list[SourceRecord]
@@ -233,12 +258,14 @@ def record(key: str, title: str = "A paper") -> SourceRecord:
 class FakeQA:
     def __init__(self):
         self.seen: list[str] = []
+        self.markdown: list[str] = []  # the Markdown handed over with each document
         self.contexts: list[Chunk] | None = None
 
     async def ask(
         self, question, documents, warn: Callable[[str], None], contexts: list[Chunk] | None = None
     ) -> str:
         self.seen = [d.manifest.source_name for d, _ in documents]
+        self.markdown = [md for _, md in documents]
         self.contexts = contexts
         return f"answer to {question!r} from {len(documents)} docs"
 
