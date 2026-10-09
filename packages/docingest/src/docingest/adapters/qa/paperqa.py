@@ -49,7 +49,7 @@ def llm_params(cfg: AppConfig) -> dict:
     with the provider's key from the environment as litellm reads it. The placeholder is
     used only for an ``openai/`` model when ``OPENAI_API_KEY`` is unset: a keyless local
     OpenAI-compatible server (LM Studio, vLLM) still needs a non-empty key in the client,
-    but a real key must never be overridden.
+    but a real key must never be overridden. ``[qa] temperature`` is sent on every request.
     """
     q = cfg.qa
     custom = os.environ.get("DOCINGEST_LLM") or q.llm
@@ -59,8 +59,9 @@ def llm_params(cfg: AppConfig) -> dict:
             "api_base": q.llm_base or DEFAULT_LLM_BASE,
             "api_key": "sk-local",  # mlx_vlm.server checks no key
             "max_tokens": 1024,
+            "temperature": q.temperature,
         }
-    params: dict = {"model": custom, "max_tokens": 1024}
+    params: dict = {"model": custom, "max_tokens": 1024, "temperature": q.temperature}
     if q.llm_base:
         params["api_base"] = q.llm_base
     if custom.startswith("openai/") and not os.environ.get("OPENAI_API_KEY"):

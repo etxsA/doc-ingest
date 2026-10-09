@@ -235,6 +235,7 @@ Settings of the PaperQA2 step (`docingest ask`, adapter `paperqa`). None of them
 | `evidence_k` | int | `10` | PaperQA2 `answer.evidence_k`: number of evidence chunks retrieved. |
 | `answer_max_sources` | int | `3` | PaperQA2 `answer.answer_max_sources`. |
 | `max_concurrent_requests` | int | `2` | PaperQA2 `answer.max_concurrent_requests`. |
+| `temperature` | float | `0.0` | Sampling temperature sent with every LLM request (evidence summaries and the answer), for the default local model and for any `llm`. Before this key existed no temperature was sent, so the server's own default applied and the same question could get different answers. A hosted model that only accepts its default temperature needs this key set to that value. |
 
 The LLM answer is limited to 1024 tokens. The default local model is always called with the placeholder key `sk-local`. A custom `openai/...` model gets the same placeholder only when `OPENAI_API_KEY` is not set, which keyless local servers accept; a real key is never overridden.
 

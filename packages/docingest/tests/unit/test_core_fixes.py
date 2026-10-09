@@ -96,7 +96,11 @@ def test_a_real_openai_key_is_not_overridden(qa_env):
 
 def test_a_hosted_model_is_not_sent_to_the_local_server(qa_env):
     params = paperqa.llm_params(_cfg(llm="anthropic/claude-sonnet-4-5"))
-    assert params == {"model": "anthropic/claude-sonnet-4-5", "max_tokens": 1024}
+    assert params == {
+        "model": "anthropic/claude-sonnet-4-5",
+        "max_tokens": 1024,
+        "temperature": 0.0,
+    }
 
 
 def test_a_keyless_local_openai_compatible_server_still_works(qa_env):
@@ -104,6 +108,14 @@ def test_a_keyless_local_openai_compatible_server_still_works(qa_env):
     assert params["api_base"] == "http://127.0.0.1:1234/v1" and params["api_key"] == "sk-local"
     ollama = paperqa.llm_params(_cfg(llm="ollama/llama3.1", llm_base="http://localhost:11434"))
     assert ollama["api_base"] == "http://localhost:11434" and "api_key" not in ollama
+
+
+def test_the_temperature_is_sent_on_every_request_and_defaults_to_zero(qa_env):
+    assert AppConfig().qa.temperature == 0.0
+    assert paperqa.llm_params(_cfg())["temperature"] == 0.0
+    assert paperqa.llm_params(_cfg(llm="ollama/llama3.1"))["temperature"] == 0.0
+    assert paperqa.llm_params(_cfg(temperature=0.7))["temperature"] == 0.7
+    assert paperqa.llm_params(_cfg(llm="openai/gpt-4o-mini", temperature=0.3))["temperature"] == 0.3
 
 
 # ---------------------------------------------------------------- retitle_markdown

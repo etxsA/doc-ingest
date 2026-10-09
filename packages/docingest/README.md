@@ -538,7 +538,7 @@ The pipeline reads one TOML file, [`config/pipeline.toml`](config/pipeline.toml)
 | `[adapters]` | which adapter plugs into each port | `ocr = "mlx-vlm"` or `"openai-compatible"` | yes, through the adapters' fingerprints |
 | `[routing]` | per-page OCR thresholds | `min_chars = 50`, `image_coverage = 0.6` | yes, for PDFs |
 | `[ocr]` | OCR model and generation | `repo_id`, `revision` (a commit sha of that repo, required unless `repo_id` is the built-in default), `profile`, `dpi = 150`, `temperature = 0.0`, optional overrides `prompt`, `max_side`, `max_tokens`, `repetition_penalty`; for HTTP: `base_url`, `served_model`, `api_key_env`, `timeout_s = 600`, `retries = 3` | yes, through the selected OCR adapter's fingerprint (`timeout_s`, `retries` and `api_key_env` excluded) |
-| `[qa]` | PaperQA2 | `llm`, `llm_base`, `embedding`, `embedding_repo_id`, `embedding_revision`, `chunk_chars = 900`, `overlap = 100`, `evidence_k = 10`, `answer_max_sources = 3`, `max_concurrent_requests = 2` | no |
+| `[qa]` | PaperQA2 | `llm`, `llm_base`, `embedding`, `embedding_repo_id`, `embedding_revision`, `chunk_chars = 900`, `overlap = 100`, `evidence_k = 10`, `answer_max_sources = 3`, `max_concurrent_requests = 2`, `temperature = 0.0` | no |
 | `[latex]` | LaTeX conversion | `timeout_s = 120`, `max_archive_mb = 200`, `split_level = 2`, `fallback = true`, `pandoc_path` | `split_level`, `fallback` and the pandoc version |
 | `[arxiv]` | crawler | `delay_s = 3.0`, `timeout_s = 60.0`, `retries = 3`, `contact`, `prefer = ["latex", "pdf"]`, `fetch_license = true`, plus the endpoint URLs | no |
 
@@ -709,6 +709,7 @@ Install the `qa` extra (`uv sync --locked --all-extras`, or `--extra qa`).
 | LLM | the pinned `[ocr]` model snapshot, served at `http://127.0.0.1:8080/v1` by `scripts/serve_llm.sh` (`mlx_vlm.server`, with `HF_HUB_OFFLINE=1`) | any litellm model in `[qa].llm` or `DOCINGEST_LLM`, e.g. `ollama/llama3.1` with `[qa].llm_base = "http://localhost:11434"` |
 | Embedding | pinned `sentence-transformers/all-MiniLM-L6-v2` snapshot | any PaperQA2 embedding string in `[qa].embedding` or `DOCINGEST_EMBEDDING`, e.g. `ollama/mxbai-embed-large` |
 | Retrieval | `chunk_chars = 900`, `overlap = 100`, `evidence_k = 10`, `answer_max_sources = 3`, `max_concurrent_requests = 2` | `[qa]` keys |
+| Temperature | `temperature = 0.0`, sent on every request | `[qa].temperature` |
 
 `[qa]` settings do not affect ingestion output and are not part of any cache key.
 

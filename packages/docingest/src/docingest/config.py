@@ -94,6 +94,7 @@ class QaConfig(BaseModel):
     evidence_k: int = 10
     answer_max_sources: int = 3
     max_concurrent_requests: int = 2
+    temperature: float = 0.0  # sent on every LLM request: the same question gets the same answer
 
 
 class LatexConfig(BaseModel):

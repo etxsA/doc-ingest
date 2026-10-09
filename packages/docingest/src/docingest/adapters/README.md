@@ -619,11 +619,12 @@ Configuration (`QaConfig`):
 | `evidence_k` | `10` | PaperQA `answer.evidence_k` |
 | `answer_max_sources` | `3` | PaperQA `answer.answer_max_sources` |
 | `max_concurrent_requests` | `2` | PaperQA `answer.max_concurrent_requests` |
+| `temperature` | `0.0` | Sampling temperature sent with every LLM request |
 
 LLM selection (`llm_params`):
 
-- Default (`llm` and `DOCINGEST_LLM` unset): model `openai/<local snapshot path of [ocr] repo_id>`, `api_base` = `llm_base` or `http://127.0.0.1:8080/v1`, placeholder key `sk-local`, `max_tokens` 1024. The snapshot path is the one `scripts/serve_llm.sh` serves (`docingest model-path llm`), so the model id in the request matches the server. The server must be running, and resolving the snapshot downloads it if it is not in the local Hugging Face cache.
-- Custom model: `model` = the string, `max_tokens` 1024, `api_base` only if `llm_base` is set. The placeholder key `sk-local` is added only for an `openai/` model when `OPENAI_API_KEY` is unset (a keyless local OpenAI-compatible server still needs a non-empty key); a real key is never overridden.
+- Default (`llm` and `DOCINGEST_LLM` unset): model `openai/<local snapshot path of [ocr] repo_id>`, `api_base` = `llm_base` or `http://127.0.0.1:8080/v1`, placeholder key `sk-local`, `max_tokens` 1024, `temperature` = `[qa] temperature`. The snapshot path is the one `scripts/serve_llm.sh` serves (`docingest model-path llm`), so the model id in the request matches the server. The server must be running, and resolving the snapshot downloads it if it is not in the local Hugging Face cache.
+- Custom model: `model` = the string, `max_tokens` 1024, `temperature` = `[qa] temperature`, `api_base` only if `llm_base` is set. The placeholder key `sk-local` is added only for an `openai/` model when `OPENAI_API_KEY` is unset (a keyless local OpenAI-compatible server still needs a non-empty key); a real key is never overridden.
 
 PaperQA settings (`local_settings`): `llm` and `summary_llm` both point at one litellm model entry named `local`; the embedding is `DOCINGEST_EMBEDDING`, else `[qa] embedding`, else `st-<local snapshot path of the pinned embedder>`; `parsing.use_doc_details = False` (no network metadata lookups), `parsing.multimodal = False`, `parsing.reader_config = {chunk_chars, overlap}`; the three `answer.*` values above. litellm debug output is silenced.
 
