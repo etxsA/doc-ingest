@@ -61,7 +61,7 @@ from typing import IO, Any
 import numpy as np
 from docingest.domain.chunking import CHUNKER_VERSION
 from docingest.domain.errors import DocingestError
-from docingest.ports import Chunk, Hit, IndexStats, Vector
+from docingest.ports import Chunk, Hit, IndexStats, KeywordMode, Vector
 
 from .embedder import embedder_fingerprint, query_task
 from .fusion import rrf
@@ -246,7 +246,9 @@ class LocalIndex:
             pending=pending,
         )
 
-    def search(self, question: str, vector: Vector, k: int) -> list[Hit]:
+    def search(
+        self, question: str, vector: Vector, k: int, *, keywords: KeywordMode | None = None
+    ) -> list[Hit]:
         if k <= 0:
             return []
         state = self._open_search()
@@ -255,7 +257,7 @@ class LocalIndex:
         query = state.query(vector)
         depth = max(LIST_DEPTH, k)
         dense, cosine = state.dense_top(query, depth)
-        if self._wants_bm25(question):
+        if self._wants_bm25(question, keywords or self.settings.bm25):
             ranked = rrf(dense, state.bm25_top(question, depth), n=depth)
         else:
             ranked = [(row, float(cosine[row])) for row in dense]
@@ -466,8 +468,7 @@ class LocalIndex:
 
     # ------------------------------------------------------------------ reading
 
-    def _wants_bm25(self, question: str) -> bool:
-        mode = self.settings.bm25
+    def _wants_bm25(self, question: str, mode: str) -> bool:
         return mode == "always" or (mode == "english" and looks_english(question))
 
     def _shards(self) -> dict[str, _Shard]:

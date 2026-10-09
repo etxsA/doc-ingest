@@ -554,6 +554,22 @@ def test_the_keyword_ranking_is_switched_by_the_bm25_setting_and_the_language(tm
     assert ranking(always.search(spanish, vector, 3)) == [DOC_B, DOC_A, DOC_C]  # "zebra" matches
 
 
+def test_the_keywords_argument_overrides_the_setting_for_one_call(tmp_path):
+    english, spanish = "where is the zebra habitat", "dónde vive la cebra zebra del hábitat"
+    vector = unit(1, 0, 0, 0)
+    index = make(tmp_path / "idx")  # bm25 = "english"
+    zebra_corpus(index)
+    assert ranking(index.search(english, vector, 3)) == [DOC_B, DOC_A, DOC_C]
+    assert ranking(index.search(english, vector, 3, keywords="never")) == [DOC_A, DOC_B, DOC_C]
+    assert ranking(index.search(spanish, vector, 3)) == [DOC_A, DOC_B, DOC_C]
+    assert ranking(index.search(spanish, vector, 3, keywords="always")) == [DOC_B, DOC_A, DOC_C]
+    assert ranking(index.search(english, vector, 3, keywords="english")) == [DOC_B, DOC_A, DOC_C]
+    assert ranking(index.search(english, vector, 3, keywords=None)) == [DOC_B, DOC_A, DOC_C]
+    never = make(tmp_path / "never", settings={"bm25": "never"})
+    zebra_corpus(never)
+    assert ranking(never.search(english, vector, 3, keywords="always")) == [DOC_B, DOC_A, DOC_C]
+
+
 def test_the_keyword_ranking_stems_words_and_ignores_punctuation_and_case(tmp_path):
     index = make(tmp_path / "idx")
     zebra_corpus(index)

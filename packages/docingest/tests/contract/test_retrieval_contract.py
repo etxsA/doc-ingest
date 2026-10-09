@@ -147,6 +147,14 @@ def test_chunks_come_back_unchanged(index, embedder):
     assert any(h.chunk.start > 0 for h in hits)
 
 
+@pytest.mark.parametrize("keywords", [None, "english", "always", "never"])
+def test_search_takes_the_keyword_mode_whatever_the_index_does_with_it(index, embedder, keywords):
+    fill(index, embedder)
+    question = "how do qubits decohere in the environment"
+    hits = index.search(question, embedder.embed_query(question), 2, keywords=keywords)
+    assert 0 < len(hits) <= 2  # an index without a keyword part ignores the choice
+
+
 def test_upsert_needs_one_vector_per_chunk(index, embedder):
     chunks = chunks_of(PAPER_A)
     with pytest.raises(ValueError, match="vector"):

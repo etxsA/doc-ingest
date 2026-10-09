@@ -12,7 +12,7 @@ from typing import NoReturn
 
 from ...domain.chunking import Chunk
 from ...domain.errors import NotConfiguredError
-from ...ports import Hit, IndexStats, Vector
+from ...ports import Hit, IndexStats, KeywordMode, Vector
 
 
 def _not_configured(port: str) -> NoReturn:
@@ -54,7 +54,9 @@ class NoIndex:
     def stats(self) -> IndexStats:
         _not_configured("index")
 
-    def search(self, question: str, vector: Vector, k: int) -> list[Hit]:
+    def search(
+        self, question: str, vector: Vector, k: int, *, keywords: KeywordMode | None = None
+    ) -> list[Hit]:
         _not_configured("index")
 
 

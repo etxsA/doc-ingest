@@ -31,6 +31,7 @@ from docingest.ports import (
     FetchedSource,
     Hit,
     IndexStats,
+    KeywordMode,
     OcrResult,
     Segment,
     SourceRecord,
@@ -285,6 +286,7 @@ class FakeIndex:
         self.embedder_fingerprint = embedder_fingerprint
         self.committed_at: str | None = None
         self.closed = 0  # how many times close() was called
+        self.keywords: list[str | None] = []  # the ``keywords`` argument of each search
         self._committed: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
         self._staged: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
 
@@ -318,7 +320,11 @@ class FakeIndex:
             pending=self._staged != self._committed,
         )
 
-    def search(self, question: str, vector: Vector, k: int) -> list[Hit]:
+    def search(
+        self, question: str, vector: Vector, k: int, *, keywords: KeywordMode | None = None
+    ) -> list[Hit]:
+        self.keywords.append(keywords)  # no keyword part here: the choice is only recorded
+
         def cosine(a: Vector, b: Vector) -> float:
             norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
             return sum(x * y for x, y in zip(a, b, strict=True)) / norm if norm else 0.0

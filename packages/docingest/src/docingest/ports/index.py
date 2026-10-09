@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from ..domain.chunking import Chunk
 from .embedding import Vector
+
+# Whether ``search`` also matches the words of the question: for questions that look English
+# ("english"), for every question ("always") or never.
+KeywordMode = Literal["english", "always", "never"]
 
 
 @dataclass(frozen=True)
@@ -77,7 +81,11 @@ class ChunkIndex(Protocol):
         changes that no ``commit`` has made searchable yet."""
         ...
 
-    def search(self, question: str, vector: Vector, k: int) -> list[Hit]:
+    def search(
+        self, question: str, vector: Vector, k: int, *, keywords: KeywordMode | None = None
+    ) -> list[Hit]:
         """At most ``k`` hits among the committed documents, best first. ``vector`` is the
-        embedded question; the text is for adapters that also match keywords."""
+        embedded question; the text is for adapters that also match keywords. ``keywords``
+        overrides, for this call, the adapter's own setting of when it does (``None`` keeps
+        the setting); an adapter without a keyword part ignores it."""
         ...

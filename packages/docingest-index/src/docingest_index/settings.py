@@ -6,9 +6,8 @@ three and validates them (unknown keys are errors, so a typo is not silently ign
 
 from __future__ import annotations
 
-from typing import Literal
-
 from docingest.config import AppConfig, IndexConfig
+from docingest.ports import KeywordMode
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 # The measured pair (D-161): both pinned to the commit the experiments used.
@@ -38,7 +37,7 @@ class IndexSettings(IndexConfig):
     dir: str = "data/index"  # relative to the working directory, like output_dir
     # Fuse BM25 with the dense ranking (RRF) for questions that look English ("english"),
     # for every question ("always") or never.
-    bm25: Literal["english", "always", "never"] = "english"
+    bm25: KeywordMode = "english"
     max_chunks_per_paper: int = Field(default=DEFAULT_MAX_CHUNKS_PER_PAPER, ge=0)  # 0: no cap
 
 

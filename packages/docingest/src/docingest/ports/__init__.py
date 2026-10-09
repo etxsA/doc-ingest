@@ -15,7 +15,7 @@ from .converters import Conversion, DocumentConverter, Segment
 from .detection import TypeDetector
 from .embedding import Embedder, Vector
 from .images import ImageSource
-from .index import ChunkIndex, Hit, IndexStats
+from .index import ChunkIndex, Hit, IndexStats, KeywordMode
 from .ocr import OcrEngine, OcrResult
 from .pdf import PdfDocument, PdfPage, PdfReader
 from .qa import QuestionAnswerer
@@ -37,6 +37,7 @@ __all__ = [
     "Hit",
     "ImageSource",
     "IndexStats",
+    "KeywordMode",
     "OcrEngine",
     "OcrResult",
     "PdfDocument",
