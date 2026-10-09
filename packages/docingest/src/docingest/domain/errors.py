@@ -44,3 +44,12 @@ class RateLimitedError(SourceUnavailableError):
     def __init__(self, message: str, *, retry_after_s: float | None = None):
         super().__init__(message)
         self.retry_after_s = retry_after_s  # the pause still owed, if the server named one
+
+
+class IndexMismatchError(DocingestError):
+    """A chunk index holds vectors of another embedder than the one configured now.
+
+    Vectors of different models are not comparable, so nothing is added to such an index:
+    point ``[index] dir`` elsewhere (an index of the configured embedder is another folder)
+    or restore the embedder settings.
+    """

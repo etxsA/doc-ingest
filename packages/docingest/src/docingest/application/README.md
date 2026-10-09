@@ -19,6 +19,7 @@ case.
 - [`ingest.py`: one document to Markdown and a manifest](#ingestpy-one-document-to-markdown-and-a-manifest)
 - [`crawl.py`: search, download, ingest](#crawlpy-search-download-ingest)
 - [`ask.py`: question answering over the corpus](#askpy-question-answering-over-the-corpus)
+- [`index.py`: keep the chunk index in step with the corpus](#indexpy-keep-the-chunk-index-in-step-with-the-corpus)
 - [`benchmark.py`: OCR benchmark runner, scoring and report](#benchmarkpy-ocr-benchmark-runner-scoring-and-report)
 - [`metrics.py`: OCR quality metrics](#metricspy-ocr-quality-metrics)
 - [`stats.py`: cluster bootstrap and paired sign-flip test](#statspy-cluster-bootstrap-and-paired-sign-flip-test)
@@ -33,6 +34,7 @@ case.
 | `ingest.py` | `IngestService`, `IngestOptions`, `PIPELINE_VERSION`, `SIDECAR_SUFFIX`, `sha256_file`, `read_sidecar`, `retitle_markdown`, `Log` | Turn one file (PDF, image, office, LaTeX, text) into Markdown plus a `DocumentManifest`, with a content-addressed cache | `bootstrap.Container.ingest`, `docingest ingest`, `docingest eval-ocr`, the PaperQA2 hook, `CrawlService` |
 | `crawl.py` | `CrawlService`, `CrawlReport` | Search a remote source, download each record, write a metadata sidecar, ingest it | `bootstrap.Container.crawl`, `docingest crawl` |
 | `ask.py` | `AskService` | Answer a question over every stored document | `bootstrap.Container.ask`, `docingest ask` |
+| `index.py` | `IndexService`, `IndexStatus`, `BuildReport`, `content_key`, `BATCH_CHUNKS` | Chunk every stored document like `ask` does, embed the new and changed ones, drop the vanished ones, and report the state of the index | `bootstrap.Container.index_service`, `docingest index` |
 | `benchmark.py` | `BenchmarkRunner`, `CandidateRun`, `RunMismatchError`, `score_run`, `needs_scoring`, `load_scores`, `rank`, `compare`, `throughput`, `build_summary`, `render_report`, `write_report`, `read_manifest`, `read_telemetry`, `telemetry_path`, `telemetry_stamp`, `latest_by_sample`, `machine_info`, `library_versions` | Transcribe benchmark samples with each OCR candidate (resumable), record telemetry, score, and write `summary.json` and `report.md` | `docingest bench run`, `bench score`, `bench report` (in `entrypoints/bench_cli.py`); `scripts/bench_docs.py` reads `load_scores` and `compare` |
 | `metrics.py` | `score`, `normalize`, `plain_text`, `latex_to_text`, `word_f1`, `char3_f1`, `running_lines`, `strip_furniture`, `bootstrap_ci`, `FURNITURE_ZONE` | Format-neutral text comparison: CER, WER, word F1, character 3-gram F1 | the synthetic benchmark suite, `docingest eval-ocr` |
 | `stats.py` | `cluster_bootstrap_ci`, `paired_bootstrap`, `PairedResult`, `quantile`, `MIN_CLUSTERS`, `bootstrap_ci` (re-exported) | Confidence intervals that resample clusters, and a paired sign-flip test | both benchmark suites, `benchmark.py` |
@@ -48,6 +50,7 @@ flowchart LR
         ING["ingest.py"]
         CRAWL["crawl.py"]
         ASK["ask.py"]
+        IDX["index.py"]
         BENCH["benchmark.py"]
         MET["metrics.py"]
         STATS["stats.py"]
@@ -63,6 +66,8 @@ flowchart LR
     CRAWL --> PORTS
     CRAWL --> DOM
     ASK --> PORTS
+    IDX --> PORTS
+    IDX --> DOM
     BENCH --> PORTS
 ```
 
@@ -76,6 +81,7 @@ flowchart LR
     CONT --> ING["IngestService"]
     CONT --> CRAWL["CrawlService"]
     CONT --> ASK["AskService"]
+    CONT --> IDX["IndexService"]
     CLI -->|"eval-ocr"| SCORE["metrics.score"]
     BCLI["entrypoints/bench_cli.py"] --> RUN["benchmark.py: BenchmarkRunner, score_run, write_report"]
     SYN["adapters/datasets/synthetic.py"] -->|"plain_text, strip_furniture, running_lines, score"| MET["metrics.py"]
@@ -849,6 +855,46 @@ answer = asyncio.run(Container(load_config()).ask.ask("What is scaled dot-produc
 The default `qa` adapter needs the `qa` extra and a language model server; see the
 [main README](../../../README.md).
 
+## `index.py`: keep the chunk index in step with the corpus
+
+`IndexService(*, store, embedder, index, chunk_chars, overlap, batch_chunks=512, log=print)`
+keeps a `ChunkIndex` equal to the stored corpus. It never reads or writes the index's files:
+it talks to the `DocumentStore`, `Embedder` and `ChunkIndex` ports only.
+
+`build(*, prune=True) -> BuildReport`:
+
+1. Refuses with `IndexMismatchError` when `index.embedder_fingerprint` is not
+   `embedder.fingerprint`: vectors of two models are not comparable, and nothing is
+   embedded first. An index of the configured embedder is another folder.
+2. Reads the corpus (`store.corpus()`; no documents is a `RuntimeError`, as in `ask`).
+3. For each document it splits `document.md` into pages and computes its key, the SHA-256 of
+   the page numbers and texts (`content_key`). A document whose key equals the one in
+   `index.keys()` is skipped: a second build over an unchanged corpus makes no embedding
+   request. A document with another key (its text changed) or none is chunked with
+   `chunk_pages` and the configured `chunk_chars` and `overlap`, which are the `[qa]`
+   settings `ask` uses, so the index holds the chunks `ask` would cut. A chunk is tagged
+   `is_reference` when a page it touches has a section title containing "reference" or
+   "bibliograph".
+4. Chunks of several documents are embedded together, `batch_chunks` at a time, so the
+   client can keep the server busy; each document is then upserted. An interrupted build
+   keeps what was stored, and the next one continues from there.
+5. With `prune`, documents in the index but no longer in the corpus are removed.
+6. It calls `index.commit()` once, if anything changed, if `stats().pending` says the index
+   holds changes that `search` cannot see yet (an interrupted build, also one that only
+   replaced documents, which leaves the document counts equal), or if it never committed.
+
+`status() -> IndexStatus` changes nothing: the index's `IndexStats`, whether its embedder is
+the configured one, how many corpus documents are up to date, new or changed, which indexed
+ids are stale, and how many chunks a build would embed.
+
+`remove(doc_id) -> str` removes one document by full id or by a unique prefix of at least 8
+characters, commits, and returns the full id; an unknown or ambiguous id is a `ValueError`.
+
+```bash
+uv run docingest index build
+uv run docingest index status
+```
+
 ## `benchmark.py`: OCR benchmark runner, scoring and report
 
 `benchmark.py` compares OCR candidates (model, profile and generation settings) on
@@ -1499,6 +1545,7 @@ See also [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 | `ingest.py` | `tests/unit/test_ingest_service.py`, `tests/unit/test_core_fixes.py`, `tests/unit/test_services.py`, `tests/integration/test_pipeline_real_adapters.py` |
 | `crawl.py` | `tests/unit/test_services.py`, `tests/unit/test_arxiv.py`, `tests/unit/test_arxiv_fixes.py` |
 | `ask.py` | `tests/unit/test_services.py` |
+| `index.py` | `tests/unit/test_index_service.py`, `tests/integration/test_index_cli.py` |
 | `benchmark.py` | `tests/unit/test_benchmark.py`, `tests/unit/test_bench_fixes.py` |
 | `metrics.py` | `tests/unit/test_metrics.py`, `tests/unit/test_bench_fixes.py` |
 | `stats.py` | `tests/unit/test_stats.py`, `tests/unit/test_bench_fixes.py` |

@@ -567,6 +567,7 @@ classDiagram
     }
     class OcrError
     class NotConfiguredError
+    class IndexMismatchError
     class OcrServerError {
         +int status
     }
@@ -589,6 +590,7 @@ classDiagram
     SourceUnavailableError <|-- RateLimitedError
     DocingestError <|-- OcrError
     DocingestError <|-- NotConfiguredError
+    DocingestError <|-- IndexMismatchError
     OcrError <|-- OcrServerError
     SourceUnavailableError <|-- HttpStatusError
     SourceUnavailableError <|-- RetriesExhaustedError
@@ -607,7 +609,8 @@ classDiagram
 | `SourceUnavailableError` | `DocingestError` | A remote source has no downloadable content for a record. | `ArxivCrawler` (API error, malformed XML, no usable format); the olmOCR-bench dataset download. | `CrawlService` records the record as failed and moves on. |
 | `RateLimitedError` | `SourceUnavailableError` | The source asked for a pause (HTTP 429 or `Retry-After`) that the crawler will not sit out. `retry_after_s: float \| None` is the pause still owed, if the server named one. | `PoliteClient` in `adapters/sources/http.py`. | `CrawlService` stops the crawl: the pause concerns every later request to the same source. Remaining records are reported as not attempted. |
 | `OcrError` | `DocingestError` | The OCR engine could not transcribe a page. | `OpenAICompatibleOcr` (as `OcrServerError`). | The CLI records the file as failed; `BenchmarkRunner` records the sample as an error and continues. |
-| `NotConfiguredError` | `DocingestError` | A port was used whose `[adapters]` entry is `"none"`: no implementation was chosen. | `NoEmbedder`, `NoIndex`, `NoReranker` (`adapters/retrieval/none.py`). | Nothing yet: no use case calls these ports. |
+| `NotConfiguredError` | `DocingestError` | A port was used whose `[adapters]` entry is `"none"`: no implementation was chosen. | `NoEmbedder`, `NoIndex`, `NoReranker` (`adapters/retrieval/none.py`). | `docingest index` prints the message and exits with 1. The reranker has no use case yet. |
+| `IndexMismatchError` | `DocingestError` | A chunk index holds vectors of another embedder than the configured one. | `IndexService.build`. | `docingest index build` prints the message and exits with 1. |
 
 `RateLimitedError` is part of the `SourceCrawler` contract: a crawler raises it instead of waiting out a long pause.
 
