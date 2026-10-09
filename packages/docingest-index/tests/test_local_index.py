@@ -15,6 +15,7 @@ from docingest_index.local import FORMAT_VERSION, IndexBusyError, LocalIndex
 from docingest_index.settings import EmbedderSettings, IndexSettings
 
 DOC_A, DOC_B, DOC_C = "a" * 64, "b" * 64, "c" * 64
+DOC_D, DOC_E = "d" * 64, "e" * 64
 DIMS = 4
 
 
@@ -79,7 +80,14 @@ def test_the_folder_has_the_documented_layout(tmp_path):
     ]
     lines = (folder / "shards" / shards[0]).read_text().splitlines()
     header, first, second = (json.loads(line) for line in lines)
-    assert header == {"format": 1, "doc_id": DOC_A, "key": "k" * 64, "chunks": 2, "dims": DIMS}
+    assert header == {
+        "format": 1,
+        "doc_id": DOC_A,
+        "key": "k" * 64,
+        "chunks": 2,
+        "dims": DIMS,
+        "seq": 1,  # the first shard written
+    }
     assert first == {
         "name": chunks[0].name,
         "pages": [1, 1],
@@ -299,6 +307,130 @@ def test_two_shards_for_one_document_keep_the_newer_one(tmp_path):
     assert old.exists()  # a reader leaves the older shard alone ...
     again.commit()  # ... the next writer removes it
     assert not old.exists() and not old.with_suffix(".npz").exists()
+
+
+def test_the_write_counter_decides_which_of_two_shards_is_newer_not_the_clock(tmp_path):
+    index = make(tmp_path / "idx")
+    index.upsert(DOC_A, "first", [chunk(DOC_A, "first text")], [unit(1, 0, 0, 0)])
+    index.upsert(DOC_A, "second", [chunk(DOC_A, "second text")], [unit(1, 0, 0, 0)])
+    index.close()
+    shards = index.folder / "shards"
+    # a crash between writing the second shard and deleting the first left both; the first
+    # one now has the later modification time (a coarse clock, a restored backup, a copy)
+    stem_first = f"{'a' * 16}-first"
+    for suffix in (".jsonl", ".npz"):
+        src = shards / f"{'a' * 16}-second{suffix}"
+        (shards / f"{stem_first}{suffix}").write_bytes(src.read_bytes())
+    first = shards / f"{stem_first}.jsonl"
+    first.write_text(
+        first.read_text()
+        .replace('"key": "second"', '"key": "first"')
+        .replace('"seq": 2', '"seq": 1')
+    )
+    os.utime(shards / f"{'a' * 16}-second.jsonl", ns=(1, 1))
+    assert make(tmp_path / "idx").keys() == {DOC_A: "second"}
+
+
+def test_every_write_gets_a_larger_counter_than_any_shard_on_disk(tmp_path):
+    index = make(tmp_path / "idx")
+    for n, doc in enumerate((DOC_A, DOC_B, DOC_A, DOC_C), start=1):
+        index.upsert(doc, f"k{n}", [chunk(doc, f"text {n}")], [unit(1, 0, 0, 0)])
+    index.commit()
+    seqs = sorted(
+        json.loads(p.read_text().splitlines()[0])["seq"]
+        for p in (index.folder / "shards").glob("*.jsonl")
+    )
+    assert seqs == [2, 3, 4]  # DOC_A's first shard (1) went away with its replacement
+    later = make(tmp_path / "idx")
+    later.upsert(DOC_B, "again", [chunk(DOC_B, "again")], [unit(0, 1, 0, 0)])
+    later.commit()
+    top = max(
+        json.loads(p.read_text().splitlines()[0])["seq"]
+        for p in (later.folder / "shards").glob("*.jsonl")
+    )
+    assert top == 5
+
+
+# ------------------------------------------------------------------ one generation per reader
+
+
+def test_a_reader_that_stays_open_across_another_process_commit_keeps_one_generation(tmp_path):
+    """The sequence of review 2 (r1): search in Spanish (no keyword part), another process
+    adds papers and commits, search in English. BM25 used to open at the second search, so
+    the row ids of the new commit were looked up in the old chunk records."""
+    root = tmp_path / "idx"
+    writer = make(root)
+    zebra_corpus(writer)
+    reader = make(root)
+    spanish = reader.search("la cebra vive en la sabana africana", unit(0, 1, 0, 0), 10)
+    assert {h.chunk.doc_id for h in spanish} == {DOC_A, DOC_B, DOC_C}
+
+    other = make(root)  # the other process
+    more = [chunk(DOC_D, f"zebra herds roam the savanna number {n}", n=n) for n in range(1, 7)]
+    other.upsert(DOC_D, "k", more, [unit(0.9, 0.4, 0.1, 0) for _ in more])
+    other.upsert(DOC_E, "k", [chunk(DOC_E, "zebra zebra zebra")], [unit(0.7, 0.7, 0, 0)])
+    other.commit()
+
+    english = reader.search("zebra stripes habitat", unit(0.8, 0.6, 0, 0), 10)
+    assert {h.chunk.doc_id for h in english} == {DOC_A, DOC_B, DOC_C}  # still the old commit
+    assert english[0].chunk.doc_id == DOC_B and english[0].chunk.text == "zebra stripes habitat"
+
+    fresh = make(root).search("zebra stripes habitat", unit(0.8, 0.6, 0, 0), 10)
+    assert {h.chunk.doc_id for h in fresh} >= {DOC_D, DOC_E}  # a new reader sees the new commit
+    reader.close()  # closing drops the old generation: the next search opens the latest
+    assert {h.chunk.doc_id for h in reader.search("zebra", unit(0.8, 0.6, 0, 0), 20)} >= {DOC_D}
+
+
+def test_a_commit_that_lands_while_the_reader_opens_makes_it_start_over(tmp_path, monkeypatch):
+    root = tmp_path / "idx"
+    zebra_corpus(make(root))
+    reader = make(root)
+    original = local._Search.__init__
+    raced = []
+
+    def racing(self, folder, ids):
+        original(self, folder, ids)
+        if not raced:  # a commit between reading ids.json and having everything open
+            raced.append(ids["generation"])
+            other = make(root)
+            other.upsert(DOC_D, "k", [chunk(DOC_D, "zebra savanna")], [unit(0.8, 0.6, 0, 0)])
+            other.commit()
+
+    monkeypatch.setattr(local._Search, "__init__", racing)
+    hits = reader.search("zebra savanna", unit(0.8, 0.6, 0, 0), 10)
+    assert len(raced) == 1
+    assert DOC_D in {h.chunk.doc_id for h in hits}  # all of it from the generation after the race
+    assert reader._search is not None and reader._search.rows == 4
+
+
+def test_a_reader_gives_up_when_the_index_never_stops_changing(tmp_path, monkeypatch):
+    root = tmp_path / "idx"
+    zebra_corpus(make(root))
+    reader = make(root)
+    original = local._Search.__init__
+
+    def racing(self, folder, ids):
+        original(self, folder, ids)
+        other = make(root)
+        other.upsert(DOC_D, uuid_key(), [chunk(DOC_D, "zebra")], [unit(0.8, 0.6, 0, 0)])
+        other.commit()
+
+    monkeypatch.setattr(local._Search, "__init__", racing)
+    with pytest.raises(IndexBusyError, match="kept changing"):
+        reader.search("zebra", unit(0.8, 0.6, 0, 0), 10)
+
+
+def uuid_key():
+    import uuid
+
+    return uuid.uuid4().hex
+
+
+def test_the_keyword_index_is_open_before_the_first_keyword_question(tmp_path):
+    index = make(tmp_path / "idx")
+    zebra_corpus(index)
+    index.search("la cebra vive en la sabana africana", unit(0, 1, 0, 0), 5)  # no keyword part
+    assert index._search is not None and index._search._bm25 is not None
 
 
 # ------------------------------------------------------------------ fingerprint and folders
@@ -643,9 +775,11 @@ def test_close_after_a_search_releases_the_files_and_the_index_searches_again(tm
     index = make(tmp_path / "idx")
     zebra_corpus(index)
     assert index.search("zebra", unit(0, 1, 0, 0), 2)
-    records = index._search._records  # the file a search keeps open
+    state = index._search
+    records = state._records  # the file a search keeps open
     index.close()
     assert records is None or records.closed
+    assert state.dense is None and state._bm25 is None  # nothing of the commit stays open
     assert index._search is None
     assert index.search("zebra", unit(0, 1, 0, 0), 2)
 

@@ -16,15 +16,20 @@ Layout, per index. One folder per corpus, embedder and chunker setting, so nothi
 Isolation. ``search`` reads only ``search/``, which holds its own copy of the vectors and of
 the chunk records, so what it answers is the last commit whatever ``upsert`` and ``remove``
 do to the shards afterwards, in this process or in another. Reading never changes a file.
+A reader opens one commit whole (vectors, chunk records and BM25 index) when it first
+searches and keeps that commit until ``close`` or a new object, whatever other processes
+commit meanwhile; ``ids.json`` names the commit's generation, so an open that a commit
+interrupts is noticed and starts over.
 
 Writing. A write (``upsert``, ``remove``, ``commit``) takes an exclusive lock on ``.lock``
 and holds it until ``commit`` returns or ``close`` is called; a second writer fails at once
 with ``IndexBusyError`` (readers are not locked). Under the lock the first write cleans up
 what an interrupted writer left: temporary files, vectors without chunks, the older of two
-shards of one paper. A shard is valid once its ``.jsonl`` exists: ``upsert`` writes the
-``.npz`` first and the ``.jsonl`` last through temporary files, always under a stem no other
-shard uses (also when it stores the same key again), and deletes the paper's old shard only
-after that, so a crash leaves the old shard or the new one, never a mixture.
+shards of one paper (the one with the smaller write counter ``seq`` in its header). A shard
+is valid once its ``.jsonl`` exists: ``upsert`` writes the ``.npz`` first and the ``.jsonl``
+last through temporary files, always under a stem no other shard uses (also when it stores
+the same key again), and deletes the paper's old shard only after that, so a crash leaves
+the old shard or the new one, never a mixture.
 
 ``commit`` rebuilds ``search/`` next to the old one and swaps it in. ``stats().pending`` says
 whether the shards differ from what ``search/`` was built from (in documents or in the shard
@@ -44,6 +49,7 @@ import os
 import re
 import shutil
 import time
+import uuid
 from bisect import bisect_right
 from collections import Counter
 from collections.abc import Sequence
@@ -66,6 +72,7 @@ FORMAT_VERSION = 1
 DTYPE = "float16"
 LIST_DEPTH = 100  # length of each first-stage ranking before fusion
 BLOCK_ROWS = 16384  # rows of the dense matrix scored at once (float32 copy of one block)
+OPEN_ATTEMPTS = 5  # tries to open a search folder that other processes keep replacing
 BM25_HEAP_BYTES = 200_000_000
 UNIT_TOLERANCE = 1e-4  # a vector this close to length 1 is stored as it is
 _SAFE = re.compile(r"[0-9A-Za-z_-]+")
@@ -100,6 +107,7 @@ class _Shard:
     stem: str
     chunks: int
     dims: int
+    seq: int = 0  # the order shards were written in: the larger one is the newer
 
 
 class LocalIndex:
@@ -154,6 +162,7 @@ class LocalIndex:
         matrix = self._unit_float16(vectors)
         self._write_identity()
         stem = self._free_stem(doc_id, key)
+        seq = max((s.seq for s in shards.values()), default=0) + 1
         shard_dir = self.folder / "shards"
         shard_dir.mkdir(exist_ok=True)
         npz = shard_dir / f"{stem}.npz"
@@ -167,6 +176,7 @@ class LocalIndex:
             "key": key,
             "chunks": len(chunks),
             "dims": int(matrix.shape[1]),
+            "seq": seq,
         }
         lines = [json.dumps(header, ensure_ascii=False)]
         lines += [
@@ -186,7 +196,7 @@ class LocalIndex:
         previous = shards.get(doc_id)
         if previous is not None:
             self._delete_files(previous.stem)  # only now: the new shard is complete
-        shards[doc_id] = _Shard(doc_id, key, stem, len(chunks), int(matrix.shape[1]))
+        shards[doc_id] = _Shard(doc_id, key, stem, len(chunks), int(matrix.shape[1]), seq)
 
     def remove(self, doc_id: str) -> None:
         if not self.folder.is_dir():
@@ -375,6 +385,7 @@ class LocalIndex:
             json.dumps(
                 {
                     "format": FORMAT_VERSION,
+                    "generation": uuid.uuid4().hex,  # one per commit: a reader checks it
                     "documents": len(shards),
                     "rows": rows,
                     "dims": dims,
@@ -479,7 +490,12 @@ class LocalIndex:
                 with jsonl.open(encoding="utf-8", newline="\n") as f:
                     header = json.loads(f.readline())
                 shard = _Shard(
-                    header["doc_id"], header["key"], jsonl.stem, header["chunks"], header["dims"]
+                    header["doc_id"],
+                    header["key"],
+                    jsonl.stem,
+                    header["chunks"],
+                    header["dims"],
+                    int(header.get("seq", 0)),
                 )
                 if header["format"] != FORMAT_VERSION or jsonl.stem not in npz:
                     continue
@@ -490,7 +506,8 @@ class LocalIndex:
         winners: dict[str, _Shard] = {}
         losers: list[str] = []
         for doc_id, candidates in found.items():
-            candidates.sort(key=lambda c: (c[0], c[1].stem))
+            # the write counter says which is newer; the clock only orders shards without one
+            candidates.sort(key=lambda c: (c[1].seq, c[0], c[1].stem))
             winners[doc_id] = candidates[-1][1]
             losers += [c[1].stem for c in candidates[:-1]]
         orphans = [s for s in npz if not (shard_dir / f"{s}.jsonl").exists()]
@@ -514,12 +531,29 @@ class LocalIndex:
         return (where, ids) if ids.get("format") == FORMAT_VERSION else None
 
     def _open_search(self) -> _Search | None:
-        if self._search is None:
+        """The last commit, opened whole: the vectors, the chunk records and the BM25 index of
+        one generation. It stays that generation for as long as this object keeps it, however
+        many commits other processes make; the next ``close`` or a new object sees the latest.
+        A commit that lands while the files are being opened is noticed (``ids.json`` names
+        another generation afterwards) and the opening starts over."""
+        if self._search is not None:
+            return self._search
+        for _ in range(OPEN_ATTEMPTS):
             found = self._read_ids()
             if found is None:
                 return None
-            self._search = _Search(*found)
-        return self._search
+            try:
+                state = _Search(*found)
+            except FileNotFoundError:  # a swap removed the folder under us
+                continue
+            after = self._read_ids()
+            if after is not None and after[1].get("generation") == found[1].get("generation"):
+                self._search = state
+                return state
+            state.close()
+        raise IndexBusyError(
+            f"the index {self.folder} kept changing while it was being opened; ask again"
+        )
 
 
 class _Search:
@@ -536,12 +570,23 @@ class _Search:
         self.dense = np.load(folder / "dense.npy", mmap_mode="r") if self.rows else None
         self._offsets = np.load(folder / "chunks.offsets.npy") if self.rows else None
         self._records = (folder / "chunks.jsonl").open("rb") if self.rows else None
+        # Opened with the rest, not at the first English question: a lazily opened index
+        # would be the one of a later commit than the vectors and the chunk records.
         self._bm25: tuple[Any, Any] | None = None
+        if self.rows:
+            import tantivy
+
+            index = tantivy.Index.open(str(folder / "bm25"))
+            index.reload()
+            self._bm25 = (index, index.searcher())
 
     def close(self) -> None:
         if self._records is not None:
             self._records.close()
             self._records = None
+        self._bm25 = None
+        self.dense = None  # drops the memory map: the commit's files are really released
+        self._offsets = None
 
     def query(self, vector: Vector) -> np.ndarray:
         v = np.asarray(vector, dtype=np.float32)
@@ -571,12 +616,7 @@ class _Search:
         words = " ".join(_WORDS.findall(question)).lower()
         if not words:
             return []
-        if self._bm25 is None:
-            import tantivy
-
-            index = tantivy.Index.open(str(self.folder / "bm25"))
-            index.reload()
-            self._bm25 = (index, index.searcher())
+        assert self._bm25 is not None
         index, searcher = self._bm25
         hits = searcher.search(index.parse_query(words, ["text"]), depth).hits
         return [int(searcher.doc(address)["i"][0]) for _, address in hits]
