@@ -60,3 +60,19 @@ def test_load_reads_the_table_of_the_config_and_names_the_table_in_errors():
     bad = AppConfig.model_validate({"embedder": {"model": "org/other"}})
     with pytest.raises(ValueError, match=r"^\[embedder\] table: .*revision is required"):
         s.load(bad, "embedder", s.EmbedderSettings)
+
+
+def test_candidates_and_contexts_have_one_definition_in_docingest():
+    from docingest.config import DEFAULT_CANDIDATES, DEFAULT_CONTEXTS, IndexConfig
+
+    plugin = s.IndexSettings()
+    assert (plugin.candidates, plugin.contexts) == (DEFAULT_CANDIDATES, DEFAULT_CONTEXTS)
+    assert issubclass(s.IndexSettings, IndexConfig)
+    cfg = AppConfig.model_validate({"index": {"candidates": 30, "contexts": 4, "bm25": "never"}})
+    from docingest.config import index_config
+
+    # what ask reads and what the adapter validates are the same two values
+    assert index_config(cfg).candidates == s.load(cfg, "index", s.IndexSettings).candidates == 30
+    assert index_config(cfg).contexts == s.load(cfg, "index", s.IndexSettings).contexts == 4
+    with pytest.raises(ValueError, match=r"\[index\].*typo"):
+        s.load(AppConfig.model_validate({"index": {"typo": 1}}), "index", s.IndexSettings)

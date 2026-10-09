@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from docingest.config import AppConfig
+from docingest.config import AppConfig, IndexConfig
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 # The measured pair (D-161): both pinned to the commit the experiments used.
@@ -29,10 +29,13 @@ class _Table(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class IndexSettings(_Table):
+class IndexSettings(IndexConfig):
+    """All of ``[index]``. ``candidates`` and ``contexts`` come from docingest's ``IndexConfig``
+    (``ask`` reads them there, and their defaults are written once); unknown keys are errors."""
+
+    model_config = ConfigDict(extra="forbid")
+
     dir: str = "data/index"  # relative to the working directory, like output_dir
-    candidates: int = Field(default=50, ge=1)  # top-k of the first stage handed to the reranker
-    contexts: int = Field(default=10, ge=1)  # chunks given to the answerer after reranking
     # Fuse BM25 with the dense ranking (RRF) for questions that look English ("english"),
     # for every question ("always") or never.
     bm25: Literal["english", "always", "never"] = "english"

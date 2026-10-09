@@ -53,3 +53,8 @@ class IndexMismatchError(DocingestError):
     point ``[index] dir`` elsewhere (an index of the configured embedder is another folder)
     or restore the embedder settings.
     """
+
+
+class InvalidConfigError(DocingestError, ValueError):
+    """A configuration table holds a value that cannot be used; the message names the table
+    and the key (for example ``[index] contexts``)."""
