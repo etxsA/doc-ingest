@@ -91,6 +91,7 @@ flowchart LR
 | `test_bench_fixes.py` | Benchmark regressions: clustered statistics, the OCR retry ladder in telemetry, page furniture and LaTeX / `<img>` normalisation, stale saved scores. The MLX adapter runs against stub modules, never a model |
 | `test_benchmark.py` | `BenchmarkRunner`, score persistence and report aggregation on an in-memory suite (`MemSuite`) |
 | `test_bootstrap.py` | `REGISTRY` defaults, unknown adapter names, `Container` overrides, entry-point plugins including broken ones |
+| `test_chunking.py` | `domain.chunking.chunk_pages`: chunk names and page ranges, overlap, page breaks, invalid settings |
 | `test_core_fixes.py` | Regressions: config loading, the pipeline version against `pyproject.toml` and `uv.lock`, QA LLM parameters, metadata refresh and degraded results through the real `FilesystemStore` |
 | `test_domain_models.py` | `SourceMetadata` citation formatting |
 | `test_ingest_service.py` | `IngestService` with fakes for every port: per-page routing, the cache and its invalidation, partial and forced-OCR variants, images, converters, metadata sidecars, degraded conversions, domain errors |
@@ -117,6 +118,7 @@ flowchart LR
 | `test_arxiv_network.py` | `ArxivCrawler` over real HTTP against a local stand-in server (redirects, gzip, retries with `Retry-After`); one live arXiv test (`network`) |
 | `test_bench_datasets.py` | The synthetic and olmOCR-bench suite adapters, scorer output parsing, and the `docingest bench` sub-app end to end with a fake OCR engine; one dataset download test (`network`) |
 | `test_cli.py` | `docingest ingest` batch behaviour, option validation, the `adapters` command, a missing `--config` file (pipeline and `bench` commands), a `crawl` query that cannot be sent, a broken plugin |
+| `test_chunking_parity.py` | `chunk_pages` gives the same chunks as PaperQA2's `chunk_pdf` on the repository's own documents, an ingested LaTeX paper and random pages (hypothesis); skipped when `paperqa` is not installed |
 | `test_filesystem_store.py` | `FilesystemStore` file permissions, no leftover temp files, a corrupt cached manifest treated as a cache miss |
 | `test_magic_detector.py` | `MagicBytesDetector` on real files |
 | `test_openai_ocr.py` | `OpenAICompatibleOcr` against a scripted local OpenAI-compatible server: request shape, retries, the `finish_reason="length"` ladder, authentication |

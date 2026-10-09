@@ -104,7 +104,7 @@ Paths are relative to the package folder, `packages/docingest`. The repository r
 
 | Path | Contents |
 |---|---|
-| `src/docingest/domain/` | `models.py` (`DocumentManifest`, `PageRecord`, `SourceKind`, `PageMethod`, ...), `routing.py` (`RoutingPolicy`, `decide`), `text.py` (text-layer clean-up, Markdown page markers), `errors.py` |
+| `src/docingest/domain/` | `models.py` (`DocumentManifest`, `PageRecord`, `SourceKind`, `PageMethod`, ...), `routing.py` (`RoutingPolicy`, `decide`), `text.py` (text-layer clean-up, Markdown page markers), `chunking.py` (page-aware chunks), `errors.py` |
 | `src/docingest/ports/` | one `typing.Protocol` per port, plus the frozen dataclasses that cross it |
 | `src/docingest/application/` | use cases: `IngestService`, `CrawlService`, `AskService`, `BenchmarkRunner`; `metrics.py` and `stats.py` |
 | `src/docingest/config.py` | `AppConfig` and its sections, loaded from `config/pipeline.toml` |

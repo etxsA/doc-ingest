@@ -71,7 +71,7 @@ flowchart TD
     CF["config: AppConfig loaded from config/pipeline.toml"]
     AP["application: IngestService, CrawlService, AskService, BenchmarkRunner, metrics, stats"]
     PT["ports: typing.Protocol interfaces and the dataclasses that cross them"]
-    DM["domain: models, routing, text, errors"]
+    DM["domain: models, routing, text, chunking, errors"]
     EP --> BS
     BS --> AD
     AD --> CF
@@ -124,7 +124,7 @@ flowchart LR
 | Config | `docingest.config` | application, ports, domain (in practice only `domain.routing`) | `AppConfig` and its sections, `load_config` |
 | Application | `docingest.application` | ports, domain | use cases, the benchmark runner and report, `metrics`, `stats` |
 | Ports | `docingest.ports` | domain | `@runtime_checkable` Protocols and frozen dataclasses such as `OcrResult`, `Conversion`, `StoredDocument` |
-| Domain | `docingest.domain` | nothing else in docingest | `models`, `routing`, `text`, `errors` |
+| Domain | `docingest.domain` | nothing else in docingest | `models`, `routing`, `text`, `chunking`, `errors` |
 
 Consequences of the rule that are visible in the code:
 
@@ -1196,7 +1196,7 @@ All quality gates (ruff, import-linter, pyright, pytest with coverage) run with 
 | Package or folder | README |
 |---|---|
 | Package overview | [src/docingest/README.md](../src/docingest/README.md) |
-| Domain models, routing, text, errors | [src/docingest/domain/README.md](../src/docingest/domain/README.md) |
+| Domain models, routing, text, chunking, errors | [src/docingest/domain/README.md](../src/docingest/domain/README.md) |
 | Ports | [src/docingest/ports/README.md](../src/docingest/ports/README.md) |
 | Use cases, metrics, statistics | [src/docingest/application/README.md](../src/docingest/application/README.md) |
 | Adapters | [src/docingest/adapters/README.md](../src/docingest/adapters/README.md) |

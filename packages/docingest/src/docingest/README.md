@@ -29,7 +29,7 @@ src/docingest/
 ├── __init__.py        __version__ (the pipeline version)
 ├── config.py          AppConfig and load_config(): config/pipeline.toml as pydantic models
 ├── bootstrap.py       composition root: adapter REGISTRY, entry-point plugins, Container
-├── domain/            pure models, OCR routing policy, text functions, errors
+├── domain/            pure models, OCR routing policy, text functions, chunker, errors
 ├── ports/             typing.Protocol interfaces and the value types that cross them
 ├── application/       use cases: ingest, crawl, ask, benchmark (plus metrics and statistics)
 ├── adapters/          implementations of the ports, one subpackage per concern
@@ -53,7 +53,7 @@ src/docingest/
 | `__init__.py` | package | Re-exports the pipeline version. `__version__` is `PIPELINE_VERSION` from `application/ingest.py`. | `__version__` | - |
 | `config.py` | config | Pydantic models for `config/pipeline.toml` and the loader. One model per TOML section. | `AppConfig`, `AdapterSelection`, `OcrConfig`, `QaConfig`, `LatexConfig`, `ArxivConfig`, `load_config`, `DEFAULT_CONFIG`, `DEFAULT_OCR_REPO`, `DEFAULT_OCR_REVISION`, `DEFAULT_LLM_BASE` | [config/README.md](../../config/README.md) |
 | `bootstrap.py` | composition root | The only module that knows every adapter. Maps adapter names to factories, discovers entry-point plugins and builds the services. | `REGISTRY`, `Factory`, `plugins`, `available`, `factory`, `build`, `Container` | [below](#runtime-wiring-bootstrapcontainer) |
-| `domain/` | domain | `models.py` (manifest, page records, metadata, enums), `routing.py` (OCR routing policy), `text.py` (text-layer clean-up, Markdown serialization), `errors.py` (exception hierarchy). No I/O. | `DocumentManifest`, `PageRecord`, `SourceKind`, `PageMethod`, `SourceMetadata`, `RoutingPolicy`, `decide`, `render_markdown`, `split_pages`, `DocingestError` | [domain/README.md](domain/README.md) |
+| `domain/` | domain | `models.py` (manifest, page records, metadata, enums), `routing.py` (OCR routing policy), `text.py` (text-layer clean-up, Markdown serialization), `chunking.py` (page-aware chunks), `errors.py` (exception hierarchy). No I/O. | `DocumentManifest`, `PageRecord`, `SourceKind`, `PageMethod`, `SourceMetadata`, `RoutingPolicy`, `decide`, `render_markdown`, `split_pages`, `chunk_pages`, `DocingestError` | [domain/README.md](domain/README.md) |
 | `ports/` | ports | One module per concern, each defining `@runtime_checkable` Protocols plus the dataclasses passed through them. | `TypeDetector`, `PdfReader`, `OcrEngine`, `ImageSource`, `DocumentConverter`, `DocumentStore`, `SourceCrawler`, `QuestionAnswerer`, `BenchmarkSuite` | [ports/README.md](ports/README.md) |
 | `application/` | application | `ingest.py` (`IngestService`, `IngestOptions`), `crawl.py` (`CrawlService`, `CrawlReport`), `ask.py` (`AskService`), `benchmark.py` (`BenchmarkRunner`, scoring and reports), `metrics.py` (CER, WER, F1 on normalized text), `stats.py` (cluster bootstrap and paired tests). Depends on ports, never on adapters. | `IngestService`, `IngestOptions`, `PIPELINE_VERSION`, `CrawlService`, `AskService`, `BenchmarkRunner` | [application/README.md](application/README.md) |
 | `adapters/` | adapters | Concrete implementations of the ports. Subpackages are independent of each other (only `adapters/models` is shared). | see [adapters/README.md](adapters/README.md) | [adapters/README.md](adapters/README.md) |
@@ -77,7 +77,7 @@ flowchart TD
     CFG["config: AppConfig, load_config"]
     APP["application: use cases"]
     PORTS["ports: Protocols"]
-    DOM["domain: models, routing, text, errors"]
+    DOM["domain: models, routing, text, chunking, errors"]
     INIT["docingest/__init__.py"]
 
     EP --> BOOT

@@ -574,12 +574,12 @@ flowchart TD
     AD --> CF["config: AppConfig loaded from pipeline.toml"]
     CF --> AP["application: IngestService, CrawlService, AskService, BenchmarkRunner"]
     AP --> PO["ports: typing.Protocol interfaces"]
-    PO --> DO["domain: models, routing policy, text functions, errors"]
+    PO --> DO["domain: models, routing policy, text functions, chunker, errors"]
 ```
 
 | Layer | Package | Contains | README |
 |---|---|---|---|
-| Domain | `docingest.domain` | `DocumentManifest`, `PageRecord`, `SourceMetadata`, `RoutingPolicy` and `decide`, text cleanup and Markdown (de)serialization, errors. Standard library and pydantic only. | [domain](src/docingest/domain/README.md) |
+| Domain | `docingest.domain` | `DocumentManifest`, `PageRecord`, `SourceMetadata`, `RoutingPolicy` and `decide`, text cleanup and Markdown (de)serialization, page-aware chunking, errors. Standard library and pydantic only. | [domain](src/docingest/domain/README.md) |
 | Ports | `docingest.ports` | `typing.Protocol` interfaces, all `@runtime_checkable`, plus their data classes. Adapters satisfy them by shape, without subclassing. | [ports](src/docingest/ports/README.md) |
 | Application | `docingest.application` | Use cases (`ingest`, `crawl`, `ask`, `benchmark`), OCR metrics and statistics. Depends on the domain and the ports, never on adapters or on I/O and model libraries (numpy is used for the statistics). | [application](src/docingest/application/README.md) |
 | Config | `docingest.config` | pydantic settings for every section of `pipeline.toml`. | [package](src/docingest/README.md) |
@@ -746,7 +746,7 @@ Each directory with its own README is linked.
   - [`benchmark.md`](docs/benchmark.md) and [`benchmark/`](docs/benchmark/): OCR benchmark results, generated reports, failure analyses and charts.
 - [`scripts/`](scripts/README.md): quality gates, sample download, local LLM server, benchmark scorer setup, chart and document generators.
 - [`src/docingest/`](src/docingest/README.md): the package; `bootstrap.py` (composition root) and `config.py` (settings) live here.
-  - [`domain/`](src/docingest/domain/README.md): pure models, routing policy, text functions, errors.
+  - [`domain/`](src/docingest/domain/README.md): pure models, routing policy, text functions, chunker, errors.
   - [`ports/`](src/docingest/ports/README.md): Protocol interfaces.
   - [`application/`](src/docingest/application/README.md): use cases, metrics, statistics.
   - [`adapters/`](src/docingest/adapters/README.md): implementations, one subpackage per port.
@@ -809,7 +809,7 @@ pytest runs with `--strict-markers`; the markers are `model`, `network` and `slo
 | [scripts/README.md](scripts/README.md) | What each script does and when to run it |
 | [tests/README.md](tests/README.md) | Test levels, fakes, fixtures, opt-in tests |
 | [src/docingest/README.md](src/docingest/README.md) | Package overview, composition root and configuration loading |
-| [src/docingest/domain/README.md](src/docingest/domain/README.md) | Domain models, routing policy, text functions, errors |
+| [src/docingest/domain/README.md](src/docingest/domain/README.md) | Domain models, routing policy, text functions, chunker, errors |
 | [src/docingest/ports/README.md](src/docingest/ports/README.md) | Every port and its contract |
 | [src/docingest/application/README.md](src/docingest/application/README.md) | Use cases, metrics and statistics |
 | [src/docingest/adapters/README.md](src/docingest/adapters/README.md) | All adapters and how to write one |

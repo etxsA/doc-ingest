@@ -13,6 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .domain.chunking import CHUNK_CHARS, OVERLAP
 from .domain.routing import RoutingPolicy
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config" / "pipeline.toml"
@@ -84,8 +85,8 @@ class QaConfig(BaseModel):
     embedding: str | None = None  # any PaperQA embedding string overrides the pinned one
     # all-MiniLM-L6-v2 truncates at 256 tokens: chunks target ~900 chars and any chunk
     # still over the window is re-split by tokens before embedding.
-    chunk_chars: int = 900
-    overlap: int = 100
+    chunk_chars: int = CHUNK_CHARS
+    overlap: int = OVERLAP
     evidence_k: int = 10
     answer_max_sources: int = 3
     max_concurrent_requests: int = 2
