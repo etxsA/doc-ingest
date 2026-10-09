@@ -109,7 +109,7 @@ flowchart LR
 | Module | Implementations under test |
 |---|---|
 | `test_ocr_contract.py` | `FakeOcr`, `OpenAICompatibleOcr` against a local stub `/v1/chat/completions` server, `MlxVlmOcr` with a pinned Qwen3-VL-2B 4-bit model (`model` marker) |
-| `test_retrieval_contract.py` | `FakeEmbedder`, `FakeIndex` and `FakeReranker` (from `fakes.py`): the `Embedder`, `ChunkIndex` and `Reranker` contracts. The `docingest-index` package imports this module and runs it against its real adapters (see [Plugin tests](#plugin-tests-reusing-the-contracts)) |
+| `test_retrieval_contract.py` | `FakeEmbedder`, `FakeIndex` and `FakeReranker` (from `fakes.py`): the `Embedder`, `ChunkIndex` and `Reranker` contracts. The [`docingest-index`](../../docingest-index/README.md) package imports this module and runs it against its real adapters (see [Plugin tests](#plugin-tests-reusing-the-contracts)) |
 | `test_store_contract.py` | `InMemoryStore` (from `fakes.py`) and `FilesystemStore` |
 
 ### integration/
@@ -370,7 +370,7 @@ Also add an integration module in `tests/integration/` for the behaviour specifi
 
 ### Plugin tests reusing the contracts
 
-A plugin in this repository (`packages/docingest-index`) runs the retrieval contract against its real adapters instead of copying it. Its `tests/conftest.py` puts this package's `tests/` and `tests/contract/` on `sys.path`; its `test_retrieval_contract.py` imports the contract tests and overrides the fixtures `make_embedder` (a factory taking `query_instruction`), `index` and `reranker`. Pytest resolves a fixture by name in the module that holds the test, so the imported tests run against the plugin's adapters. A plugin outside this repository copies `test_retrieval_contract.py` and `fakes.py` and overrides the same three fixtures.
+A plugin in this repository ([`packages/docingest-index`](../../docingest-index/README.md)) runs the retrieval contract against its real adapters instead of copying it. Its `tests/conftest.py` puts this package's `tests/` and `tests/contract/` on `sys.path`; its `test_contract.py` imports the contract tests and overrides the fixtures `make_embedder` (a factory taking `query_instruction`), `index` and `reranker`. Pytest resolves a fixture by name in the module that holds the test, so the imported tests run against the plugin's adapters. A plugin outside this repository copies `test_retrieval_contract.py` and `fakes.py` and overrides the same three fixtures.
 
 The contract fixtures therefore have a shape other packages depend on: `make_embedder(query_instruction="")` returns an `Embedder`, `index` an empty `ChunkIndex` built for the embedder that `make_embedder()` returns, `reranker` a `Reranker`.
 

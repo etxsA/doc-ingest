@@ -1,0 +1,33 @@
+# ADR 0004: A persistent chunk index and two-stage retrieval
+
+**Status:** accepted, 2026-10-08
+
+## Context
+`docingest ask` used to chunk and embed the whole corpus inside PaperQA2 on every run, with a small CPU embedding model (all-MiniLM-L6-v2, a 256-token window), and let PaperQA2 pick the ten chunks it summarizes. Both the time and the quality depend on that retrieval step:
+
+- The corpus is embedded again on every question run in a new process (minutes for a few thousand chunks, hours for tens of thousands).
+- On a measured end-to-end comparison with the answering step held identical, replacing the retrieval with a larger embedder, a keyword ranking and a cross-encoder reranker raised the answer F1 on QASPER from 0.354 to 0.480, the share of questions whose gold evidence is among the ten chunks given to the answerer from 0.35 to 0.77, and the gold-chunk rate on an in-domain question set from 0.83 to 1.00, for about 3 to 4 s more per question.
+
+## Decision
+- **Retrieval has two stages.** The first stage returns 50 candidates: the exact cosine ranking over all chunk vectors (top 100) fused with a BM25 ranking (top 100, English questions only) by reciprocal rank fusion with k = 60. The second stage is a cross-encoder reranker that scores the 50 and keeps the best 10, in a stable order, as the contexts for the answerer. The numbers are `[index] candidates = 50` and `contexts = 10`.
+- **Three ports** (`Embedder`, `ChunkIndex`, `Reranker`, in `docingest.ports`) with built-in `none` adapters that fail with a pointer to the `[adapters]` key. Without an index configured, nothing changes: `ask` keeps using PaperQA2's own retrieval.
+- **The adapters live in a second package**, `packages/docingest-index` (import `docingest_index`), registered through the entry points `docingest.embedder`, `docingest.index` and `docingest.reranker`. Its dependencies (numpy, tantivy, httpx) stay out of docingest's core. An import-linter contract lets it import only `docingest.ports`, `docingest.domain` and `docingest.config`, and docingest cannot import it. Use cases (`IndexService`) and the `docingest index` CLI stay in docingest and talk to the ports.
+- **Model servers, not in-process models.** The embedder client speaks the OpenAI `/v1/embeddings` protocol and the reranker client vLLM's `/rerank`, so the GPU machine is configured by URL. The chunker (`domain.chunking.chunk_pages`) reproduces PaperQA2's `chunk_pdf` page by page so that the index holds the chunks `ask` would cut; a test compares the two.
+- **On disk, one folder per corpus, embedder and chunker setting**: `<dir>/<model-slug>-<fingerprint8>/` with `fingerprint.json`, one `shards/<doc_id[:16]>-<key[:16]>.npz|.jsonl` pair per paper (float16 unit vectors; chunk name, pages, character span, `is_reference`, text), a `search/` folder rebuilt from the shards (`dense.npy`, the chunk records, `ids.json`, a tantivy index), `state.json` and a `.lock` file.
+  - The **fingerprint** is a hash of the corpus (the resolved `output_dir`), the embedder's identity (model, revision, normalization), the vector dtype, the chunker version and settings and the format version. A change makes a new folder, so vectors of two models never mix and two corpora that share `[index] dir` never prune or mix each other (a corpus folder that moves is a new index). `IndexService` also refuses an index whose recorded embedder fingerprint is not the configured one. The vector length is not configured: the index records the one it sees at the first commit in `fingerprint.json` and rejects vectors of another length; `model@revision` fixes it.
+  - The **query instruction** is recorded in `fingerprint.json` but is not part of the folder key: it changes only the vector of a question, never the stored vectors, so changing it must not re-embed the corpus.
+  - The **key of a paper** is the SHA-256 of its page numbers and texts. `index build` embeds a paper only when its key is new or changed, and removes papers that left the corpus.
+- **Writing and visibility are separate.**
+  - `upsert` and `remove` change the shards at once. An `upsert` writes a complete new shard under a name no other shard uses before it deletes the old one, so a crash leaves the old shard or the new one, never a mixture.
+  - `commit` rebuilds `search/` from all shards (no embedding) and swaps it in. `search/` is self-contained: it has its own copy of the vectors and of the chunk records, and `search` reads nothing else, so it answers from the last commit whatever happens to the shards afterwards, in this process or another.
+  - `stats().pending` tells whether the shards differ from what `search/` was built from, in any document, which counts alone cannot (a replaced paper keeps the counts). `index build` commits when it is true, so the next build repairs an interrupted one.
+  - Reading never changes a file, so `index status` is safe while a build runs. The first write takes an exclusive lock on `.lock` (held until `commit` or `close`) and then cleans up what an interrupted writer left; a second writer fails at once with a message naming the folder.
+- **BM25 is fused only for English questions** (`[index] bm25 = "english"`, or `"always"` / `"never"`), because it helped on English questions and added noise on Spanish ones in the measurements. Whether a question is English is decided by counting function words (`docingest_index.language`), since the index sees only the question text.
+- **No per-paper cap by default** (`[index] max_chunks_per_paper = 0`): the measured retrieval had none, and a cap inside 50 candidates starves questions whose evidence is in one paper. The option exists and applies to the fused ranking before the cut to `k`.
+
+## Consequences
+- A corpus is embedded once; later builds embed only new and changed papers, and a question costs one query embedding, a matrix product, a BM25 query and one reranker request.
+- Exact search over float16 vectors is simple and fast enough to roughly 10,000 papers (about 100,000 chunks of 2,560 dimensions, 0.5 GB). Approximate search is a later decision.
+- The index depends on running model servers for `build` and for every question, and on the chunk settings of `[qa]`; changing `chunk_chars` or `overlap` starts a new index folder.
+- Results are reproducible given the model servers: vectors are deterministic up to the numerical noise of batched inference, and BM25 ties are broken in a fixed order because the index is written by one thread.
+- A second package means a second set of gates in CI (`package` matrix) and a plugin contract: its tests run docingest's retrieval contract against the real adapters.

@@ -17,6 +17,12 @@ text = "passthrough"
 store = "filesystem"
 qa = "paperqa"
 crawler = "arxiv"
+# Persistent chunk index (package docingest-index, `docingest index build`). The defaults
+# are "none"; the real adapters also need the [embedder], [index] and [reranker] tables
+# described in config/README.md.
+# embedder = "openai-compatible"
+# index = "local"
+# reranker = "vllm"
 
 [routing]
 min_chars = 50                  # page with fewer embedded chars -> OCR

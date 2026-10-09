@@ -64,7 +64,7 @@ The codebase uses a hexagonal (ports and adapters) architecture, so the OCR mode
 - **Robust LaTeX conversion.** Safe archive extraction, arXiv-style main-file detection, a Python flattener for includes, pandoc in `--sandbox` mode with a timeout and heap cap, and a pylatexenc plain-text fallback ([LaTeX](#latex-conversion)).
 - **Content-addressed cache.** Outputs are keyed by the input's sha256 and by the fingerprints of the adapters that produce that kind of input. Partial and forced-OCR runs are stored as variants and never replace a complete result ([caching](#caching-and-invalidation)).
 - **PaperQA2 integration.** A corpus mode (`docingest ask`) with page-aware chunks, and a native `parse_pdf` hook for PaperQA2's own `Docs.aadd` ([PaperQA2](#paperqa2-integration)).
-- **Replaceable components.** Every pipeline port has a named slot in `[adapters]` (benchmark suites are declared in `config/benchmark.toml` instead), third-party adapters plug in through Python entry points, and five import-linter contracts enforce the layering in CI ([architecture](#architecture-overview)).
+- **Replaceable components.** Every pipeline port has a named slot in `[adapters]` (benchmark suites are declared in `config/benchmark.toml` instead), third-party adapters plug in through Python entry points, and six import-linter contracts enforce the layering in CI ([architecture](#architecture-overview)).
 - **Reproducible OCR benchmark.** `docingest bench` runs every configured candidate model on two suites, resumably, and reports comparisons with clustered bootstrap confidence intervals ([benchmark flow](#benchmark-flow), [docs/benchmark.md](docs/benchmark.md)).
 
 ## How it works
@@ -509,13 +509,14 @@ documents, warnings = container.adapter("store").corpus()   # the whole normaliz
 
 ## CLI overview
 
-`uv run docingest --help` lists the commands, and `uv run docingest <command> --help` shows every option. Every command that reads the pipeline configuration (`ingest`, `crawl`, `ask`, `adapters`, `model-path`, `eval-ocr`) takes `--config/-c`. Without it, the repository's `config/pipeline.toml` is used (located from the package, not from the working directory; built-in defaults apply if that file is missing); a `--config` path that does not exist is an error. Full reference: [src/docingest/entrypoints/README.md](src/docingest/entrypoints/README.md).
+`uv run docingest --help` lists the commands, and `uv run docingest <command> --help` shows every option. Every command that reads the pipeline configuration (`ingest`, `crawl`, `ask`, `index`, `adapters`, `model-path`, `eval-ocr`) takes `--config/-c`. Without it, the repository's `config/pipeline.toml` is used (located from the package, not from the working directory; built-in defaults apply if that file is missing); a `--config` path that does not exist is an error. Full reference: [src/docingest/entrypoints/README.md](src/docingest/entrypoints/README.md).
 
 | Command | What it does | Main options |
 |---|---|---|
 | `docingest ingest PATHS...` | Normalize files and directories into Markdown plus manifest. Exits with status 1 if any input failed, after processing the others. | `--force`, `--ocr-all`, `--max-pages N` |
 | `docingest crawl QUERY` | Search arXiv, download sources (PDF fallback) with metadata, then ingest them. Exits with status 1 on any failure. | `--limit` (default 5), `--no-ingest`, `--max-pages N` |
 | `docingest ask QUESTION` | Answer a question with PaperQA2 over the normalized corpus. Needs the `qa` extra. | `--config` |
+| `docingest index build\|status\|remove DOC_ID` | The persistent chunk index of the [docingest-index](../docingest-index/README.md) package: embed the new and changed documents, show the state of the index, forget one document. Needs `[adapters] embedder` and `index` set to real adapters. | `--config`, `build --no-prune` |
 | `docingest adapters` | List every port, its selected adapter and the available ones, including installed plugins. | `--config` |
 | `docingest model-path [ROLE]` | Print the local snapshot path of the pinned `llm` (default), `embedding` or `ocr` model, downloading it if it is not cached. Used by `scripts/serve_llm.sh`. | `--config` |
 | `docingest make-scan SRC OUT` | Rasterize and degrade born-digital pages into an image-only PDF, with the cleaned text layer as ground truth in a `.truth.json` file next to `OUT` (same name, suffix replaced). Does not read the pipeline configuration. | `--pages` (0-based, comma separated, default `0`), `--dpi` (default 150) |
@@ -604,7 +605,7 @@ Ports and their built-in adapters:
 | `embedder`, `index`, `reranker` | `Embedder`, `ChunkIndex`, `Reranker` | `none`: `NoEmbedder`, `NoIndex`, `NoReranker` (the defaults; real ones come from plugins) | `adapters/retrieval/none.py` |
 | set in `config/benchmark.toml` | `BenchmarkSuite` | `synthetic`: `SyntheticSuite`; `olmocr-bench`: `OlmOcrBenchSuite` | `adapters/datasets/` |
 
-The layering is enforced by five import-linter contracts that run in CI (`uv run lint-imports`): inward-only layers, independent adapter subpackages, a pure domain, an application layer free of concrete libraries, and adapters imported only by `bootstrap` and `entrypoints`. Adapter modules are imported lazily inside their factories, so heavy optional dependencies (mlx-vlm, Docling, PaperQA2) load only when that adapter is selected and used.
+The layering is enforced by six import-linter contracts that run in CI (`uv run lint-imports`): inward-only layers, independent adapter subpackages, a pure domain, an application layer free of concrete libraries, no import of a plugin package, and adapters imported only by `bootstrap` and `entrypoints`. Adapter modules are imported lazily inside their factories, so heavy optional dependencies (mlx-vlm, Docling, PaperQA2) load only when that adapter is selected and used.
 
 Details: [docs/architecture.md](docs/architecture.md), [ADR 0001](docs/adr/0001-hexagonal-architecture.md), [ADR 0002](docs/adr/0002-per-page-routing-and-content-addressed-cache.md), [ADR 0003](docs/adr/0003-latex-first-for-arxiv.md).
 
@@ -804,6 +805,7 @@ pytest runs with `--strict-markers`; the markers are `model`, `network` and `slo
 | [docs/adr/0001-hexagonal-architecture.md](docs/adr/0001-hexagonal-architecture.md) | ADR: hexagonal architecture with a plugin registry |
 | [docs/adr/0002-per-page-routing-and-content-addressed-cache.md](docs/adr/0002-per-page-routing-and-content-addressed-cache.md) | ADR: per-page OCR routing and the content-addressed cache |
 | [docs/adr/0003-latex-first-for-arxiv.md](docs/adr/0003-latex-first-for-arxiv.md) | ADR: LaTeX sources before PDFs for arXiv |
+| [docs/adr/0004-chunk-index-and-two-stage-retrieval.md](docs/adr/0004-chunk-index-and-two-stage-retrieval.md) | ADR: the chunk index, two-stage retrieval and the `docingest-index` package |
 | [docs/benchmark.md](docs/benchmark.md) | OCR benchmark: results, methodology, statistics, how to reproduce |
 | [docs/benchmark/screen_report.md](docs/benchmark/screen_report.md), [docs/benchmark/deep_report.md](docs/benchmark/deep_report.md) | Generated reports of the screening and deep runs |
 | [docs/benchmark/synthetic_failure_analysis.md](docs/benchmark/synthetic_failure_analysis.md), [docs/benchmark/olmocr_bench_failure_analysis.md](docs/benchmark/olmocr_bench_failure_analysis.md) | Failure analyses per suite |

@@ -79,9 +79,9 @@ flowchart LR
 | `DocumentStore` | `store.py` | `store` | `filesystem`: `FilesystemStore` | `IngestService`, `AskService` | no |
 | `SourceCrawler` | `sources.py` | `crawler` | `arxiv`: `ArxivCrawler` | `CrawlService` | no |
 | `QuestionAnswerer` | `qa.py` | `qa` | `paperqa`: `PaperQAAnswerer` | `AskService` | no |
-| `Embedder` | `embedding.py` | `embedder` | `none`: `NoEmbedder` | none yet | yes |
-| `ChunkIndex` | `index.py` | `index` | `none`: `NoIndex` | none yet | yes |
-| `Reranker` | `reranking.py` | `reranker` | `none`: `NoReranker` | none yet | no |
+| `Embedder` | `embedding.py` | `embedder` | `none`: `NoEmbedder`. Plugin ([docingest-index](../../../../docingest-index/README.md)): `openai-compatible` | `IndexService` | yes |
+| `ChunkIndex` | `index.py` | `index` | `none`: `NoIndex`. Plugin ([docingest-index](../../../../docingest-index/README.md)): `local` | `IndexService` | yes |
+| `Reranker` | `reranking.py` | `reranker` | `none`: `NoReranker`. Plugin ([docingest-index](../../../../docingest-index/README.md)): `vllm` | none yet | no |
 | `BenchmarkSuite` | `benchmark.py` | none: built by `entrypoints/bench_cli.py` | `SyntheticSuite` (`synthetic`), `OlmOcrBenchSuite` (`olmocr-bench`) | `BenchmarkRunner`, `score_run` | yes |
 
 `uv run docingest adapters` prints, for the current configuration, every `[adapters]` slot with its selected adapter and the names available for it (built-ins and installed plugins). Benchmark suites are not listed there.
@@ -543,7 +543,7 @@ Contract:
 - `embed_query` returns a vector comparable with the document vectors. A model that wants an instruction in front of questions adds it here and never in `embed_documents`.
 - `fingerprint` names everything that changes the vectors of documents: model, revision, dimensions, dtype and any document-side prefix or normalization. An index built with another fingerprint is not reused, so nothing else belongs in it: the query instruction changes only query vectors and would force a re-embedding of the corpus for nothing. It is exposed apart, as `query_instruction`, so an index can record it without keying on it.
 
-Implementations: `adapters/retrieval/none.py` `NoEmbedder` (the default, fails when used). Test fake: `FakeEmbedder`.
+Implementations: `adapters/retrieval/none.py` `NoEmbedder` (the default, fails when used) and, in the `docingest-index` package, `OpenAICompatibleEmbedder` (`openai-compatible`). Test fake: `FakeEmbedder`.
 
 ### ChunkIndex
 
@@ -580,7 +580,7 @@ Contract:
 - `search` returns at most `k` hits, best first. `vector` is the embedded question (`Embedder.embed_query`); `question` is its text, for adapters that also match keywords. What the first stage does beyond that (for example fusing a keyword search) is the adapter's business and its settings.
 - Chunks come from `domain.chunking.chunk_pages`, so they are the chunks `docingest ask` would give PaperQA2.
 
-Implementations: `adapters/retrieval/none.py` `NoIndex` (the default, fails when used). Test fake: `FakeIndex`.
+Implementations: `adapters/retrieval/none.py` `NoIndex` (the default, fails when used) and, in the `docingest-index` package, `LocalIndex` (`local`). Test fake: `FakeIndex`.
 
 ### Reranker
 
@@ -594,7 +594,7 @@ class Reranker(Protocol):
 
 Contract: one score per chunk, in the order given, larger meaning more relevant, and an empty list for no chunks. The adapter does not sort: the caller orders by score and keeps the first-stage order for ties. Scores are comparable only within one call.
 
-Implementations: `adapters/retrieval/none.py` `NoReranker` (the default, fails when used). Test fake: `FakeReranker`.
+Implementations: `adapters/retrieval/none.py` `NoReranker` (the default, fails when used) and, in the `docingest-index` package, `VllmReranker` (`vllm`). Test fake: `FakeReranker`.
 
 ### BenchmarkSuite
 

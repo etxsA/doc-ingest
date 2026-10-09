@@ -136,7 +136,7 @@ Consequences of the rule that are visible in the code:
 
 ## 4. Import contracts
 
-The layering is enforced by five import-linter contracts in `[tool.importlinter]` of `pyproject.toml`. They run with `uv run lint-imports`, which is part of `scripts/check.sh` and of the Linux job in `.github/workflows/ci.yml`.
+The layering is enforced by six import-linter contracts in `[tool.importlinter]` of `pyproject.toml`. They run with `uv run lint-imports`, which is part of `scripts/check.sh` and of the Linux job in `.github/workflows/ci.yml`.
 
 | # | Contract name | Type | What it enforces |
 |---|---|---|---|
@@ -144,7 +144,8 @@ The layering is enforced by five import-linter contracts in `[tool.importlinter]
 | 2 | Adapters are independent of each other (shared HF resolver excepted) | `independence` | None of `adapters.detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa`, `retrieval`, `datasets` imports another. `adapters.models` is deliberately not in the list, so `ocr.mlx_vlm` and `qa.paperqa` can share `models.huggingface.resolve`. |
 | 3 | Domain is pure: no I/O or framework libraries | `forbidden` | `docingest.domain` may not import `pypdfium2`, `PIL`, `numpy`, `mlx`, `mlx_vlm`, `paperqa`, `docling`, `pypandoc`, `huggingface_hub`, `httpx`, `urllib`, `typer`, `rich`, `jiwer`. |
 | 4 | Application depends on ports, not on concrete libraries | `forbidden` | `docingest.application` and `docingest.ports` may not import `pypdfium2`, `mlx`, `mlx_vlm`, `paperqa`, `docling`, `pypandoc`, `huggingface_hub`, `httpx`, `typer`, `rich`. |
-| 5 | Only the composition root and entrypoints wire concrete adapters | `protected` | Only `docingest.bootstrap`, `docingest.entrypoints` and the adapters themselves may import `docingest.adapters`. |
+| 5 | docingest never imports a plugin package (plugins are found by entry point) | `forbidden` | `docingest` may not import `docingest_index`. The plugin package has a contract of its own, in its `pyproject.toml`: it may import only `docingest.ports`, `docingest.domain` and `docingest.config`. |
+| 6 | Only the composition root and entrypoints wire concrete adapters | `protected` | Only `docingest.bootstrap`, `docingest.entrypoints` and the adapters themselves may import `docingest.adapters`. |
 
 Global settings that matter:
 

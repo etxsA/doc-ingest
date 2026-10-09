@@ -157,7 +157,7 @@ flowchart LR
     P --> D["docingest.domain"]
 ```
 
-These rules are enforced by five import-linter contracts in `pyproject.toml` (`[tool.importlinter]`). `uv run lint-imports` checks them, and it is a gate in `scripts/check.sh` and in the Linux CI lane. Two global options apply to all contracts:
+These rules are enforced by six import-linter contracts in `pyproject.toml` (`[tool.importlinter]`). `uv run lint-imports` checks them, and it is a gate in `scripts/check.sh` and in the Linux CI lane. Two global options apply to all contracts:
 
 - `include_external_packages = true` puts third-party packages in the import graph, so that contracts can name them.
 - `exclude_type_checking_imports = true` ignores imports under `if TYPE_CHECKING:`. For example, `adapters/ocr/openai_compat.py` imports `OcrConfig` only for type checking.
@@ -168,7 +168,8 @@ These rules are enforced by five import-linter contracts in `pyproject.toml` (`[
 | 2 | Adapters are independent of each other (shared HF resolver excepted) | `independence` | Any import, in either direction, even indirect, between `adapters.detection`, `pdf`, `ocr`, `images`, `converters`, `store`, `sources`, `qa`, `retrieval` and `datasets`. `adapters.models` is not in the list, so every adapter may use the Hugging Face resolver. | Replacing one adapter cannot break another, and one adapter's optional dependency never loads with another adapter. |
 | 3 | Domain is pure: no I/O or framework libraries | `forbidden` | `docingest.domain` importing, directly or through a chain, any of `pypdfium2`, `PIL`, `numpy`, `mlx`, `mlx_vlm`, `paperqa`, `docling`, `pypandoc`, `huggingface_hub`, `httpx`, `urllib`, `typer`, `rich`, `jiwer`. | The domain holds the canonical representation and the pure policies. It may use the standard library and pydantic only. |
 | 4 | Application depends on ports, not on concrete libraries | `forbidden` | `docingest.application` or `docingest.ports` importing any of `pypdfium2`, `mlx`, `mlx_vlm`, `paperqa`, `docling`, `pypandoc`, `huggingface_hub`, `httpx`, `typer`, `rich`. | Use cases talk to ports only. `PIL` (the image type that crosses the ports, an exception accepted in ADR 0001), `numpy` (`application/stats.py`) and `jiwer` (`application/metrics.py`) are deliberately not in this list. |
-| 5 | Only the composition root and entrypoints wire concrete adapters | `protected` | A direct import of `docingest.adapters` from any module except `docingest.bootstrap`, `docingest.entrypoints` and `docingest.adapters` itself. | The choice of implementation is made in one place, from configuration. It also keeps `config`, `application`, `ports` and `domain` free of adapter imports. |
+| 5 | docingest never imports a plugin package (plugins are found by entry point) | `forbidden` | Any import of `docingest_index` from `docingest`. | Plugins are optional and found by entry point; the core must work without them. The `docingest-index` package has a contract of its own: it may import only `docingest.ports`, `docingest.domain` and `docingest.config`. |
+| 6 | Only the composition root and entrypoints wire concrete adapters | `protected` | A direct import of `docingest.adapters` from any module except `docingest.bootstrap`, `docingest.entrypoints` and `docingest.adapters` itself. | The choice of implementation is made in one place, from configuration. It also keeps `config`, `application`, `ports` and `domain` free of adapter imports. |
 
 When a contract fails, fix the import, do not relax the contract. A legitimate change to `pyproject.toml` is adding a new adapter subpackage to the `independence` list (sections 9 and 10). Explain such a change in the pull request.
 
@@ -928,7 +929,7 @@ Run it after `uv sync --locked --all-extras`, so that pyright and the extra-depe
 
 ### CI (`.github/workflows/ci.yml`)
 
-The workflow `ci` (at the repository root) runs on every `push` and `pull_request`. It has two jobs, each using `actions/checkout@v7.0.1` and `astral-sh/setup-uv@v10.2.0` with caching. Each job runs once per workspace package (a `package` matrix) from that package's folder, here `packages/docingest`:
+The workflow `ci` (at the repository root) runs on every `push` and `pull_request`. It has two jobs, each using `actions/checkout@v7.0.1` and `astral-sh/setup-uv@v10.2.0` with caching. Each job runs once per workspace package (a `package` matrix) from that package's folder (`packages/docingest` and `packages/docingest-index`):
 
 | Job | Runner | Install | Steps |
 |---|---|---|---|

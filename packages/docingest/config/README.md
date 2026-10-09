@@ -16,7 +16,7 @@ Contents:
 - [How configuration reaches the code](#how-configuration-reaches-the-code)
 - [Selecting and overriding a configuration](#selecting-and-overriding-a-configuration)
 - [Validation](#validation)
-- [`config/pipeline.toml` reference](#configpipelinetoml-reference): [top level](#top-level-keys), [`[adapters]`](#adapters), [`[routing]`](#routing), [`[ocr]`](#ocr), [`[qa]`](#qa), [`[latex]`](#latex), [`[arxiv]`](#arxiv), [plugin sections](#plugin-sections)
+- [`config/pipeline.toml` reference](#configpipelinetoml-reference): [top level](#top-level-keys), [`[adapters]`](#adapters), [`[routing]`](#routing), [`[ocr]`](#ocr), [`[qa]`](#qa), [`[latex]`](#latex), [`[arxiv]`](#arxiv), [plugin sections](#plugin-sections), [`[index]`, `[embedder]` and `[reranker]`](#index-embedder-and-reranker-docingest-index)
 - [Pinning models by revision](#pinning-models-by-revision)
 - [What invalidates cached outputs](#what-invalidates-cached-outputs)
 - [Example configurations](#example-configurations)
@@ -161,11 +161,11 @@ Selects the implementation plugged into each port. A value is either a built-in 
 | `store` | string | `"filesystem"` | `filesystem` | `DocumentStore` | the ingestion service or `ask` is first used |
 | `qa` | string | `"paperqa"` | `paperqa` | `QuestionAnswerer` | `docingest ask` |
 | `crawler` | string | `"arxiv"` | `arxiv` | `SourceCrawler` | `docingest crawl` |
-| `embedder` | string | `"none"` | `none` | `Embedder` | never yet: no use case calls it |
-| `index` | string | `"none"` | `none` | `ChunkIndex` | never yet: no use case calls it |
-| `reranker` | string | `"none"` | `none` | `Reranker` | never yet: no use case calls it |
+| `embedder` | string | `"none"` | `none` (plugin `docingest-index`: `openai-compatible`) | `Embedder` | `docingest index` |
+| `index` | string | `"none"` | `none` (plugin `docingest-index`: `local`) | `ChunkIndex` | `docingest index` |
+| `reranker` | string | `"none"` | `none` (plugin `docingest-index`: `vllm`) | `Reranker` | never yet: no use case calls it |
 
-The three retrieval ports have only the `none` built-in, which refuses to work (`NotConfiguredError`). A plugin package selected here brings the real adapters and reads its own tables, [`[embedder]`, `[index]` and `[reranker]`](#plugin-sections).
+The three retrieval ports have only the `none` built-in, which refuses to work (`NotConfiguredError`). The `docingest-index` package brings the real adapters (`openai-compatible`, `local`, `vllm`) and reads its own tables, [`[index]`, `[embedder]` and `[reranker]`](#index-embedder-and-reranker-docingest-index).
 
 ### `[routing]`
 
@@ -290,6 +290,78 @@ def make_my_ocr(cfg):                     # registered under [project.entry-poin
 `MyOcr` stands for your class implementing the `OcrEngine` port. See [../src/docingest/adapters/README.md](../src/docingest/adapters/README.md) for the full plugin procedure.
 
 The adapters of the `embedder`, `index` and `reranker` ports are meant to be configured this way, from three tables that docingest itself never validates: `[embedder]` (server address, served and pinned model, query instruction), `[index]` (index folder, how many candidates and contexts, keyword fusion) and `[reranker]` (server address, model, instruction). Their keys are defined and checked by the plugin that reads them, which receives the tables untouched in `cfg.model_extra["embedder"]`, `["index"]` and `["reranker"]`.
+
+#### `[index]`, `[embedder]` and `[reranker]` (`docingest-index`)
+
+The [`docingest-index`](../../docingest-index/README.md) package validates its three tables with Pydantic models (`docingest_index/settings.py`): an unknown key or a bad value is an error that names the table. A missing table means its defaults. Select the adapters with `[adapters] embedder = "openai-compatible"`, `index = "local"` and `reranker = "vllm"`.
+
+```toml
+[adapters]
+embedder = "openai-compatible"
+index = "local"
+reranker = "vllm"
+
+[index]
+dir = "data/index"
+candidates = 50
+contexts = 10
+bm25 = "english"
+max_chunks_per_paper = 0
+
+[embedder]
+base_url = "http://127.0.0.1:8002/v1"
+served_model = "qwen-embed"
+model = "Qwen/Qwen3-Embedding-4B"
+revision = "5cf2132abc99cad020ac570b19d031efec650f2b"
+query_instruction = ""
+
+[reranker]
+base_url = "http://127.0.0.1:8003"
+served_model = "qwen-rerank"
+model = "Qwen/Qwen3-Reranker-8B"
+revision = "77d193c791ed757ca307ee72715aa132723da912"
+instruction = "Given a question about a research paper, retrieve the passage that answers it"
+```
+
+`[index]`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `dir` | string | `"data/index"` | Folder that holds the indexes, relative to the working directory like `output_dir`. Each embedder and chunk setting gets its own subfolder, so one `dir` can hold several indexes. |
+| `candidates` | int, at least 1 | `50` | Hits the first stage returns for the reranker. |
+| `contexts` | int, at least 1 | `10` | Chunks given to the answerer after reranking (the value of `[qa] evidence_k`). |
+| `bm25` | `"english"`, `"always"`, `"never"` | `"english"` | Fuse a BM25 ranking with the dense one (reciprocal rank fusion, k = 60) for questions that look English, for every question, or never. |
+| `max_chunks_per_paper` | int, at least 0 | `0` | At most this many chunks of one paper among the hits; `0` is no cap, as in the measured retrieval. |
+
+`candidates` and `contexts` are read by the code that retrieves for `ask` (the next change); `dir`, `bm25` and `max_chunks_per_paper` are read by the index adapter.
+
+`[embedder]`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `base_url` | string | `"http://127.0.0.1:8002/v1"` | OpenAI-compatible server; `/embeddings` is appended. |
+| `served_model` | string | `"qwen-embed"` | The model name the server expects in each request. |
+| `model` | string | `"Qwen/Qwen3-Embedding-4B"` | The Hugging Face repository the server runs. Recorded in the index fingerprint; not sent. |
+| `revision` | string | pinned for the default model | A commit of `model`. Required for any other model. |
+| `query_instruction` | string | `""` | Task text put in front of a question as `Instruct: <task>\nQuery:<question>`; `"web"` is Qwen's web-search task. Documents never get one. Recorded in the index's `fingerprint.json` but not part of the index key. |
+| `api_key_env` | string | none | Name of the environment variable that holds the API key, never the key. |
+| `batch_size` | int | `64` | Texts per request. |
+| `concurrency` | int | `8` | Requests in flight. |
+| `timeout_s` | float | `600.0` | Per-request timeout. |
+| `retries` | int | `5` | Retries on HTTP 408, 429, 5xx and connection errors, with a pause that doubles. |
+
+`[reranker]`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `base_url` | string | `"http://127.0.0.1:8003"` | vLLM server; `/rerank` is appended. |
+| `served_model` | string | `"qwen-rerank"` | The model name the server expects. |
+| `model` | string | `"Qwen/Qwen3-Reranker-8B"` | Repository the server runs; documentation only. |
+| `revision` | string | pinned for the default model | A commit of `model`. Required for any other model. |
+| `instruction` | string | `"Given a question about a research paper, retrieve the passage that answers it"` | The task sent with every request. |
+| `api_key_env`, `timeout_s`, `retries` | | as in `[embedder]` | |
+
+What changes the index folder: the corpus (`output_dir`, resolved to an absolute path, so several corpora can share `[index] dir`), `model`, `revision`, `[qa] chunk_chars` and `overlap`, the chunker version and the format version. The vector length is not a key: the index records it at the first commit. `query_instruction`, URLs, `served_model` and the transport keys do not. See [ADR 0004](../docs/adr/0004-chunk-index-and-two-stage-retrieval.md).
 
 ## Pinning models by revision
 
