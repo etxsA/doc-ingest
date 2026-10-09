@@ -337,7 +337,7 @@ This guide adds a working example, a `text` converter that splits Markdown into 
 | `images` | `ImageSource` (`images.py`) | `fingerprint`, `frames(path) -> list[Image]` | yes, image | `DocumentOpenError` |
 | `office`, `latex`, `text` | `DocumentConverter` (`converters.py`) | `fingerprint`, `convert(path) -> Conversion` | yes, for its kind | `ConversionError` |
 | `store` | `DocumentStore` (`store.py`) | `lookup(doc_id, config_hash, *, max_pages, ocr_all)`, `save(manifest, markdown, *, degraded=False)`, `markdown(doc)`, `corpus()` | no | (none named) |
-| `qa` | `QuestionAnswerer` (`qa.py`) | `async ask(question, documents, warn) -> str` | no, QA never changes ingestion output | (none named) |
+| `qa` | `QuestionAnswerer` (`qa.py`) | `async ask(question, documents, warn, contexts=None) -> str` | no, QA never changes ingestion output | (none named) |
 | `embedder` | `Embedder` (`embedding.py`) | `fingerprint`, `query_instruction`, `embed_documents(texts) -> list[Vector]`, `embed_query(text) -> Vector` | no, it keys a chunk index instead | (none named) |
 | `index` | `ChunkIndex` (`index.py`) | `fingerprint`, `keys()`, `upsert(doc_id, key, chunks, vectors)`, `remove(doc_id)`, `commit()`, `search(question, vector, k) -> list[Hit]` | no, it keys a chunk index instead | (none named) |
 | `reranker` | `Reranker` (`reranking.py`) | `rerank(question, chunks) -> list[float]` | no | (none named) |

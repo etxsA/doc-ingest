@@ -94,7 +94,7 @@ Value types defined next to the Protocols (all dataclasses):
 | `OcrResult` | `ocr.py` | yes | `OcrEngine.transcribe` result |
 | `StoredDocument` | `store.py` | yes | `DocumentStore` results, `QuestionAnswerer.ask` input |
 | `SourceRecord`, `FetchedSource` | `sources.py` | yes | `SourceCrawler` results |
-| `Chunk` | `domain/chunking.py`, re-exported by `ports` | yes | `ChunkIndex`, `Reranker` |
+| `Chunk` | `domain/chunking.py`, re-exported by `ports` | yes | `ChunkIndex`, `Reranker`, `QuestionAnswerer.ask` |
 | `Hit` | `index.py` | yes | `ChunkIndex.search` result |
 | `Sample`, `CandidateSpec`, `Estimate` | `benchmark.py` | yes | benchmark samples, candidates, estimates |
 | `SuiteScore` | `benchmark.py` | no | `BenchmarkSuite.score` result |
@@ -506,6 +506,7 @@ class QuestionAnswerer(Protocol):
         question: str,
         documents: list[tuple[StoredDocument, str]],  # (document, its Markdown)
         warn: Callable[[str], None],
+        contexts: list[Chunk] | None = None,
     ) -> str: ...
 ```
 
@@ -514,6 +515,7 @@ Contract:
 - `ask` is a coroutine; `AskService.ask` awaits it.
 - `documents` holds every entry of `DocumentStore.corpus()` with its Markdown, in the `document.md` format (use `domain.text.split_pages` for page-aware chunks). It can include partial or degraded results; check `manifest.complete`. `AskService` raises `RuntimeError` before calling `ask` when the corpus is empty, so the list is never empty.
 - `warn` is for non-fatal messages. The CLI prints them as warnings.
+- `contexts` (default `None`) are chunks already retrieved, best first. When given, the adapter answers from exactly those chunks and retrieves nothing else; it needs from `documents` only the manifests of the papers the chunks come from (for the citations), so the Markdown may be empty and the list may hold just those papers. A context whose paper is not in `documents` is an error, and so is an empty list (it would be answered as "no papers"; the caller decides what no evidence means). Without `contexts` the adapter chunks `documents` and retrieves for itself, as before.
 - Return the answer text ready for display. `PaperQAAnswerer` returns PaperQA2's formatted answer, with citations built from `DocumentManifest.citation()`.
 - Question answering never affects ingestion output, so this port has no fingerprint.
 

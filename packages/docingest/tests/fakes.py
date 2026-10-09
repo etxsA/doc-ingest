@@ -231,9 +231,13 @@ def record(key: str, title: str = "A paper") -> SourceRecord:
 class FakeQA:
     def __init__(self):
         self.seen: list[str] = []
+        self.contexts: list[Chunk] | None = None
 
-    async def ask(self, question, documents, warn: Callable[[str], None]) -> str:
+    async def ask(
+        self, question, documents, warn: Callable[[str], None], contexts: list[Chunk] | None = None
+    ) -> str:
         self.seen = [d.manifest.source_name for d, _ in documents]
+        self.contexts = contexts
         return f"answer to {question!r} from {len(documents)} docs"
 
 

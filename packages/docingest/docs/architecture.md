@@ -324,7 +324,7 @@ classDiagram
     }
     class QuestionAnswerer {
         <<Protocol>>
-        +ask(question, documents, warn) str
+        +ask(question, documents, warn, contexts) str
     }
     class Embedder {
         <<Protocol>>
@@ -401,7 +401,7 @@ classDiagram
     BenchmarkSuite ..> SuiteScore : score
 ```
 
-`QuestionAnswerer.ask` is `async`. Its `documents` argument is a list of `(StoredDocument, markdown)` pairs. `FetchedSource.format` is one of `"latex-archive"`, `"latex"` or `"pdf"`. A suite may also expose `scoring_version: int`.
+`QuestionAnswerer.ask` is `async`. Its `documents` argument is a list of `(StoredDocument, markdown)` pairs. The optional `contexts` argument is a list of `Chunk` already retrieved: the adapter then answers from exactly those and needs only the manifests of their papers. `FetchedSource.format` is one of `"latex-archive"`, `"latex"` or `"pdf"`. A suite may also expose `scoring_version: int`.
 
 ### Fingerprints
 

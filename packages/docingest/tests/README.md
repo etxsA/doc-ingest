@@ -124,7 +124,7 @@ flowchart LR
 | `test_magic_detector.py` | `MagicBytesDetector` on real files |
 | `test_openai_ocr.py` | `OpenAICompatibleOcr` against a scripted local OpenAI-compatible server: request shape, retries, the `finish_reason="length"` ladder, authentication |
 | `test_pandoc_latex.py` | `PandocLatexConverter` with the real pandoc (pypandoc-binary) and pylatexenc on `tests/fixtures/latex`; optional real arXiv sources (`slow`) |
-| `test_paperqa_adapter.py` | PaperQA2 token windows; skipped when `paperqa` is not installed or the embedder is not in the local Hugging Face cache |
+| `test_paperqa_adapter.py` | PaperQA2 token windows (needs the embedder in the local Hugging Face cache); answering from given `contexts` (only those chunks, an empty list refused, the temperature on every request) and from the corpus, with litellm's mock reply and PaperQA2's keyword embedder, so no server or download. Skipped when `paperqa` is not installed |
 | `test_pdfium_reader.py` | `PdfiumReader` page signals and routing on generated PDFs, corrupt PDFs |
 | `test_pipeline_real_adapters.py` | `Container` with the real detector, pdfium, Pillow and filesystem adapters and a fake OCR engine |
 | `test_scripts.py` | `scripts/serve_llm.sh` run with a stub `uv` on `PATH`: which variable chooses the served model. Skipped without `bash` |
@@ -173,7 +173,7 @@ The module docstring states the rule: the fakes are real implementations of the 
 | `FakeEmbedder(dims=16, fingerprint=..., query_instruction="")` | `Embedder` | A hashed bag of words (`crc32` of each word modulo `dims`): texts that share words get close vectors; the same text always gives the same vector | `calls` counts `embed_documents` calls |
 | `FakeIndex(fingerprint=...)` | `ChunkIndex` | Reference implementation of the index contract: documents kept in memory, exact cosine search, ties in insertion order; `upsert` and `remove` are staged and only `commit()` makes them visible to `search` | `keys()` shows staged changes |
 | `FakeReranker()` | `Reranker` | Scores a chunk by the share of the question's words it contains | |
-| `FakeQA()` | `QuestionAnswerer` | Async `ask()` returns `f"answer to {question!r} from {len(documents)} docs"` | `seen` holds the source names of the documents it received |
+| `FakeQA()` | `QuestionAnswerer` | Async `ask()` returns `f"answer to {question!r} from {len(documents)} docs"` | `seen` holds the source names of the documents it received, `contexts` the chunks it was given |
 
 There is no shared fake for `BenchmarkSuite`. `tests/unit/test_benchmark.py` defines `MemSuite` (samples whose reference is their id, scored by exact match), `TaggedSuite` (images tagged with their sample id) and `EchoOcr` (a `FakeOcr` subclass that returns that id, can fail every Nth call and counts `unload()` calls), plus the `spec()` and `runner()` helpers for `BenchmarkRunner`. A new unit test in `tests/unit/` can import them with `from test_benchmark import ...`, as `test_bench_fixes.py` does.
 

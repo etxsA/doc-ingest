@@ -14,6 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ...config import DEFAULT_LLM_BASE, AppConfig
+from ...domain.chunking import NAME_LENGTH, Chunk
 from ...domain.text import split_pages
 from ...ports import StoredDocument
 from ..models.huggingface import resolve
@@ -92,6 +93,14 @@ def local_settings(cfg: AppConfig):
     return s
 
 
+def paperqa_doc(stored: StoredDocument):
+    from paperqa.types import Doc
+
+    m = stored.manifest
+    partial = "" if m.complete else f", pages 1-{m.n_pages} of {m.source_pages}"
+    return Doc(docname=m.doc_id[:NAME_LENGTH], dockey=m.doc_id, citation=m.citation() + partial)
+
+
 def token_windows(texts, tokenizer, max_tokens: int, overlap_tokens: int = 32):
     """Re-split chunks longer than the embedder's window so no text goes unembedded."""
     from paperqa.types import Text
@@ -134,18 +143,29 @@ class PaperQAAnswerer:
         question: str,
         documents: list[tuple[StoredDocument, str]],
         warn: Callable[[str], None],
+        contexts: list[Chunk] | None = None,
     ) -> str:
-        from paperqa import Docs
-        from paperqa.readers import chunk_pdf
-        from paperqa.types import Doc, ParsedMetadata, ParsedText
-
+        if contexts is not None and not contexts:
+            raise ValueError("contexts is empty: nothing to answer from")
         settings = local_settings(self.cfg)
         embedding_model = settings.get_embedding_model()  # load the embedder once
+        if contexts is None:
+            docs = await self._docs_from_corpus(documents, settings, embedding_model)
+        else:
+            docs = await self._docs_from_contexts(contexts, documents, settings, embedding_model)
+            settings.answer.evidence_retrieval = False  # summarize exactly these chunks
+        session = await docs.aquery(question, settings=settings, embedding_model=embedding_model)
+        return session.formatted_answer
+
+    async def _docs_from_corpus(self, documents, settings, embedding_model):
+        from paperqa import Docs
+        from paperqa.readers import chunk_pdf
+        from paperqa.types import ParsedMetadata, ParsedText
+
         split = self._splitter()
         rc = settings.parsing.reader_config
         docs = Docs()
         for stored, markdown in documents:
-            m = stored.manifest
             pages = split_pages(markdown)
             parsed = ParsedText(
                 # chunk_pdf concatenates pages as-is: keep a break so words don't fuse
@@ -155,12 +175,29 @@ class PaperQAAnswerer:
                     total_parsed_text_length=sum(map(len, pages.values())),
                 ),
             )
-            partial = "" if m.complete else f", pages 1-{m.n_pages} of {m.source_pages}"
-            doc = Doc(docname=m.doc_id[:16], dockey=m.doc_id, citation=m.citation() + partial)
+            doc = paperqa_doc(stored)
             # Page-aware chunks: citations point at page ranges ("pages 3-4").
             texts = chunk_pdf(parsed, doc, chunk_chars=rc["chunk_chars"], overlap=rc["overlap"])
             if split:
                 texts = split(texts)
             await docs.aadd_texts(texts, doc, settings=settings, embedding_model=embedding_model)
-        session = await docs.aquery(question, settings=settings, embedding_model=embedding_model)
-        return session.formatted_answer
+        return docs
+
+    async def _docs_from_contexts(self, contexts, documents, settings, embedding_model):
+        """A ``Docs`` holding exactly ``contexts``: with nothing else in it, nothing else can
+        be retrieved. Chunks go in as given, without the embedder's token re-split."""
+        from paperqa import Docs
+        from paperqa.types import Text
+
+        stored = {s.manifest.doc_id: s for s, _ in documents}
+        by_paper: dict[str, list[Chunk]] = {}  # papers in order of first appearance
+        for chunk in contexts:
+            by_paper.setdefault(chunk.doc_id, []).append(chunk)
+        docs = Docs()
+        for doc_id, chunks in by_paper.items():
+            if doc_id not in stored:
+                raise ValueError(f"contexts come from {doc_id[:NAME_LENGTH]}, not in documents")
+            doc = paperqa_doc(stored[doc_id])
+            texts = [Text(text=c.text, name=c.name, doc=doc) for c in chunks]
+            await docs.aadd_texts(texts, doc, settings=settings, embedding_model=embedding_model)
+        return docs

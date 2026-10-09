@@ -596,7 +596,7 @@ print(result.url, result.body)  # https://example.org/api?q=x b'ok'
 | | |
 |---|---|
 | Module | [qa/paperqa.py](qa/paperqa.py) |
-| Port | `QuestionAnswerer.ask(question, documents, warn) -> str` (async) |
+| Port | `QuestionAnswerer.ask(question, documents, warn, contexts=None) -> str` (async) |
 | Registry | `[adapters] qa = "paperqa"` (the factory receives the whole `AppConfig`) |
 | Config keys | `[qa]` (below), plus `[ocr] repo_id` and `[ocr] revision` for the default LLM |
 | Environment | `DOCINGEST_LLM` overrides `[qa] llm`, `DOCINGEST_EMBEDDING` overrides `[qa] embedding`, `OPENAI_API_KEY` (see below) |
@@ -641,7 +641,7 @@ sequenceDiagram
     ST-->>ASK: documents and warnings
     ASK->>ASK: pass each warning to warn, raise RuntimeError if there are no documents
     ASK->>ST: markdown(doc) for each document
-    ASK->>QA: ask(question, documents, warn)
+    ASK->>QA: ask(question, documents, warn, contexts)
     QA->>QA: build settings and load the embedder once
     loop each document
         QA->>QA: split_pages, then chunk_pdf into page-aware chunks
@@ -656,6 +656,7 @@ sequenceDiagram
 
 Details:
 
+- With `contexts` (chunks retrieved elsewhere, such as by a chunk index) the adapter skips the chunking and PaperQA2's retrieval: it builds a `Docs` that holds exactly those chunks, grouped by paper in order of first appearance and added as given (no token re-split), sets `answer.evidence_retrieval = False` so every chunk is summarized, and answers from them. Only `documents[i][0].manifest` is used then, for the `Doc` citations; the Markdown is not read. An empty `contexts` list raises `ValueError` (PaperQA2 would answer "no papers"). The embedder is still loaded because `Docs` embeds what it is given, but PaperQA2 does not use those vectors.
 - The stored Markdown is split back into pages with `split_pages()` (the `<!-- page N | method=... -->` markers) and chunked with PaperQA's `chunk_pdf`, so citations point at page ranges.
 - Each document becomes a PaperQA `Doc` with `docname = doc_id[:16]`, `dockey = doc_id` and `citation = manifest.citation()`; a partial run appends `, pages 1-N of M`.
 - With the pinned embedder, chunks longer than its window (`max_seq_length - 2` tokens, read from the snapshot's `sentence_bert_config.json`) are re-split into token windows with a 32-token overlap (`token_windows`), so no text goes unembedded. With a custom embedder no re-splitting is done, because its window is unknown.
