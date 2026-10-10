@@ -239,6 +239,7 @@ class Container:
                 reranker=self.adapter("reranker") if self.configured("reranker") else None,
                 candidates=settings.candidates,
                 contexts=settings.contexts,
+                max_chunks_per_paper=settings.max_chunks_per_paper,
             )
         except ValueError as e:  # an adapter's table ([embedder], [index], ...) or a name
             raise InvalidConfigError(str(e)) from e

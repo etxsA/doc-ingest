@@ -5,7 +5,7 @@ Embedding and reranker clients and a persistent chunk index for [docingest](../d
 | Adapter | `[adapters]` entry | Port | What it is |
 |---|---|---|---|
 | `OpenAICompatibleEmbedder` | `embedder = "openai-compatible"` | `Embedder` | HTTP client for `/v1/embeddings` (vLLM serving Qwen3-Embedding). Batches, retries, L2-normalized float32 vectors, Qwen3 query instruction. |
-| `LocalIndex` | `index = "local"` | `ChunkIndex` | Vectors and chunks on disk (float16 numpy shards), exact cosine search, a tantivy BM25 index, reciprocal rank fusion, an optional per-paper cap. |
+| `LocalIndex` | `index = "local"` | `ChunkIndex` | Vectors and chunks on disk (float16 numpy shards), exact cosine search, a tantivy BM25 index, reciprocal rank fusion. |
 | `VllmReranker` | `reranker = "vllm"` | `Reranker` | HTTP client for vLLM's `/rerank` (Qwen3-Reranker): one request, one score per chunk. |
 
 The design and its measurements are in [ADR 0004](../docingest/docs/adr/0004-chunk-index-and-two-stage-retrieval.md). The ports and their contracts are in [docingest's ports README](../docingest/src/docingest/ports/README.md).
@@ -80,12 +80,13 @@ flowchart LR
     D --> F["reciprocal rank fusion, k = 60, top 100"]
     B --> F
     L -->|no| F
-    F --> C["per-paper cap (off by default), first 50 = candidates"]
+    F --> C["first 50 = candidates"]
     C --> R["Reranker.rerank: one /rerank request, instruction sent with it"]
-    R --> T["stable sort by score, first 10 = contexts"]
+    R --> T["stable sort by score"]
+    T --> P["per-paper cap (off by default), first 10 = contexts"]
 ```
 
-`LocalIndex.search` is the part up to the candidates. The reranker call and the final sort are done by the caller (`AskService.retrieve` in docingest); scores come back in input order and ties keep the first-stage order. These are the formulas of the measured end-to-end retrieval, and `tests/test_retrieval_oracle.py` compares them with a literal copy of that script:
+`LocalIndex.search` is the part up to the candidates. The reranker call, the final sort and the optional per-paper cap are done by the caller (`AskService.retrieve` in docingest); scores come back in input order and ties keep the first-stage order. These are the formulas of the measured end-to-end retrieval, and `tests/test_retrieval_oracle.py` compares them with a literal copy of that script:
 
 - Dense: vectors are unit length, so the score is a dot product; computed in float32 over float16 storage, in blocks of 16,384 rows. The float16 matrix is converted to float32 once, at the reader's first dense search, and the copy stays in memory until `close()` or a new object; the products, and so the scores, are the same as converting block by block for every question. Ranking by `argpartition` and a stable sort. The chunk records of the hits are cut from the memory-mapped `chunks.jsonl` in file order instead of one seek and read per record.
 - BM25: the question reduced to lowercased ASCII letters and digits, parsed by tantivy as an OR query over a field tokenized with `en_stem`. A question with none of those characters has no keyword part.
@@ -120,7 +121,7 @@ flowchart LR
 
 ## Configuration
 
-`[index]`, `[embedder]` and `[reranker]` are described key by key in [docingest's config README](../docingest/config/README.md#index-embedder-and-reranker-docingest-index). The factories read them from `AppConfig.model_extra` and validate them with the models in `settings.py`; unknown keys are errors. `[index] max_chunks_per_paper` has one default, `DEFAULT_MAX_CHUNKS_PER_PAPER` in `settings.py`. `candidates` and `contexts` are read by `docingest ask` itself, which may not import this package: `IndexSettings` inherits them (and their defaults) from `docingest.config.IndexConfig`, the small model docingest reads the same table with.
+`[index]`, `[embedder]` and `[reranker]` are described key by key in [docingest's config README](../docingest/config/README.md#index-embedder-and-reranker-docingest-index). The factories read them from `AppConfig.model_extra` and validate them with the models in `settings.py`; unknown keys are errors. `candidates`, `contexts` and `max_chunks_per_paper` are read by `docingest ask` itself, which may not import this package: `IndexSettings` inherits them (and their defaults, `DEFAULT_MAX_CHUNKS_PER_PAPER` among them) from `docingest.config.IndexConfig`, the small model docingest reads the same table with. `LocalIndex.search` does not apply `max_chunks_per_paper`: `ask` does, after reranking.
 
 ## Code map
 
@@ -149,7 +150,7 @@ No test needs a GPU or the network: the clients run over `httpx.MockTransport` (
 |---|---|
 | `test_contract.py` | docingest's retrieval contract (`tests/contract/test_retrieval_contract.py` of the docingest package, imported through `tests/conftest.py`) against the real embedder, index and reranker |
 | `test_embedder.py`, `test_reranker.py` | request bodies equal to the ones of the measured scripts, batching and order, normalization, retries, errors, keys |
-| `test_local_index.py` | layout, round trip, incremental add, change and remove, commit visibility, recovery after a crash, the write counter, a reader that stays open across another process's commit (one generation), `close()`, folder separation by fingerprint, RRF on a hand-checked example, English-only BM25 and the `keywords` override, the per-paper cap, blocks and depths, scores and records bit-identical to converting per question, the float32 copy made once per reader |
+| `test_local_index.py` | layout, round trip, incremental add, change and remove, commit visibility, recovery after a crash, the write counter, a reader that stays open across another process's commit (one generation), `close()`, folder separation by fingerprint, RRF on a hand-checked example, English-only BM25 and the `keywords` override, the index leaving the per-paper cap to `ask`, blocks and depths, scores and records bit-identical to converting per question, the float32 copy made once per reader |
 | `test_retrieval_oracle.py` | the fused top 50 equals a literal copy of the measured retrieval script |
 | `test_fusion.py`, `test_language.py`, `test_settings.py`, `test_factories.py` | the helpers, the config tables and the entry points |
 | `test_concurrent_build.py` | a second `IndexService.build` or `update` while the first is embedding fails with the busy error and sends no embedding request; the lock is free again afterwards |

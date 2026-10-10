@@ -126,17 +126,19 @@ class ArxivConfig(BaseModel):
     fetch_license: bool = True  # one extra OAI-PMH request per paper
 
 
-# Defaults of [index] candidates and contexts, the only place they are written down: the index
-# adapter's settings inherit them from IndexConfig.
+# Defaults of [index] candidates, contexts and max_chunks_per_paper, the only place they are
+# written down: the index adapter's settings inherit them from IndexConfig. 0 is no cap, which
+# is what the measured retrieval did.
 DEFAULT_CANDIDATES = 50
 DEFAULT_CONTEXTS = 10
+DEFAULT_MAX_CHUNKS_PER_PAPER = 0
 
 
 class IndexConfig(BaseModel):
     """The keys of the ``[index]`` table that ``ask`` itself reads.
 
     The table belongs to the index adapter (``docingest-index`` validates all of it and rejects
-    unknown keys), and docingest may not import that package, so this model reads the two
+    unknown keys), and docingest may not import that package, so this model reads the
     keys of the retrieval step and ignores the others. Read it with :func:`index_config`.
     """
 
@@ -144,6 +146,8 @@ class IndexConfig(BaseModel):
 
     candidates: int = Field(default=DEFAULT_CANDIDATES, ge=1)  # first-stage hits to rerank
     contexts: int = Field(default=DEFAULT_CONTEXTS, ge=1)  # chunks given to the answerer
+    # At most this many of the contexts from one paper, applied after reranking; 0: no cap.
+    max_chunks_per_paper: int = Field(default=DEFAULT_MAX_CHUNKS_PER_PAPER, ge=0)
 
 
 class AppConfig(BaseModel):
@@ -160,7 +164,7 @@ class AppConfig(BaseModel):
 
 
 def index_config(cfg: AppConfig) -> IndexConfig:
-    """``candidates`` and ``contexts`` of ``[index]``; the defaults when the table is absent."""
+    """The keys of ``[index]`` that ``ask`` reads; the defaults when the table is absent."""
     try:
         return IndexConfig.model_validate((cfg.model_extra or {}).get("index", {}))
     except ValidationError as e:

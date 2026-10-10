@@ -60,7 +60,6 @@ import shutil
 import time
 import uuid
 from bisect import bisect_right
-from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -286,18 +285,7 @@ class LocalIndex:
             ranked = rrf(dense, state.bm25_top(question, depth), n=depth)
         else:
             ranked = [(row, float(cosine[row])) for row in dense]
-        cap = self.settings.max_chunks_per_paper
-        taken: list[tuple[int, float]] = []
-        per_paper: Counter[str] = Counter()
-        for row, score in ranked:
-            if cap:
-                doc_id = state.doc_of(row)
-                if per_paper[doc_id] >= cap:
-                    continue
-                per_paper[doc_id] += 1
-            taken.append((row, score))
-            if len(taken) == k:
-                break
+        taken = ranked[:k]
         chunks = state.chunks([row for row, _ in taken])
         return [Hit(chunk, score) for chunk, (_, score) in zip(chunks, taken, strict=True)]
 

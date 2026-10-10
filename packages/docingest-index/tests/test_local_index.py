@@ -591,12 +591,9 @@ def test_at_most_k_hits_even_when_both_rankings_are_longer(tmp_path):
     assert len(index.search("zebra", unit(1, 1, 1, 1), 1000)) == 30
 
 
-def test_the_per_paper_cap_limits_chunks_per_paper_and_defaults_to_none(tmp_path):
-    def build(**settings):
-        index = make(
-            tmp_path / f"idx{len(settings)}{settings.get('max_chunks_per_paper', 0)}",
-            settings=settings,
-        )
+def test_the_index_does_not_cap_chunks_per_paper_ask_does_after_reranking(tmp_path):
+    def build(name, **settings):
+        index = make(tmp_path / name, settings=settings)
         for doc, base in ((DOC_A, 1.0), (DOC_B, 0.5)):
             chunks = [chunk(doc, f"passage {i}", start=i * 20) for i in range(4)]
             vectors = [unit(base, 1.0 - i * 0.1, 0, 0) for i in range(4)]
@@ -605,19 +602,10 @@ def test_the_per_paper_cap_limits_chunks_per_paper_and_defaults_to_none(tmp_path
         return index
 
     question, vector = "passage", unit(1, 1, 0, 0)
-    uncapped = build(bm25="never").search(question, vector, 8)
-    assert len(uncapped) == 8
-    capped = build(bm25="never", max_chunks_per_paper=2).search(question, vector, 8)
-    assert [ranking(capped).count(d) for d in (DOC_A, DOC_B)] == [2, 2]
-    # the cap keeps each paper's best chunks, in the order of the full ranking
-    seen: dict[str, int] = {}
-    expected = []
-    for hit in uncapped:
-        seen[hit.chunk.doc_id] = seen.get(hit.chunk.doc_id, 0) + 1
-        if seen[hit.chunk.doc_id] <= 2:
-            expected.append(hit.chunk)
-    assert [h.chunk for h in capped] == expected
-    assert len(build(bm25="never", max_chunks_per_paper=1).search(question, vector, 8)) == 2
+    plain = build("plain", bm25="never").search(question, vector, 8)
+    capped = build("capped", bm25="never", max_chunks_per_paper=2).search(question, vector, 8)
+    assert len(plain) == 8 and capped == plain  # the key is read by docingest, not applied here
+    assert IndexSettings(max_chunks_per_paper=2).max_chunks_per_paper == 2
     assert IndexSettings().max_chunks_per_paper == 0
 
 

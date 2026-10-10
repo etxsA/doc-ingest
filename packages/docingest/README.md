@@ -712,7 +712,7 @@ flowchart LR
     Q["question"] --> E["Embedder: embed the question once"]
     E --> S["ChunkIndex.search: dense, plus BM25 for English, top candidates (50)"]
     S --> R["Reranker: score the 50, stable sort"]
-    R --> C["first contexts (10)"]
+    R --> C["optional per-paper cap, first contexts (10)"]
     C --> P["PaperQA2: evidence summaries and cited answer, its own retrieval off"]
 ```
 
@@ -722,7 +722,7 @@ uv run docingest ask "What limits T1 in transmons?" -c config/examples/lab-serve
 uv run docingest ingest data/raw --index -c config/examples/lab-server.toml    # keep the index in step
 ```
 
-- `[index] candidates` (default 50) and `contexts` (default 10) set the two cuts. Reranker `none` means the first `contexts` of the first stage. The chunks go to PaperQA2 as they are, so the answer cites the same page ranges, and the corpus Markdown is not read for the question. PaperQA2's own retrieval is off, so the chunks are added without vectors and its local embedding model is not loaded.
+- `[index] candidates` (default 50) and `contexts` (default 10) set the two cuts. Reranker `none` means the first `contexts` of the first stage. `[index] max_chunks_per_paper` (default 0, no cap) limits how many of the `contexts` come from one paper; it is applied after reranking and before the cut to `contexts`, never to the first stage. The chunks go to PaperQA2 as they are, so the answer cites the same page ranges, and the corpus Markdown is not read for the question. PaperQA2's own retrieval is off, so the chunks are added without vectors and its local embedding model is not loaded.
 - `ask` checks the index first, from the last commit (`ChunkIndex.committed()` reads `search/ids.json` and lists the file names in `shards/`; unlike `index status` it opens no stored document), and says what to run: an index built for another embedder, an empty index, or one whose documents were never committed is an error that names `docingest index build`. Documents of the corpus that are not in the index, changes not yet committed, and chunks of papers that left the corpus are warnings; the question is still answered from the rest.
 - `--no-index` answers with PaperQA2's own retrieval even when an index is configured. `--bm25 english|always|never` overrides `[index] bm25` for one question. With `[adapters] index = "none"`, the default, `ask` behaves exactly as described under Corpus mode.
 - `ingest --index` and `crawl --index` (off by default) add the papers a run stored to the index and commit, without reading the rest of the corpus. The flag is checked before any work: without an index and an embedder in `[adapters]`, or with an index built for another embedder, the command stops first. If the index update fails after the papers were stored, they stay stored and the message says to run `docingest index build`.

@@ -7,7 +7,11 @@ two stages and handed over as ``contexts``:
 1. embed the question once, search the chunk index (dense, plus BM25 for English questions, as
    the index adapter is set up) for the top ``candidates``;
 2. rerank those with the cross-encoder, a stable sort by score, and keep the first ``contexts``.
-   With no reranker the first ``contexts`` of the first stage are kept as they are.
+   With no reranker the first ``contexts`` of the first stage are kept as they are. If
+   ``max_chunks_per_paper`` is set, the cap is applied here, to the reranked order and before the
+   cut to ``contexts``: each paper keeps its best chunks and the next papers' chunks move up.
+   Capping the first stage instead, before the reranker has judged the chunks, dropped gold
+   evidence in the measurements.
 
 The answerer then summarizes exactly those chunks and writes the cited answer.
 """
@@ -43,10 +47,15 @@ class Retrieval:
     # so on an index that was not pruned the reranker may see fewer.
     candidates: int
     contexts: int  # chunks handed to the answerer
+    # At most this many of the contexts from one paper, applied after reranking and before the
+    # cut to ``contexts``; 0 is no cap.
+    max_chunks_per_paper: int = 0
 
     def __post_init__(self) -> None:
         if self.candidates < 1 or self.contexts < 1:
             raise ValueError("candidates and contexts must be at least 1")
+        if self.max_chunks_per_paper < 0:
+            raise ValueError("max_chunks_per_paper must be at least 0")
 
 
 class AskService:
@@ -133,11 +142,25 @@ def retrieve(
         # stable by score: ties keep the first-stage order, as in the measured run
         order = sorted(range(len(chunks)), key=lambda i: (-scores[i], i))
         chunks = [chunks[i] for i in order]
-    top = chunks[: retrieval.contexts]
+    top = cap_per_paper(chunks, retrieval.max_chunks_per_paper)[: retrieval.contexts]
     seen: dict[str, StoredDocument] = {}
     for chunk in top:
         seen.setdefault(chunk.doc_id, by_id[chunk.doc_id])
     return top, list(seen.values())
+
+
+def cap_per_paper(chunks: list[Chunk], cap: int) -> list[Chunk]:
+    """``chunks`` without the ones beyond the first ``cap`` of each paper, in the same order.
+    ``cap`` 0 keeps everything."""
+    if not cap:
+        return chunks
+    kept: list[Chunk] = []
+    per_paper: dict[str, int] = {}
+    for chunk in chunks:
+        if per_paper.get(chunk.doc_id, 0) < cap:
+            per_paper[chunk.doc_id] = per_paper.get(chunk.doc_id, 0) + 1
+            kept.append(chunk)
+    return kept
 
 
 def _check_ready(

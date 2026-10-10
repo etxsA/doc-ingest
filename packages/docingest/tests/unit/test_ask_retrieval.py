@@ -5,8 +5,9 @@ import asyncio
 import pytest
 from fakes import FakeEmbedder, FakeIndex, FakeQA, FakeReranker, InMemoryStore, add_doc
 
-from docingest.application.ask import AskService, Retrieval
+from docingest.application.ask import AskService, Retrieval, cap_per_paper
 from docingest.application.index import IndexService
+from docingest.domain.chunking import Chunk
 from docingest.domain.errors import (
     DocingestError,
     IndexMismatchError,
@@ -67,8 +68,10 @@ def build_index(store, embedder=None):
     return embedder, index
 
 
-def service(store, qa, embedder, index, reranker=None, *, candidates=50, contexts=10):
-    retrieval = Retrieval(embedder, index, reranker, candidates, contexts)
+def service(
+    store, qa, embedder, index, reranker=None, *, candidates=50, contexts=10, max_chunks_per_paper=0
+):
+    retrieval = Retrieval(embedder, index, reranker, candidates, contexts, max_chunks_per_paper)
     return AskService(store=store, qa=qa, retrieval=lambda: retrieval)
 
 
@@ -231,10 +234,86 @@ def test_the_keyword_choice_reaches_the_index(store):
     assert index.keywords == ["never", None]
 
 
+# ------------------------------------------------------------------ the per-paper cap
+
+
+def test_the_cap_is_applied_after_reranking_and_before_the_cut_to_contexts(store):
+    embedder, index = build_index(store)
+    by_paper = {PAPER_B: 3.0, PAPER_A: 2.0, PAPER_C: 1.0}  # the reranker's order of the papers
+    owner = {
+        c.text: c.doc_id
+        for h in index.search("x", embedder.embed_query("x"), 99)
+        for c in [h.chunk]
+    }
+    assert sum(1 for d in owner.values() if d == PAPER_B) >= 5  # uncapped, B would fill the cut
+    reranker = ScriptedReranker(lambda text: by_paper[owner[text]])
+    qa = FakeQA()
+    ask(
+        service(
+            store, qa, embedder, index, reranker, candidates=50, contexts=5, max_chunks_per_paper=2
+        )
+    )
+    assert qa.contexts is not None
+    assert [c.doc_id for c in qa.contexts] == [PAPER_B] * 2 + [PAPER_A] * 2 + [PAPER_C]
+    # the reranker saw every candidate: nothing was capped before it
+    [(_, texts)] = reranker.asked
+    assert len(texts) == min(50, index.stats().chunks)
+    assert qa.seen == ["b.txt", "a.txt", "c.txt"]  # order of first appearance
+
+
+def test_a_cap_does_not_change_what_the_reranker_is_asked_to_score(store):
+    embedder, index = build_index(store)
+    asked = []
+    for cap in (0, 1):
+        reranker = ScriptedReranker(lambda text: 0.0)
+        ask(
+            service(
+                store, FakeQA(), embedder, index, reranker, candidates=12, max_chunks_per_paper=cap
+            )
+        )
+        asked.append(reranker.asked)
+    assert asked[0] == asked[1] and len(asked[0][0][1]) == 12
+
+
+def test_without_a_reranker_the_cap_works_on_the_first_stage_order_before_the_cut(store):
+    embedder, index = build_index(store)
+    question = "how do qubits decohere in the environment"
+    first_stage = [h.chunk for h in index.search(question, embedder.embed_query(question), 50)]
+    qa = FakeQA()
+    ask(service(store, qa, embedder, index, None, contexts=3, max_chunks_per_paper=1), question)
+    assert qa.contexts == cap_per_paper(first_stage, 1)[:3]
+    assert qa.contexts is not None and len({c.doc_id for c in qa.contexts}) == 3
+
+
+def test_a_cap_that_leaves_fewer_chunks_than_contexts_gives_what_there_is(store):
+    embedder, index = build_index(store)
+    qa = FakeQA()
+    ask(service(store, qa, embedder, index, None, contexts=10, max_chunks_per_paper=1))
+    assert qa.contexts is not None and len(qa.contexts) == 3  # one per paper
+
+
+def test_cap_per_paper_keeps_each_papers_first_chunks_in_order():
+    def chunk(doc, n):
+        return Chunk(doc * 64, f"{doc} pages {n}-{n}", f"text {doc}{n}", n, n)
+
+    chunks = [chunk(d, n) for d, n in zip("ababaab", range(1, 8), strict=True)]
+    assert cap_per_paper(chunks, 0) is chunks
+    assert [c.text for c in cap_per_paper(chunks, 2)] == [
+        "text a1",
+        "text b2",
+        "text a3",
+        "text b4",
+    ]
+    assert [c.text for c in cap_per_paper(chunks, 1)] == ["text a1", "text b2"]
+    assert cap_per_paper([], 3) == []
+
+
 def test_a_retrieval_needs_at_least_one_candidate_and_one_context():
     for kw in ({"candidates": 0, "contexts": 1}, {"candidates": 1, "contexts": 0}):
         with pytest.raises(ValueError, match="at least 1"):
             Retrieval(FakeEmbedder(), FakeIndex(), None, **kw)
+    with pytest.raises(ValueError, match="max_chunks_per_paper"):
+        Retrieval(FakeEmbedder(), FakeIndex(), None, 5, 2, max_chunks_per_paper=-1)
 
 
 # ------------------------------------------------------------------ what the index cannot answer

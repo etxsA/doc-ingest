@@ -1,5 +1,5 @@
 import pytest
-from docingest.config import AppConfig
+from docingest.config import DEFAULT_MAX_CHUNKS_PER_PAPER, AppConfig
 
 from docingest_index import settings as s
 
@@ -12,7 +12,7 @@ def test_the_defaults_are_the_measured_configuration():
         10,
         "english",
     )
-    assert index.max_chunks_per_paper == s.DEFAULT_MAX_CHUNKS_PER_PAPER == 0
+    assert index.max_chunks_per_paper == DEFAULT_MAX_CHUNKS_PER_PAPER == 0
     embedder = s.EmbedderSettings()
     assert (embedder.model, embedder.revision) == (
         "Qwen/Qwen3-Embedding-4B",
