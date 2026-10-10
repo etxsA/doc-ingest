@@ -90,9 +90,11 @@ class IndexService:
 
     def build(self, *, prune: bool = True) -> BuildReport:
         """Embed the new and changed documents, drop the ones that left the corpus (unless
-        ``prune`` is false) and commit. Safe to interrupt and run again: what was embedded
-        before stays. The index is closed on the way out, also when an error stops the run,
-        so a retry in the same process is not locked out by the failed one."""
+        ``prune`` is false) and commit. The index's write lock is taken before anything is
+        embedded, so a second build fails at once instead of embedding the same papers. Safe to
+        interrupt and run again: what was embedded before stays. The index is closed on the way
+        out, also when an error stops the run, so a retry in the same process is not locked out
+        by the failed one."""
         self.check_embedder()
         started = time.perf_counter()
         documents, warnings = self.store.corpus()
@@ -100,6 +102,7 @@ class IndexService:
             raise RuntimeError("no ingested documents; run `docingest ingest` first")
         report = BuildReport(warnings=list(warnings))
         try:
+            self.index.begin_write()  # a second build fails now, not after embedding everything
             indexed = self.index.keys()
             self._add(documents, indexed, report)
             if prune:
@@ -121,13 +124,15 @@ class IndexService:
 
         What is indexed for each document is the version the corpus serves (and ``ask``
         cuts), not necessarily the one given: a partial or forced-OCR run is stored as a
-        variant beside a complete canonical result, which stays the one served."""
+        variant beside a complete canonical result, which stays the one served. Like ``build``
+        it takes the write lock first."""
         self.check_embedder()
         served = {d.manifest.doc_id: d for d in self.store.corpus()[0]}  # manifests only
         documents = [served[d.manifest.doc_id] for d in documents if d.manifest.doc_id in served]
         started = time.perf_counter()
         report = BuildReport()
         try:
+            self.index.begin_write()
             self._add(documents, self.index.keys(), report)
             self._commit(report)
         finally:

@@ -37,6 +37,9 @@ class NoIndex:
     def keys(self) -> dict[str, str]:
         _not_configured("index")
 
+    def begin_write(self) -> None:
+        _not_configured("index")
+
     def upsert(
         self, doc_id: str, key: str, chunks: Sequence[Chunk], vectors: Sequence[Vector]
     ) -> None:

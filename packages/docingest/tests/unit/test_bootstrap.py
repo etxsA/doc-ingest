@@ -139,6 +139,7 @@ def test_the_none_adapters_refuse_to_work_and_name_the_setting(cfg):
         ],
         "index": [
             lambda a: a.keys(),
+            lambda a: a.begin_write(),
             lambda a: a.upsert("d", "k", [chunk], [[0.0]]),
             lambda a: a.remove("d"),
             lambda a: a.commit(),

@@ -22,7 +22,8 @@ commit meanwhile; ``ids.json`` names the commit's generation, so an open that a 
 interrupts is noticed and starts over.
 
 Writing. A write (``upsert``, ``remove``, ``commit``) takes an exclusive lock on ``.lock``
-and holds it until ``commit`` returns or ``close`` is called; a second writer fails at once
+and holds it until ``commit`` returns or ``close`` is called; ``begin_write`` takes it without
+writing, which ``IndexService`` does before it embeds anything. A second writer fails at once
 with ``IndexBusyError`` (readers are not locked). Under the lock the first write cleans up
 what an interrupted writer left: temporary files, vectors without chunks, the older of two
 shards of one paper (the one with the smaller write counter ``seq`` in its header). A shard
@@ -156,6 +157,9 @@ class LocalIndex:
 
     def keys(self) -> dict[str, str]:
         return {doc_id: shard.key for doc_id, shard in self._shards().items()}
+
+    def begin_write(self) -> None:
+        self._writer()
 
     def upsert(
         self, doc_id: str, key: str, chunks: Sequence[Chunk], vectors: Sequence[Vector]

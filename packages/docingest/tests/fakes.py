@@ -315,6 +315,7 @@ class FakeIndex:
         self.committed_at: str | None = None
         self.closed = 0  # how many times close() was called
         self.committed_calls = 0
+        self.begun = 0  # how many times begin_write() was called
         self.full_scans = 0  # keys() and stats() calls: what the check before a question avoids
         self.keywords: list[str | None] = []  # the ``keywords`` argument of each search
         self._committed: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
@@ -323,6 +324,9 @@ class FakeIndex:
     def keys(self) -> dict[str, str]:
         self.full_scans += 1
         return {doc_id: key for doc_id, (key, _, _) in self._staged.items()}
+
+    def begin_write(self) -> None:
+        self.begun += 1
 
     def upsert(
         self, doc_id: str, key: str, chunks: Sequence[Chunk], vectors: Sequence[Vector]

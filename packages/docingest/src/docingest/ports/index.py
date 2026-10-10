@@ -54,6 +54,12 @@ class ChunkIndex(Protocol):
         It reflects every ``upsert`` and ``remove``, committed or not."""
         ...
 
+    def begin_write(self) -> None:
+        """Take the write lock now, if the adapter has one, instead of at the first write. A
+        second writer then fails here, before it embeds anything. Held until ``commit`` or
+        ``close``; a no-op for an adapter without a lock or when this object already holds it."""
+        ...
+
     def upsert(
         self, doc_id: str, key: str, chunks: Sequence[Chunk], vectors: Sequence[Vector]
     ) -> None:

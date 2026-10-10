@@ -4,7 +4,7 @@ Ports are the interfaces the application layer depends on. Adapters implement th
 
 - `isinstance(obj, SomePort)` works for every port, but it only checks that the members exist, not their signatures. Pyright (`uv run pyright`) checks signatures only where an object is statically typed as the port. The `bootstrap` factories return `Any`, so built-in adapters are not checked that way (the benchmark suites are, through the `BenchmarkSuite` return type of `build_suite()` in `entrypoints/bench_cli.py`). To get the check for your adapter, assign an instance to a variable annotated with the port, for example `engine: OcrEngine = MyOcr(...)`.
 - Ports import only `docingest.domain`, each other, the standard library and, as the one third-party type, `PIL.Image.Image` for images ([ADR 0001](../../../docs/adr/0001-hexagonal-architecture.md)). The import-linter contract "Application depends on ports, not on concrete libraries" forbids them to import concrete libraries such as pypdfium2, mlx, paperqa, docling or pypandoc.
-- **The three retrieval ports (`Embedder`, `ChunkIndex`, `Reranker`) are unstable until the first release.** Their members still change between pull requests (`close()`, the `keywords` argument of `search` and `committed()` were added after `stats()` and `embedder_fingerprint`), so a plugin written against an earlier revision needs updating. The other ports are not affected.
+- **The three retrieval ports (`Embedder`, `ChunkIndex`, `Reranker`) are unstable until the first release.** Their members still change between pull requests (`close()`, the `keywords` argument of `search`, `committed()` and `begin_write()` were added after `stats()` and `embedder_fingerprint`), so a plugin written against an earlier revision needs updating. The other ports are not affected.
 - Everything is re-exported from the package: `from docingest.ports import OcrEngine, OcrResult, DocumentStore, ...`.
 
 Related reading: [package map](../README.md), [domain types](../domain/README.md), [application services](../application/README.md), [adapters](../adapters/README.md), [OCR adapters](../adapters/ocr/README.md), [converters](../adapters/converters/README.md).
@@ -559,6 +559,8 @@ class ChunkIndex(Protocol):
 
     def keys(self) -> dict[str, str]: ...
 
+    def begin_write(self) -> None: ...
+
     def upsert(
         self, doc_id: str, key: str, chunks: Sequence[Chunk], vectors: Sequence[Vector]
     ) -> None: ...
@@ -581,6 +583,7 @@ class ChunkIndex(Protocol):
 Contract:
 
 - Documents are identified by `doc_id`. `keys()` returns `{doc_id: key}` for everything indexed. The `key` is chosen by the caller, for example a hash of the text the chunks were cut from: a caller skips a document whose key has not changed, so a changed document is re-embedded and an unchanged one is not.
+- `begin_write()` takes the write lock now, if the adapter has one, instead of at the first write, so a second writer fails here and not after it has embedded its documents (`IndexService.build` and `update` call it first). It is held until `commit` or `close`, and it is a no-op when this object already holds the lock or the adapter has none. After it the object must accept `upsert`, `remove` and `commit` as usual, and `close()` must release the lock again.
 - `upsert` replaces everything indexed for `doc_id` with `chunks` and their `vectors` (one vector per chunk, otherwise `ValueError`); `remove` forgets a document and ignores unknown ids. Chunks must come back from `search` unchanged in every field.
 - After `commit`, `search` reflects exactly what `keys()` reports: every `upsert` and `remove` since the last commit, and also documents an earlier process stored but never committed (an adapter that writes at `upsert` time can be interrupted before the call). Until then `search` answers from the last committed state, and `keys()` already reflects the changes. An adapter that keeps a search layer apart from its stored chunks (a dense matrix, a keyword index) rebuilds it in `commit`, once per batch instead of once per document. A service that changes the index must call it.
 - `close()` releases what the index holds (the write lock and open files of an adapter that has them). It is safe at any time and more than once, `commit` already does it, and the index stays usable: the next call takes again what it needs. A caller that may stop between two writes, or that opened the index only to read, calls it in a `finally` (`IndexService` and `AskService` do), so a failed run does not keep the next one out until the object is collected.

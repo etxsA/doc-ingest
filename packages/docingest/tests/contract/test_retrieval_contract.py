@@ -241,6 +241,20 @@ def test_pending_tells_changes_that_counts_cannot(index, embedder):
     assert index.stats().pending is False
 
 
+def test_begin_write_is_reentrant_and_released_by_close_and_commit(index, embedder):
+    index.begin_write()
+    index.begin_write()  # this object already holds the lock: a no-op
+    fill(index, embedder)  # upserts and a commit under the lock taken first
+    assert index.stats().searchable_documents == 2
+    index.begin_write()
+    index.close()  # giving up releases it
+    index.begin_write()
+    index.commit()  # a commit releases it too
+    index.begin_write()
+    index.close()
+    assert index.stats().searchable_documents == 2
+
+
 def test_committed_agrees_with_stats_and_keys_in_every_state(index, embedder):
     def check(documents, pending):
         state, stats = index.committed(), index.stats()
