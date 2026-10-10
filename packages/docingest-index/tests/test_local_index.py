@@ -643,6 +643,88 @@ def test_a_large_index_matches_a_brute_force_search_across_blocks(tmp_path, monk
     assert len(index.search("q", query.tolist(), 1000)) == total
 
 
+def reference_scores(folder, query):
+    """The dense scores as the first version computed them: the float16 matrix converted
+    block by block for every question."""
+    dense = np.load(folder / "search" / "dense.npy", mmap_mode="r")
+    scores = np.empty(len(dense), dtype=np.float32)
+    for lo in range(0, len(dense), local.BLOCK_ROWS):
+        scores[lo : lo + local.BLOCK_ROWS] = (
+            dense[lo : lo + local.BLOCK_ROWS].astype(np.float32) @ query
+        )
+    return scores
+
+
+def reference_record(folder, row):
+    """A chunk record as the first version read it: one seek and one readline per record."""
+    offsets = np.load(folder / "search" / "chunks.offsets.npy")
+    with (folder / "search" / "chunks.jsonl").open("rb") as f:
+        f.seek(int(offsets[row]))
+        return json.loads(f.readline())
+
+
+def test_scores_and_records_are_bit_identical_to_the_per_question_conversion(tmp_path, monkeypatch):
+    monkeypatch.setattr(local, "BLOCK_ROWS", 7)
+    rng = np.random.default_rng(11)
+    dims = 96
+    index = make(tmp_path / "idx", settings={"bm25": "never"})
+    total = 300
+    vectors = rng.normal(size=(total, dims)).astype(np.float32)
+    for n in range(0, total, 25):
+        doc = hashlib.sha256(f"id{n}".encode()).hexdigest()
+        chunks = [chunk(doc, f"text {n + i} éü", n=i + 1, start=i * 50) for i in range(25)]
+        index.upsert(doc, "k", chunks, vectors[n : n + 25].tolist())
+    index.commit()
+    reader = make(tmp_path / "idx", settings={"bm25": "never"})
+    for _ in range(3):  # the copy made by the first question serves the next ones
+        query = rng.normal(size=dims).astype(np.float32)
+        query /= np.linalg.norm(query)
+        state = reader._open_search()
+        assert state is not None
+        top, scores = state.dense_top(query, 100)
+        expected = reference_scores(index.folder, query)
+        assert scores.tobytes() == expected.tobytes()
+        assert top == [int(r) for r in np.argsort(-expected, kind="stable")[:100]]
+        hits = reader.search("q", query.tolist(), 40)
+        for hit, row in zip(hits, top, strict=False):
+            record = reference_record(index.folder, row)
+            assert hit.score == float(expected[row])
+            assert (hit.chunk.name, hit.chunk.text, hit.chunk.is_reference) == (
+                record["name"],
+                record["text"],
+                record["is_reference"],
+            )
+            assert [hit.chunk.first_page, hit.chunk.last_page] == record["pages"]
+            assert hit.chunk.start == record["span"][0]
+
+
+def test_chunk_records_come_back_in_the_order_asked_and_may_repeat(tmp_path):
+    index = make(tmp_path / "idx")
+    zebra_corpus(index)
+    state = index._open_search()
+    assert state is not None
+    asked = [2, 0, 1, 0]
+    assert [c.text for c in state.chunks(asked)] == [
+        reference_record(index.folder, row)["text"] for row in asked
+    ]
+    assert state.chunks([]) == []
+
+
+def test_the_float32_copy_is_made_once_per_open_reader_and_dropped_on_close(tmp_path):
+    index = make(tmp_path / "idx")
+    zebra_corpus(index)
+    state = index._open_search()
+    assert state is not None and state._dense32 is None  # not made by opening
+    index.search("zebra", unit(0, 1, 0, 0), 2)
+    copy = state._dense32
+    assert copy is not None and copy.dtype == np.float32
+    assert copy.nbytes == 2 * state.dense.nbytes  # type: ignore[union-attr]
+    index.search("alpha", unit(1, 0, 0, 0), 2)
+    assert state._dense32 is copy
+    index.close()
+    assert state._dense32 is None
+
+
 def test_two_documents_whose_ids_start_alike_do_not_overwrite_each_other(tmp_path):
     index = make(tmp_path / "idx")
     one, two = "f" * 16 + "1" * 48, "f" * 16 + "2" * 48

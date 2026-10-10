@@ -87,7 +87,7 @@ flowchart LR
 
 `LocalIndex.search` is the part up to the candidates. The reranker call and the final sort are done by the caller (`AskService.retrieve` in docingest); scores come back in input order and ties keep the first-stage order. These are the formulas of the measured end-to-end retrieval, and `tests/test_retrieval_oracle.py` compares them with a literal copy of that script:
 
-- Dense: vectors are unit length, so the score is a dot product; computed in float32 over float16 storage, in blocks of 16,384 rows. Ranking by `argpartition` and a stable sort.
+- Dense: vectors are unit length, so the score is a dot product; computed in float32 over float16 storage, in blocks of 16,384 rows. The float16 matrix is converted to float32 once, at the reader's first dense search, and the copy stays in memory until `close()` or a new object; the products, and so the scores, are the same as converting block by block for every question. Ranking by `argpartition` and a stable sort. The chunk records of the hits are cut from the memory-mapped `chunks.jsonl` in file order instead of one seek and read per record.
 - BM25: the question reduced to lowercased ASCII letters and digits, parsed by tantivy as an OR query over a field tokenized with `en_stem`. A question with none of those characters has no keyword part.
 - Fusion: an item scores the sum of `1 / (60 + rank)` over the rankings that contain it (rank from 1); ties keep the order of first appearance, dense first.
 - Whether a question is English is decided from its function words (`language.py`); `bm25 = "always"` skips the test.
@@ -148,7 +148,7 @@ No test needs a GPU or the network: the clients run over `httpx.MockTransport` (
 |---|---|
 | `test_contract.py` | docingest's retrieval contract (`tests/contract/test_retrieval_contract.py` of the docingest package, imported through `tests/conftest.py`) against the real embedder, index and reranker |
 | `test_embedder.py`, `test_reranker.py` | request bodies equal to the ones of the measured scripts, batching and order, normalization, retries, errors, keys |
-| `test_local_index.py` | layout, round trip, incremental add, change and remove, commit visibility, recovery after a crash, the write counter, a reader that stays open across another process's commit (one generation), `close()`, folder separation by fingerprint, RRF on a hand-checked example, English-only BM25 and the `keywords` override, the per-paper cap, blocks and depths |
+| `test_local_index.py` | layout, round trip, incremental add, change and remove, commit visibility, recovery after a crash, the write counter, a reader that stays open across another process's commit (one generation), `close()`, folder separation by fingerprint, RRF on a hand-checked example, English-only BM25 and the `keywords` override, the per-paper cap, blocks and depths, scores and records bit-identical to converting per question, the float32 copy made once per reader |
 | `test_retrieval_oracle.py` | the fused top 50 equals a literal copy of the measured retrieval script |
 | `test_fusion.py`, `test_language.py`, `test_settings.py`, `test_factories.py` | the helpers, the config tables and the entry points |
 | `test_cli_end_to_end.py` | `docingest index build`, `status` and `remove` through the real CLI, store, entry points, client and index; `ask` through the real embedder, index and reranker (scripted servers) with a fake answerer; a build that fails between two papers does not lock a retry |
@@ -158,7 +158,7 @@ CI runs the same gates on Linux (core and dev dependencies) and macOS (everythin
 
 ## Limits
 
-- Exact search holds the dense matrix on disk and scores it in blocks: fine to roughly 10,000 papers (about 100,000 chunks of 2,560 dimensions, 0.5 GB). Beyond that, approximate search is a separate decision.
+- Exact search keeps the dense matrix as a float16 file and, in an open reader, as a float32 copy in memory, twice the size of the file (4 bytes per dimension per chunk, plus the pages of the mapped file the operating system keeps in its cache). It is fine to roughly 10,000 papers (about 100,000 chunks of 2,560 dimensions: 0.5 GB on disk, 1 GB for the copy). Beyond that, approximate search is a separate decision.
 - One process writes to an index folder at a time (enforced by the lock); readers can run alongside because `search` reads only the committed `search/` folder. The lock is an `flock` on a local file: use a local disk, not a network share.
 - The English test is a function-word count, not a language identifier.
 - BM25 ties are broken by tantivy's document order; the index is written with one thread so that order is the same in every build.
