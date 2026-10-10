@@ -146,6 +146,76 @@ def test_every_request_carries_the_temperature(mock_llm, llm_calls, spy_evidence
     assert {call["temperature"] for call in llm_calls} == {temperature}
 
 
+@pytest.fixture
+def pinned_embedder(monkeypatch):
+    """The default config (the pinned MiniLM); every construction of an embedder is counted
+    and returns a sparse one, so nothing is downloaded or loaded."""
+    from paperqa import Settings, SparseEmbeddingModel
+
+    built = []
+
+    def get_embedding_model(self):
+        built.append(self.embedding)
+        return SparseEmbeddingModel()
+
+    monkeypatch.setattr(Settings, "get_embedding_model", get_embedding_model)
+    monkeypatch.setattr(paperqa, "embedding_path", lambda cfg: "pinned-minilm")
+    monkeypatch.setattr(PaperQAAnswerer, "_splitter", lambda self: None)  # needs the tokenizer
+    return built
+
+
+def test_given_contexts_never_build_the_embedder(mock_llm, spy_evidence, pinned_embedder):
+    cfg = AppConfig.model_validate({"qa": {"llm": "openai/mock"}})  # default embedder
+    a = stored("a")
+    contexts = [
+        *chunks_of(a.manifest.doc_id, {1: "Attention is a softmax."}),
+        *chunks_of(a.manifest.doc_id, {2: "Heads run in parallel."}),
+    ]
+    answer = asyncio.run(
+        PaperQAAnswerer(cfg).ask("What is attention?", [(a, "")], print, contexts=contexts)
+    )
+    assert pinned_embedder == []
+    [(texts, _docs, retrieval)] = spy_evidence
+    assert retrieval is False
+    assert all(t.embedding is None for t in texts)
+    assert answer.startswith("Question: What is attention?")
+
+
+def test_contexts_answer_is_the_same_with_or_without_vectors(mock_llm, qa_cfg):
+    a, b = stored("a"), stored("b")
+    contexts = [
+        *chunks_of(a.manifest.doc_id, {1: "Attention is a softmax over scaled dot products."}),
+        *chunks_of(b.manifest.doc_id, {1: "A second paper."}),
+    ]
+    documents = [(a, ""), (b, "")]
+    answer = asyncio.run(PaperQAAnswerer(qa_cfg).ask("What?", documents, print, contexts=contexts))
+
+    class WithVectors(PaperQAAnswerer):
+        """The previous behaviour: the given texts are embedded as they are added."""
+
+        async def _docs_from_contexts(self, contexts, documents, settings):
+            from paperqa import SparseEmbeddingModel
+
+            docs = await super()._docs_from_contexts(contexts, documents, settings)
+            vectors = await SparseEmbeddingModel().embed_documents([t.text for t in docs.texts])
+            for text, vector in zip(docs.texts, vectors, strict=True):
+                text.embedding = vector
+            return docs
+
+    with_vectors = asyncio.run(
+        WithVectors(qa_cfg).ask("What?", documents, print, contexts=contexts)
+    )
+    assert answer == with_vectors
+
+
+def test_without_contexts_the_embedder_is_built_once(mock_llm, pinned_embedder):
+    cfg = AppConfig.model_validate({"qa": {"llm": "openai/mock"}})
+    a = stored("a")
+    markdown = "<!-- page 1 | method=text_layer -->\nAttention is a softmax.\n\n"
+    asyncio.run(PaperQAAnswerer(cfg).ask("What is attention?", [(a, markdown)], print))
+    assert pinned_embedder == ["st-pinned-minilm"]
+
+
 def test_no_contexts_is_not_an_empty_corpus(qa_cfg):
     with pytest.raises(ValueError, match="contexts is empty"):
         asyncio.run(PaperQAAnswerer(qa_cfg).ask("q?", [(stored("a"), "")], print, contexts=[]))

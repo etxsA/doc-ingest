@@ -184,7 +184,7 @@ uv run docingest ask "What limits T1 in transmons?" -c "$CONFIG"
 
 Before the answer you may also see lines that are harmless:
 
-- a `Loading weights` progress bar: the small CPU embedding model (`sentence-transformers/all-MiniLM-L6-v2`) that PaperQA2 builds even in index mode. It is fetched into `HF_HOME` the first time; `uv run docingest model-path embedding` fetches it ahead of time.
+- a `Loading weights` progress bar: the small CPU embedding model (`sentence-transformers/all-MiniLM-L6-v2`) of PaperQA2. Only `ask` without an index (or with `--no-index`) loads it; with the index, PaperQA2 gets the chunks as given and embeds nothing. It is fetched into `HF_HOME` the first time; `uv run docingest model-path embedding` fetches it ahead of time.
 - about a dozen lines `Failed to calculate cost for qwen-local`: litellm has no price for a local model.
 - on a driver that supports only CUDA 12 (such as 535), a torch `CUDA initialization: The NVIDIA driver on your system is too old` warning. The workspace's torch is a CUDA 13 build, and `ask` runs it on the CPU only. It is not related to the vLLM install.
 
@@ -223,8 +223,8 @@ Each row says what it was measured with. The first block is the servers, the sec
 | `index build`, nothing changed | 0.2 s printed, 0.90 s with start-up | same corpus |
 | `index build`, small corpus | 8.3 s printed, 9.4 s with start-up | 5 papers, 388 chunks |
 | `crawl --limit 5` with ingest | 32 s | 5 LaTeX sources, the 3 s spacing between requests included |
-| `ask`, the first question after the servers started | 52 s | 5 papers; includes loading the small MiniLM model |
-| `ask`, later questions | 30 to 35 s | 5 papers; about 7 s of it is program start-up |
+| `ask`, the first question after the servers started | 52 s | 5 papers; includes loading the small MiniLM model (measured before the index path stopped loading it) |
+| `ask`, later questions | 30 to 35 s | 5 papers; about 7 s of it is program start-up (measured before the index path stopped loading the small MiniLM model) |
 | One question inside the evaluation harness | 18.5 s and 21.2 s (medians) | another corpus (QASPER) and the 9,404-chunk corpus; no CLI start-up, so not comparable with the rows above |
 
 The times of the commands depend on the papers and, for `crawl`, on arXiv.
