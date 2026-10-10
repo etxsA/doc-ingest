@@ -1,10 +1,12 @@
-"""``[index] candidates`` and ``contexts``, read by docingest without the index adapter."""
+"""``[index] candidates``, ``contexts`` and ``max_chunks_per_paper``, read by docingest without
+the index adapter."""
 
 import pytest
 
 from docingest.config import (
     DEFAULT_CANDIDATES,
     DEFAULT_CONTEXTS,
+    DEFAULT_MAX_CHUNKS_PER_PAPER,
     AppConfig,
     IndexConfig,
     index_config,
@@ -13,11 +15,13 @@ from docingest.domain.errors import DocingestError, InvalidConfigError
 
 
 def test_the_defaults_are_the_measured_ones_and_an_absent_table_uses_them():
-    assert (DEFAULT_CANDIDATES, DEFAULT_CONTEXTS) == (50, 10)
-    assert index_config(AppConfig()) == IndexConfig(candidates=50, contexts=10)
+    assert (DEFAULT_CANDIDATES, DEFAULT_CONTEXTS, DEFAULT_MAX_CHUNKS_PER_PAPER) == (50, 10, 0)
+    assert index_config(AppConfig()) == IndexConfig(
+        candidates=50, contexts=10, max_chunks_per_paper=0
+    )
 
 
-def test_it_reads_its_two_keys_and_ignores_the_ones_that_belong_to_the_index_adapter():
+def test_it_reads_its_three_keys_and_ignores_the_ones_that_belong_to_the_index_adapter():
     cfg = AppConfig.model_validate(
         {
             "index": {
@@ -30,7 +34,7 @@ def test_it_reads_its_two_keys_and_ignores_the_ones_that_belong_to_the_index_ada
             }
         }
     )
-    assert index_config(cfg) == IndexConfig(candidates=30, contexts=5)
+    assert index_config(cfg) == IndexConfig(candidates=30, contexts=5, max_chunks_per_paper=3)
     assert cfg.model_extra is not None and cfg.model_extra["index"]["bm25"] == "never"
 
 
@@ -44,6 +48,7 @@ def test_one_key_alone_keeps_the_default_of_the_other():
         ({"candidates": 0}, r"\[index\] candidates"),
         ({"contexts": -1}, r"\[index\] contexts"),
         ({"candidates": "many"}, r"\[index\] candidates"),
+        ({"max_chunks_per_paper": -1}, r"\[index\] max_chunks_per_paper"),
     ],
 )
 def test_a_bad_value_names_the_table_and_the_key(table, message):

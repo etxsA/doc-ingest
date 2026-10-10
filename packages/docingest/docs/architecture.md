@@ -339,11 +339,13 @@ classDiagram
         +str fingerprint
         +str embedder_fingerprint
         +keys() dict
+        +begin_write()
         +upsert(doc_id, key, chunks, vectors)
         +remove(doc_id)
         +commit()
         +close()
         +stats() IndexStats
+        +committed() CommittedState
         +search(question, vector, k, keywords) list~Hit~
     }
     class Reranker {

@@ -33,7 +33,7 @@ case.
 |---|---|---|---|
 | `ingest.py` | `IngestService`, `IngestOptions`, `PIPELINE_VERSION`, `SIDECAR_SUFFIX`, `sha256_file`, `read_sidecar`, `retitle_markdown`, `Log` | Turn one file (PDF, image, office, LaTeX, text) into Markdown plus a `DocumentManifest`, with a content-addressed cache | `bootstrap.Container.ingest`, `docingest ingest`, `docingest eval-ocr`, the PaperQA2 hook, `CrawlService` |
 | `crawl.py` | `CrawlService`, `CrawlReport` | Search a remote source, download each record, write a metadata sidecar, ingest it | `bootstrap.Container.crawl`, `docingest crawl` |
-| `ask.py` | `AskService`, `Retrieval`, `retrieve` | Answer a question over every stored document, or from the chunk index when one is configured | `bootstrap.Container.ask`, `docingest ask` |
+| `ask.py` | `AskService`, `Retrieval`, `retrieve`, `cap_per_paper` | Answer a question over every stored document, or from the chunk index when one is configured | `bootstrap.Container.ask`, `docingest ask` |
 | `index.py` | `IndexService`, `IndexStatus`, `BuildReport`, `content_key`, `BATCH_CHUNKS` | Chunk every stored document like `ask` does, embed the new and changed ones, drop the vanished ones, and report the state of the index | `bootstrap.Container.index_service`, `docingest index` |
 | `benchmark.py` | `BenchmarkRunner`, `CandidateRun`, `RunMismatchError`, `score_run`, `needs_scoring`, `load_scores`, `rank`, `compare`, `throughput`, `build_summary`, `render_report`, `write_report`, `read_manifest`, `read_telemetry`, `telemetry_path`, `telemetry_stamp`, `latest_by_sample`, `machine_info`, `library_versions` | Transcribe benchmark samples with each OCR candidate (resumable), record telemetry, score, and write `summary.json` and `report.md` | `docingest bench run`, `bench score`, `bench report` (in `entrypoints/bench_cli.py`); `scripts/bench_docs.py` reads `load_scores` and `compare` |
 | `metrics.py` | `score`, `normalize`, `plain_text`, `latex_to_text`, `word_f1`, `char3_f1`, `running_lines`, `strip_furniture`, `bootstrap_ci`, `FURNITURE_ZONE` | Format-neutral text comparison: CER, WER, word F1, character 3-gram F1 | the synthetic benchmark suite, `docingest eval-ocr` |
@@ -137,6 +137,7 @@ classDiagram
         +Reranker reranker
         +int candidates
         +int contexts
+        +int max_chunks_per_paper
     }
     class CandidateRun {
         +str suite
@@ -184,7 +185,7 @@ from the adapter names selected in `[adapters]` of `config/pipeline.toml` (see
 |---|---|---|
 | `Container.ingest` | `IngestService` | `detector`, `pdf`, `ocr`, `images`, the office / latex / text converters (built lazily, only when a document of that kind arrives), `store`, and `cfg.routing` as `policy` |
 | `Container.crawl` | `CrawlService` | `crawler`, `ingest=lambda: self.ingest` (so `--no-ingest` never builds the OCR engine), `raw_dir=Path(cfg.raw_dir) / "arxiv"` (default `data/raw/arxiv`) |
-| `Container.ask` | `AskService` | `store`, `qa`, and when `[adapters] index` is set a `retrieval` callable that builds a `Retrieval` (`embedder`, `index`, `reranker` or none, `candidates` and `contexts` from `index_config(cfg)`) on the first question that uses the index |
+| `Container.ask` | `AskService` | `store`, `qa`, and when `[adapters] index` is set a `retrieval` callable that builds a `Retrieval` (`embedder`, `index`, `reranker` or none, `candidates`, `contexts` and `max_chunks_per_paper` from `index_config(cfg)`) on the first question that uses the index |
 
 All three are `cached_property`, so one `Container` builds each service once and shares
 the adapters between them. Building `IngestService` builds the OCR adapter, which is

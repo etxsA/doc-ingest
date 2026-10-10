@@ -591,12 +591,9 @@ def test_at_most_k_hits_even_when_both_rankings_are_longer(tmp_path):
     assert len(index.search("zebra", unit(1, 1, 1, 1), 1000)) == 30
 
 
-def test_the_per_paper_cap_limits_chunks_per_paper_and_defaults_to_none(tmp_path):
-    def build(**settings):
-        index = make(
-            tmp_path / f"idx{len(settings)}{settings.get('max_chunks_per_paper', 0)}",
-            settings=settings,
-        )
+def test_the_index_does_not_cap_chunks_per_paper_ask_does_after_reranking(tmp_path):
+    def build(name, **settings):
+        index = make(tmp_path / name, settings=settings)
         for doc, base in ((DOC_A, 1.0), (DOC_B, 0.5)):
             chunks = [chunk(doc, f"passage {i}", start=i * 20) for i in range(4)]
             vectors = [unit(base, 1.0 - i * 0.1, 0, 0) for i in range(4)]
@@ -605,19 +602,10 @@ def test_the_per_paper_cap_limits_chunks_per_paper_and_defaults_to_none(tmp_path
         return index
 
     question, vector = "passage", unit(1, 1, 0, 0)
-    uncapped = build(bm25="never").search(question, vector, 8)
-    assert len(uncapped) == 8
-    capped = build(bm25="never", max_chunks_per_paper=2).search(question, vector, 8)
-    assert [ranking(capped).count(d) for d in (DOC_A, DOC_B)] == [2, 2]
-    # the cap keeps each paper's best chunks, in the order of the full ranking
-    seen: dict[str, int] = {}
-    expected = []
-    for hit in uncapped:
-        seen[hit.chunk.doc_id] = seen.get(hit.chunk.doc_id, 0) + 1
-        if seen[hit.chunk.doc_id] <= 2:
-            expected.append(hit.chunk)
-    assert [h.chunk for h in capped] == expected
-    assert len(build(bm25="never", max_chunks_per_paper=1).search(question, vector, 8)) == 2
+    plain = build("plain", bm25="never").search(question, vector, 8)
+    capped = build("capped", bm25="never", max_chunks_per_paper=2).search(question, vector, 8)
+    assert len(plain) == 8 and capped == plain  # the key is read by docingest, not applied here
+    assert IndexSettings(max_chunks_per_paper=2).max_chunks_per_paper == 2
     assert IndexSettings().max_chunks_per_paper == 0
 
 
@@ -641,6 +629,88 @@ def test_a_large_index_matches_a_brute_force_search_across_blocks(tmp_path, monk
         hits = index.search("q", query.tolist(), k)
         assert [h.chunk.text for h in hits] == [f"text {i}" for i in expected[:k]]
     assert len(index.search("q", query.tolist(), 1000)) == total
+
+
+def reference_scores(folder, query):
+    """The dense scores as the first version computed them: the float16 matrix converted
+    block by block for every question."""
+    dense = np.load(folder / "search" / "dense.npy", mmap_mode="r")
+    scores = np.empty(len(dense), dtype=np.float32)
+    for lo in range(0, len(dense), local.BLOCK_ROWS):
+        scores[lo : lo + local.BLOCK_ROWS] = (
+            dense[lo : lo + local.BLOCK_ROWS].astype(np.float32) @ query
+        )
+    return scores
+
+
+def reference_record(folder, row):
+    """A chunk record as the first version read it: one seek and one readline per record."""
+    offsets = np.load(folder / "search" / "chunks.offsets.npy")
+    with (folder / "search" / "chunks.jsonl").open("rb") as f:
+        f.seek(int(offsets[row]))
+        return json.loads(f.readline())
+
+
+def test_scores_and_records_are_bit_identical_to_the_per_question_conversion(tmp_path, monkeypatch):
+    monkeypatch.setattr(local, "BLOCK_ROWS", 7)
+    rng = np.random.default_rng(11)
+    dims = 96
+    index = make(tmp_path / "idx", settings={"bm25": "never"})
+    total = 300
+    vectors = rng.normal(size=(total, dims)).astype(np.float32)
+    for n in range(0, total, 25):
+        doc = hashlib.sha256(f"id{n}".encode()).hexdigest()
+        chunks = [chunk(doc, f"text {n + i} éü", n=i + 1, start=i * 50) for i in range(25)]
+        index.upsert(doc, "k", chunks, vectors[n : n + 25].tolist())
+    index.commit()
+    reader = make(tmp_path / "idx", settings={"bm25": "never"})
+    for _ in range(3):  # the copy made by the first question serves the next ones
+        query = rng.normal(size=dims).astype(np.float32)
+        query /= np.linalg.norm(query)
+        state = reader._open_search()
+        assert state is not None
+        top, scores = state.dense_top(query, 100)
+        expected = reference_scores(index.folder, query)
+        assert scores.tobytes() == expected.tobytes()
+        assert top == [int(r) for r in np.argsort(-expected, kind="stable")[:100]]
+        hits = reader.search("q", query.tolist(), 40)
+        for hit, row in zip(hits, top, strict=False):
+            record = reference_record(index.folder, row)
+            assert hit.score == float(expected[row])
+            assert (hit.chunk.name, hit.chunk.text, hit.chunk.is_reference) == (
+                record["name"],
+                record["text"],
+                record["is_reference"],
+            )
+            assert [hit.chunk.first_page, hit.chunk.last_page] == record["pages"]
+            assert hit.chunk.start == record["span"][0]
+
+
+def test_chunk_records_come_back_in_the_order_asked_and_may_repeat(tmp_path):
+    index = make(tmp_path / "idx")
+    zebra_corpus(index)
+    state = index._open_search()
+    assert state is not None
+    asked = [2, 0, 1, 0]
+    assert [c.text for c in state.chunks(asked)] == [
+        reference_record(index.folder, row)["text"] for row in asked
+    ]
+    assert state.chunks([]) == []
+
+
+def test_the_float32_copy_is_made_once_per_open_reader_and_dropped_on_close(tmp_path):
+    index = make(tmp_path / "idx")
+    zebra_corpus(index)
+    state = index._open_search()
+    assert state is not None and state._dense32 is None  # not made by opening
+    index.search("zebra", unit(0, 1, 0, 0), 2)
+    copy = state._dense32
+    assert copy is not None and copy.dtype == np.float32
+    assert copy.nbytes == 2 * state.dense.nbytes  # type: ignore[union-attr]
+    index.search("alpha", unit(1, 0, 0, 0), 2)
+    assert state._dense32 is copy
+    index.close()
+    assert state._dense32 is None
 
 
 def test_two_documents_whose_ids_start_alike_do_not_overwrite_each_other(tmp_path):
@@ -798,6 +868,41 @@ def test_close_after_a_search_releases_the_files_and_the_index_searches_again(tm
     assert state.dense is None and state._bm25 is None  # nothing of the commit stays open
     assert index._search is None
     assert index.search("zebra", unit(0, 1, 0, 0), 2)
+
+
+def test_the_check_before_a_question_opens_no_shard(tmp_path, monkeypatch):
+    index = make(tmp_path / "idx")
+    zebra_corpus(index)
+    reader = make(tmp_path / "idx")
+
+    def no_scan(self):
+        raise AssertionError("a shard header was read")
+
+    monkeypatch.setattr(LocalIndex, "_scan_all", no_scan)
+    assert reader.committed().documents == {DOC_A, DOC_B, DOC_C}
+    assert reader.committed().pending is False
+    monkeypatch.undo()
+    shutil.rmtree(index.folder / "shards")
+    assert reader.committed().pending is True  # the commit names shards that are gone
+    assert make(tmp_path / "other").committed().pending is False  # nothing there at all
+
+
+def test_the_check_before_a_question_reads_the_old_search_folder_during_a_swap(tmp_path):
+    committed_pair(tmp_path)
+    folder = make(tmp_path / "idx").folder
+    os.replace(folder / "search", folder / "search.old")
+    assert make(tmp_path / "idx").committed().documents == {DOC_A, DOC_B}
+
+
+def test_the_check_before_a_question_ignores_shards_that_are_not_complete(tmp_path):
+    index = make(tmp_path / "idx")
+    zebra_corpus(index)
+    shards = index.folder / "shards"
+    (shards / "x.npz.tmp").write_bytes(b"")
+    (shards / "orphan.npz").write_bytes(b"")  # vectors whose chunks were never written
+    assert make(tmp_path / "idx").committed().pending is False
+    (shards / "orphan.jsonl").write_text("{}\n")  # now it has the marker, but no commit knows it
+    assert make(tmp_path / "idx").committed().pending is True
 
 
 def test_removing_from_an_index_that_does_not_exist_creates_nothing(tmp_path):

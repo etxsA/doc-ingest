@@ -5,7 +5,7 @@ Embedding and reranker clients and a persistent chunk index for [docingest](../d
 | Adapter | `[adapters]` entry | Port | What it is |
 |---|---|---|---|
 | `OpenAICompatibleEmbedder` | `embedder = "openai-compatible"` | `Embedder` | HTTP client for `/v1/embeddings` (vLLM serving Qwen3-Embedding). Batches, retries, L2-normalized float32 vectors, Qwen3 query instruction. |
-| `LocalIndex` | `index = "local"` | `ChunkIndex` | Vectors and chunks on disk (float16 numpy shards), exact cosine search, a tantivy BM25 index, reciprocal rank fusion, an optional per-paper cap. |
+| `LocalIndex` | `index = "local"` | `ChunkIndex` | Vectors and chunks on disk (float16 numpy shards), exact cosine search, a tantivy BM25 index, reciprocal rank fusion. |
 | `VllmReranker` | `reranker = "vllm"` | `Reranker` | HTTP client for vLLM's `/rerank` (Qwen3-Reranker): one request, one score per chunk. |
 
 The design and its measurements are in [ADR 0004](../docingest/docs/adr/0004-chunk-index-and-two-stage-retrieval.md). The ports and their contracts are in [docingest's ports README](../docingest/src/docingest/ports/README.md).
@@ -80,14 +80,15 @@ flowchart LR
     D --> F["reciprocal rank fusion, k = 60, top 100"]
     B --> F
     L -->|no| F
-    F --> C["per-paper cap (off by default), first 50 = candidates"]
+    F --> C["first 50 = candidates"]
     C --> R["Reranker.rerank: one /rerank request, instruction sent with it"]
-    R --> T["stable sort by score, first 10 = contexts"]
+    R --> T["stable sort by score"]
+    T --> P["per-paper cap (off by default), first 10 = contexts"]
 ```
 
-`LocalIndex.search` is the part up to the candidates. The reranker call and the final sort are done by the caller (`AskService.retrieve` in docingest); scores come back in input order and ties keep the first-stage order. These are the formulas of the measured end-to-end retrieval, and `tests/test_retrieval_oracle.py` compares them with a literal copy of that script:
+`LocalIndex.search` is the part up to the candidates. The reranker call, the final sort and the optional per-paper cap are done by the caller (`AskService.retrieve` in docingest); scores come back in input order and ties keep the first-stage order. These are the formulas of the measured end-to-end retrieval, and `tests/test_retrieval_oracle.py` compares them with a literal copy of that script:
 
-- Dense: vectors are unit length, so the score is a dot product; computed in float32 over float16 storage, in blocks of 16,384 rows. Ranking by `argpartition` and a stable sort.
+- Dense: vectors are unit length, so the score is a dot product; computed in float32 over float16 storage, in blocks of 16,384 rows. The float16 matrix is converted to float32 once, at the reader's first dense search, and the copy stays in memory until `close()` or a new object; the products, and so the scores, are the same as converting block by block for every question. Ranking by `argpartition` and a stable sort. The chunk records of the hits are cut from the memory-mapped `chunks.jsonl` in file order instead of one seek and read per record.
 - BM25: the question reduced to lowercased ASCII letters and digits, parsed by tantivy as an OR query over a field tokenized with `en_stem`. A question with none of those characters has no keyword part.
 - Fusion: an item scores the sum of `1 / (60 + rank)` over the rankings that contain it (rank from 1); ties keep the order of first appearance, dense first.
 - Whether a question is English is decided from its function words (`language.py`); `bm25 = "always"` skips the test.
@@ -110,7 +111,8 @@ flowchart LR
 - **One folder per corpus and setting.** The folder name is the model slug and the first 8 hex digits of a SHA-256 over the index fingerprint: the corpus (the resolved `output_dir` of the config), the embedder's identity (model, revision, normalization), the vector dtype, the chunker version, `[qa] chunk_chars` and `overlap`, and the format version. Change any of them and a new, empty folder is used. Several corpora can share one `[index] dir`: each gets its own folder, so building one never prunes another; a corpus folder that moves is a new index (the old folder can be deleted). Indexes of two models never mix. The `query_instruction` is written to `fingerprint.json` but is not part of the hash: it changes only the vector of a question. The vector length is not a setting: it is recorded in `fingerprint.json` at the first commit, and vectors of another length are refused.
 - **Shards are the source of truth for what is stored.** `upsert` writes the `.npz` and then the `.jsonl` (the `.jsonl` marks the shard valid) through temporary files and renames, under a name no other shard uses (`-1`, `-2` are appended when the name is taken, for example when the same key is stored again), and deletes the paper's older shard only after that. A crash leaves the old shard or the new one, never a mixture; the leftovers are cleaned up by the next writer.
 - **`search/` is what questions are answered from.** `commit` copies the vectors and the chunk records of every shard into a new `search/` (with the BM25 index) next to the old one and swaps the folders. `search` reads nothing outside `search/`, so it answers from the last commit even while shards are being replaced or removed, by this process or another. After `commit`, `search` reflects exactly what `keys()` reports. `stats().pending` is true when the shards differ from what `search/` was built from, in any document.
-- **Readers and writers.** Reading (`keys`, `stats`, `search`, so `docingest index status`) never creates, changes or deletes a file. A reader opens one commit whole (vectors, chunk records and the BM25 index) at its first search and keeps that commit while it stays open, however many commits other processes make; `close()` or a new object sees the latest. `ids.json` carries a generation id per commit, so an open that a commit interrupts starts over. The first write takes an exclusive `flock` on `.lock` and holds it until `commit` returns or `close()` is called; a second writer fails at once with `IndexBusyError`, naming the folder. Under the lock the first write removes temporary files, vectors without chunks and the older of two shards of one paper (the one with the smaller write counter `seq` in its header; every `upsert` writes a counter larger than any shard on disk).
+- **The check before a question.** `committed()` answers which documents the last commit holds and whether changes are waiting, from `search/ids.json` and the file names in `shards/` (a shard counts when its `.jsonl` and `.npz` both exist). It opens no shard, unlike `stats()` and `keys()`, which read every header; `docingest ask` uses it, `index status` and `build` keep the full scan. Both answer the same for the same states, which the contract test checks, except for a shard whose `.jsonl` header cannot be read: only `stats()` and `keys()` notice it (they drop it), `committed()` counts it from its file name. `ask` asks `stats()` before it warns about pending changes, so an unreadable shard that no commit knows does not warn after every build.
+- **Readers and writers.** Reading (`keys`, `stats`, `committed`, `search`, so `docingest index status`) never creates, changes or deletes a file. A reader opens one commit whole (vectors, chunk records and the BM25 index) at its first search and keeps that commit while it stays open, however many commits other processes make; `close()` or a new object sees the latest. `ids.json` carries a generation id per commit, so an open that a commit interrupts starts over. The first write takes an exclusive `flock` on `.lock` and holds it until `commit` returns or `close()` is called; a second writer fails at once with `IndexBusyError`, naming the folder. `begin_write()` takes the lock without writing; `docingest index build` and the `--index` updates call it before they embed anything, so the second of two concurrent builds fails before any embedding request. Under the lock the first write removes temporary files, vectors without chunks and the older of two shards of one paper (the one with the smaller write counter `seq` in its header; every `upsert` writes a counter larger than any shard on disk).
 - Ids that are not filename-safe are hashed in the shard name.
 
 ## Keeping the index in step with the corpus
@@ -119,7 +121,7 @@ flowchart LR
 
 ## Configuration
 
-`[index]`, `[embedder]` and `[reranker]` are described key by key in [docingest's config README](../docingest/config/README.md#index-embedder-and-reranker-docingest-index). The factories read them from `AppConfig.model_extra` and validate them with the models in `settings.py`; unknown keys are errors. `[index] max_chunks_per_paper` has one default, `DEFAULT_MAX_CHUNKS_PER_PAPER` in `settings.py`. `candidates` and `contexts` are read by `docingest ask` itself, which may not import this package: `IndexSettings` inherits them (and their defaults) from `docingest.config.IndexConfig`, the small model docingest reads the same table with.
+`[index]`, `[embedder]` and `[reranker]` are described key by key in [docingest's config README](../docingest/config/README.md#index-embedder-and-reranker-docingest-index). The factories read them from `AppConfig.model_extra` and validate them with the models in `settings.py`; unknown keys are errors. `candidates`, `contexts` and `max_chunks_per_paper` are read by `docingest ask` itself, which may not import this package: `IndexSettings` inherits them (and their defaults, `DEFAULT_MAX_CHUNKS_PER_PAPER` among them) from `docingest.config.IndexConfig`, the small model docingest reads the same table with. `LocalIndex.search` does not apply `max_chunks_per_paper`: `ask` does, after reranking.
 
 ## Code map
 
@@ -148,9 +150,10 @@ No test needs a GPU or the network: the clients run over `httpx.MockTransport` (
 |---|---|
 | `test_contract.py` | docingest's retrieval contract (`tests/contract/test_retrieval_contract.py` of the docingest package, imported through `tests/conftest.py`) against the real embedder, index and reranker |
 | `test_embedder.py`, `test_reranker.py` | request bodies equal to the ones of the measured scripts, batching and order, normalization, retries, errors, keys |
-| `test_local_index.py` | layout, round trip, incremental add, change and remove, commit visibility, recovery after a crash, the write counter, a reader that stays open across another process's commit (one generation), `close()`, folder separation by fingerprint, RRF on a hand-checked example, English-only BM25 and the `keywords` override, the per-paper cap, blocks and depths |
+| `test_local_index.py` | layout, round trip, incremental add, change and remove, commit visibility, recovery after a crash, the write counter, a reader that stays open across another process's commit (one generation), `close()`, folder separation by fingerprint, RRF on a hand-checked example, English-only BM25 and the `keywords` override, the index leaving the per-paper cap to `ask`, blocks and depths, scores and records bit-identical to converting per question, the float32 copy made once per reader |
 | `test_retrieval_oracle.py` | the fused top 50 equals a literal copy of the measured retrieval script |
 | `test_fusion.py`, `test_language.py`, `test_settings.py`, `test_factories.py` | the helpers, the config tables and the entry points |
+| `test_concurrent_build.py` | a second `IndexService.build` or `update` while the first is embedding fails with the busy error and sends no embedding request; the lock is free again afterwards |
 | `test_cli_end_to_end.py` | `docingest index build`, `status` and `remove` through the real CLI, store, entry points, client and index; `ask` through the real embedder, index and reranker (scripted servers) with a fake answerer; a build that fails between two papers does not lock a retry |
 | `test_example_config.py` | `config/examples/lab-server.toml` loads, names real adapters and talks to 127.0.0.1 only; no shipped config holds an absolute path of a machine |
 
@@ -158,7 +161,7 @@ CI runs the same gates on Linux (core and dev dependencies) and macOS (everythin
 
 ## Limits
 
-- Exact search holds the dense matrix on disk and scores it in blocks: fine to roughly 10,000 papers (about 100,000 chunks of 2,560 dimensions, 0.5 GB). Beyond that, approximate search is a separate decision.
+- Exact search keeps the dense matrix as a float16 file and, in an open reader, as a float32 copy in memory, twice the size of the file (4 bytes per dimension per chunk, plus the pages of the mapped file the operating system keeps in its cache). It is fine to roughly 10,000 papers (about 100,000 chunks of 2,560 dimensions: 0.5 GB on disk, 1 GB for the copy). Beyond that, approximate search is a separate decision.
 - One process writes to an index folder at a time (enforced by the lock); readers can run alongside because `search` reads only the committed `search/` folder. The lock is an `flock` on a local file: use a local disk, not a network share.
 - The English test is a function-word count, not a language identifier.
 - BM25 ties are broken by tantivy's document order; the index is written with one thread so that order is the same in every build.

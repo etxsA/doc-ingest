@@ -385,3 +385,52 @@ def test_the_key_depends_on_page_numbers_and_texts_only():
     assert content_key(pages) != content_key({1: "one", 3: "two"})
     assert content_key(pages) != content_key({1: "onetwo"})
     assert content_key({1: "ab", 2: "c"}) != content_key({1: "a", 2: "bc"})
+
+
+class OrderEmbedder(FakeEmbedder):
+    """Records how often the index's write lock had been taken at each embedding."""
+
+    def __init__(self):
+        super().__init__()
+        self.index = None
+        self.locks_taken: list[int] = []
+
+    def embed_documents(self, texts):
+        self.locks_taken.append(self.index.begun)
+        return super().embed_documents(texts)
+
+
+def test_build_and_update_take_the_write_lock_before_embedding_anything(store):
+    embedder = OrderEmbedder()
+    service, index, _ = make(store, embedder=embedder)
+    embedder.index = index
+    service.build()
+    assert embedder.locks_taken == [1]
+    add_doc(store, PAPER_C, TEXT_A)
+    service.update([d for d in store.corpus()[0] if d.manifest.doc_id == PAPER_C])
+    assert embedder.locks_taken == [1, 2]
+
+
+def test_a_refused_lock_stops_the_build_before_the_embedder_and_closes_the_index(store):
+    class Busy(FakeIndex):
+        def begin_write(self):
+            raise RuntimeError("another process is writing")
+
+    embedder = FakeEmbedder()
+    service, index, embedder = make(
+        store, embedder=embedder, index=Busy(embedder_fingerprint=embedder.fingerprint)
+    )
+    with pytest.raises(RuntimeError, match="another process"):
+        service.build()
+    assert embedder.calls == 0 and index.closed == 1
+    with pytest.raises(RuntimeError, match="another process"):
+        service.update(store.corpus()[0])
+    assert embedder.calls == 0
+
+
+def test_status_and_a_remove_that_finds_nothing_do_not_take_the_write_lock(store):
+    service, index, _ = make(store)
+    service.status()
+    with pytest.raises(ValueError, match="not in the index"):
+        service.remove(PAPER_A)
+    assert index.begun == 0

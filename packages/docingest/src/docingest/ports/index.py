@@ -33,6 +33,15 @@ class IndexStats:
     pending: bool = False
 
 
+@dataclass(frozen=True)
+class CommittedState:
+    """What ``search`` answers from, and whether changes are waiting for a ``commit``."""
+
+    documents: frozenset[str]  # ids of the documents in the last commit
+    # Same meaning as ``IndexStats.pending``: what ``keys()`` reports differs from the commit.
+    pending: bool
+
+
 @runtime_checkable
 class ChunkIndex(Protocol):
     fingerprint: str  # embedder + chunker settings + format: an index of another one is not reused
@@ -43,6 +52,12 @@ class ChunkIndex(Protocol):
     def keys(self) -> dict[str, str]:
         """``{doc_id: key}`` of every indexed document, where ``key`` is what ``upsert`` got.
         It reflects every ``upsert`` and ``remove``, committed or not."""
+        ...
+
+    def begin_write(self) -> None:
+        """Take the write lock now, if the adapter has one, instead of at the first write. A
+        second writer then fails here, before it embeds anything. Held until ``commit`` or
+        ``close``; a no-op for an adapter without a lock or when this object already holds it."""
         ...
 
     def upsert(
@@ -79,6 +94,16 @@ class ChunkIndex(Protocol):
     def stats(self) -> IndexStats:
         """Counts for ``docingest index status``, telling a built index from one with
         changes that no ``commit`` has made searchable yet."""
+        ...
+
+    def committed(self) -> CommittedState:
+        """The documents of the last commit and whether changes are waiting, for the check
+        before each question. Same answers as ``keys()`` and ``stats()`` (documents are
+        ``stats().searchable_documents`` of them, pending is ``stats().pending``), except for
+        a stored document that cannot be read, which only those two notice; but an
+        adapter should read only what the commit left for ``search`` and not every stored
+        document: it runs before every question, ``keys()`` and ``stats()`` run in
+        ``index status`` and ``build``."""
         ...
 
     def search(

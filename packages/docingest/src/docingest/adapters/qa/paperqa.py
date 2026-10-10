@@ -122,6 +122,21 @@ def token_windows(texts, tokenizer, max_tokens: int, overlap_tokens: int = 32):
     return out
 
 
+def _unused_embedding():
+    from paperqa import EmbeddingModel
+
+    class UnusedEmbedding(EmbeddingModel):
+        """Placeholder for the argument PaperQA2 insists on when nothing is retrieved: without
+        it, ``aquery`` would build the configured embedder (the local MiniLM, seconds to load)."""
+
+        name: str = "unused"
+
+        async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("answering from given contexts embeds nothing")
+
+    return UnusedEmbedding()
+
+
 class PaperQAAnswerer:
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
@@ -148,11 +163,13 @@ class PaperQAAnswerer:
         if contexts is not None and not contexts:
             raise ValueError("contexts is empty: nothing to answer from")
         settings = local_settings(self.cfg)
-        embedding_model = settings.get_embedding_model()  # load the embedder once
         if contexts is None:
+            embedding_model = settings.get_embedding_model()  # load the embedder once
             docs = await self._docs_from_corpus(documents, settings, embedding_model)
         else:
-            docs = await self._docs_from_contexts(contexts, documents, settings, embedding_model)
+            # Nothing is retrieved from given contexts, so nothing is embedded either.
+            embedding_model = _unused_embedding()
+            docs = await self._docs_from_contexts(contexts, documents, settings)
             settings.answer.evidence_retrieval = False  # summarize exactly these chunks
         session = await docs.aquery(question, settings=settings, embedding_model=embedding_model)
         return session.formatted_answer
@@ -183,9 +200,10 @@ class PaperQAAnswerer:
             await docs.aadd_texts(texts, doc, settings=settings, embedding_model=embedding_model)
         return docs
 
-    async def _docs_from_contexts(self, contexts, documents, settings, embedding_model):
+    async def _docs_from_contexts(self, contexts, documents, settings):
         """A ``Docs`` holding exactly ``contexts``: with nothing else in it, nothing else can
-        be retrieved. Chunks go in as given, without the embedder's token re-split."""
+        be retrieved. Chunks go in as given, without the embedder's token re-split and
+        without vectors: PaperQA2 only reads them to retrieve, which is off on this path."""
         from paperqa import Docs
         from paperqa.types import Text
 
@@ -193,11 +211,12 @@ class PaperQAAnswerer:
         by_paper: dict[str, list[Chunk]] = {}  # papers in order of first appearance
         for chunk in contexts:
             by_paper.setdefault(chunk.doc_id, []).append(chunk)
+        settings.parsing.defer_embedding = True  # aadd_texts skips the embedder
         docs = Docs()
         for doc_id, chunks in by_paper.items():
             if doc_id not in stored:
                 raise ValueError(f"contexts come from {doc_id[:NAME_LENGTH]}, not in documents")
             doc = paperqa_doc(stored[doc_id])
             texts = [Text(text=c.text, name=c.name, doc=doc) for c in chunks]
-            await docs.aadd_texts(texts, doc, settings=settings, embedding_model=embedding_model)
+            await docs.aadd_texts(texts, doc, settings=settings)
         return docs

@@ -164,7 +164,7 @@ added 0, updated 0, unchanged 100, pruned 0; embedded 0 chunks in 0.2s; nothing 
 
 That took 0.90 s with start-up. A smaller example: 5 papers, 388 chunks, `embedded 388 chunks in 8.3s`.
 
-Run one build at a time. The lock that keeps writers apart is taken only when the first chunks are stored, after they are embedded, so a second build started at the same time does not stop at once. See [Sharing a machine](#sharing-a-machine).
+Run one build at a time. `build` takes the lock that keeps writers apart when it starts, before it embeds anything, so a second build started at the same time stops at once with `error: another process is writing to the index <folder>; wait for it to finish`. See [Sharing a machine](#sharing-a-machine).
 
 `index status` shows what is indexed, what is searchable and what a build would do:
 
@@ -184,7 +184,7 @@ uv run docingest ask "What limits T1 in transmons?" -c "$CONFIG"
 
 Before the answer you may also see lines that are harmless:
 
-- a `Loading weights` progress bar: the small CPU embedding model (`sentence-transformers/all-MiniLM-L6-v2`) that PaperQA2 builds even in index mode. It is fetched into `HF_HOME` the first time; `uv run docingest model-path embedding` fetches it ahead of time.
+- a `Loading weights` progress bar: the small CPU embedding model (`sentence-transformers/all-MiniLM-L6-v2`) of PaperQA2. Only `ask` without an index (or with `--no-index`) loads it; with the index, PaperQA2 gets the chunks as given and embeds nothing. It is fetched into `HF_HOME` the first time; `uv run docingest model-path embedding` fetches it ahead of time.
 - about a dozen lines `Failed to calculate cost for qwen-local`: litellm has no price for a local model.
 - on a driver that supports only CUDA 12 (such as 535), a torch `CUDA initialization: The NVIDIA driver on your system is too old` warning. The workspace's torch is a CUDA 13 build, and `ask` runs it on the CPU only. It is not related to the vLLM install.
 
@@ -223,8 +223,8 @@ Each row says what it was measured with. The first block is the servers, the sec
 | `index build`, nothing changed | 0.2 s printed, 0.90 s with start-up | same corpus |
 | `index build`, small corpus | 8.3 s printed, 9.4 s with start-up | 5 papers, 388 chunks |
 | `crawl --limit 5` with ingest | 32 s | 5 LaTeX sources, the 3 s spacing between requests included |
-| `ask`, the first question after the servers started | 52 s | 5 papers; includes loading the small MiniLM model |
-| `ask`, later questions | 30 to 35 s | 5 papers; about 7 s of it is program start-up |
+| `ask`, the first question after the servers started | 52 s | 5 papers; includes loading the small MiniLM model (measured before the index path stopped loading it) |
+| `ask`, later questions | 30 to 35 s | 5 papers; about 7 s of it is program start-up (measured before the index path stopped loading the small MiniLM model) |
 | One question inside the evaluation harness | 18.5 s and 21.2 s (medians) | another corpus (QASPER) and the 9,404-chunk corpus; no CLI start-up, so not comparable with the rows above |
 
 The times of the commands depend on the papers and, for `crawl`, on arXiv.
@@ -243,7 +243,7 @@ Several people may use one GPU machine. These rules keep your work and theirs ap
 
    The served names are the ones in `lab-server.toml`, so it works unchanged. The `model` and `revision` in `[embedder]` are only recorded in the index name, not checked against the server: make sure they name what the running embedder serves, or the index will claim vectors of a model that did not make them. GPU 1 holds one embedder and one reranker; a second pair does not fit next to it.
 3. **Use your own folders.** Keep your configuration file with your own `output_dir` and `[index] dir`. The pid files, logs and compile caches of `serve.sh` default to folders under your home (`SERVING_STATE_DIR`, `SERVING_CACHE_DIR`), so they are already yours. So is uv's cache unless you share it.
-4. **One writer per index.** A build that stores chunks while another process holds the index fails with `error: another process is writing to the index <folder>; wait for it to finish`. The lock is taken when the first chunks are stored, not when the build starts, so a second build first spends its embedding time. Two builds started together on the same new index can both finish: each embeds everything, both succeed and the index stays consistent, but the second repeats the first one's work. Start one build at a time. `ingest --index` and `crawl --index` report a held lock as `error: the index was not updated: ...`; the papers stay stored. Reading (`ask`, `index status`) is safe next to a build. Two people who share one `output_dir` and one `[index] dir` share one index folder; give each person their own unless you mean to share.
+4. **One writer per index.** A build (and `ingest --index`, `crawl --index`) takes the index's lock when it starts, before it embeds anything. While another process holds the index, it fails at once with `error: another process is writing to the index <folder>; wait for it to finish`, and does no embedding. Start one build at a time. `ingest --index` and `crawl --index` report a held lock as `error: the index was not updated: ...`; the papers stay stored. Reading (`ask`, `index status`) is safe next to a build. Two people who share one `output_dir` and one `[index] dir` share one index folder; give each person their own unless you mean to share.
 5. **Never stop other people's processes.** `serve.sh stop` ends only the servers recorded in your own state folder. Do not kill a vLLM process that you did not start. If a GPU is busy, start your server on another one (`serve.sh embed start 0 8012`) or with a lower memory fraction (`EMBED_GPU_MEM`, `RERANK_GPU_MEM`), and point your configuration at the new port: `[embedder] base_url`, `[reranker] base_url`, and for the answering model both `[ocr] base_url` and `[qa] llm_base`.
 
 ## Troubleshooting
@@ -275,7 +275,7 @@ Several people may use one GPU machine. These rules keep your work and theirs ap
 - **`error: the index holds vectors of embedder ...`** (it goes on: `but the configured one is ...`). The folder was written with another embedder identity than the one in your `[embedder]` table. Restore those settings, or use another `[index] dir`, then run `index build`. Vectors of two models are never mixed.
 - **`warning: K of N documents of the corpus are not in the index`.** You ingested papers after the last build. The answer ignores them. Run `index build`.
 - **`warning: the index has changes that are not committed yet`** and **`warning: M of K retrieved chunks belong to documents that are no longer in the corpus`.** Run `index build`; it commits pending changes and prunes the papers that left the corpus.
-- **`error: another process is writing to the index <folder>; wait for it to finish`.** One writer at a time, and the lock is taken late: see rule 4 of [Sharing a machine](#sharing-a-machine). Wait for the other build, or find out who holds the folder.
+- **`error: another process is writing to the index <folder>; wait for it to finish`.** One writer at a time; the lock is taken when a build starts: see rule 4 of [Sharing a machine](#sharing-a-machine). Wait for the other build, or find out who holds the folder.
 - **`error: the index <folder> kept changing while it was being opened; ask again`.** Builds committed repeatedly while `ask` or `status` opened the index. Run the command again.
 - **`error: no ingested documents`** from `index build` (it goes on: run `docingest ingest` first), or a traceback ending with the same text from `ask`. The corpus at `output_dir` is empty. Check that you passed `-c "$CONFIG"` and that `output_dir` in it is the folder you ingested into.
 - **`Invalid value: --index needs [adapters] index and embedder to be set`** (exit status 2). `ingest --index` or `crawl --index` ran without `-c "$CONFIG"`, or with a configuration that has no index.

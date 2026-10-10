@@ -139,10 +139,12 @@ def test_the_none_adapters_refuse_to_work_and_name_the_setting(cfg):
         ],
         "index": [
             lambda a: a.keys(),
+            lambda a: a.begin_write(),
             lambda a: a.upsert("d", "k", [chunk], [[0.0]]),
             lambda a: a.remove("d"),
             lambda a: a.commit(),
             lambda a: a.stats(),
+            lambda a: a.committed(),
             lambda a: a.search("q", [0.0], 5),
             lambda a: a.search("q", [0.0], 5, keywords="never"),
         ],
@@ -204,13 +206,17 @@ def test_selecting_an_index_makes_ask_retrieve_with_the_configured_stages(cfg):
     from fakes import FakeEmbedder, FakeIndex, FakeReranker
 
     cfg = AppConfig.model_validate(
-        {"adapters": {"index": "fake"}, "index": {"candidates": 7, "contexts": 3, "bm25": "never"}}
+        {
+            "adapters": {"index": "fake"},
+            "index": {"candidates": 7, "contexts": 3, "max_chunks_per_paper": 2, "bm25": "never"},
+        }
     )
     parts = {"embedder": FakeEmbedder(), "index": FakeIndex(), "reranker": FakeReranker()}
     container = Container(cfg, log=lambda _: None, overrides=parts)
     assert container.ask.has_index is True
     retrieval = container.ask._retrieval()
     assert (retrieval.candidates, retrieval.contexts) == (7, 3)
+    assert retrieval.max_chunks_per_paper == 2
     assert retrieval.embedder is parts["embedder"] and retrieval.index is parts["index"]
     assert retrieval.reranker is parts["reranker"]
 
@@ -225,6 +231,7 @@ def test_a_reranker_that_is_none_is_no_reranker_at_all():
     retrieval = container.ask._retrieval()
     assert retrieval.reranker is None
     assert (retrieval.candidates, retrieval.contexts) == (50, 10)
+    assert retrieval.max_chunks_per_paper == 0
 
 
 def test_an_index_without_an_embedder_is_reported_when_the_question_needs_it(cfg):

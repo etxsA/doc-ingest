@@ -22,7 +22,8 @@ commit meanwhile; ``ids.json`` names the commit's generation, so an open that a 
 interrupts is noticed and starts over.
 
 Writing. A write (``upsert``, ``remove``, ``commit``) takes an exclusive lock on ``.lock``
-and holds it until ``commit`` returns or ``close`` is called; a second writer fails at once
+and holds it until ``commit`` returns or ``close`` is called; ``begin_write`` takes it without
+writing, which ``IndexService`` does before it embeds anything. A second writer fails at once
 with ``IndexBusyError`` (readers are not locked). Under the lock the first write cleans up
 what an interrupted writer left: temporary files, vectors without chunks, the older of two
 shards of one paper (the one with the smaller write counter ``seq`` in its header). A shard
@@ -35,6 +36,13 @@ the old shard or the new one, never a mixture.
 whether the shards differ from what ``search/`` was built from (in documents or in the shard
 of any document), which counts alone cannot tell.
 
+Memory. A reader that has searched keeps the dense matrix twice: the float16 file, mapped
+(the operating system pages it in and out), and a float32 copy in this process's memory,
+which is what the products need. The copy is 4 bytes per dimension per chunk, twice the
+size of the file, and lives until ``close`` or a new object, so a command that asks once
+pays it once and a long-lived reader pays it once per commit it opens. It is made at the
+first dense search, not when the index is opened.
+
 ``search`` is the measured first stage: exact cosine top 100, BM25 top 100 for questions that
 look English (``[index] bm25``), both fused by reciprocal rank fusion (k = 60).
 """
@@ -45,13 +53,13 @@ import contextlib
 import fcntl
 import hashlib
 import json
+import mmap
 import os
 import re
 import shutil
 import time
 import uuid
 from bisect import bisect_right
-from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -61,7 +69,7 @@ from typing import IO, Any
 import numpy as np
 from docingest.domain.chunking import CHUNKER_VERSION
 from docingest.domain.errors import DocingestError
-from docingest.ports import Chunk, Hit, IndexStats, KeywordMode, Vector
+from docingest.ports import Chunk, CommittedState, Hit, IndexStats, KeywordMode, Vector
 
 from .embedder import embedder_fingerprint, query_task
 from .fusion import rrf
@@ -71,7 +79,7 @@ from .settings import EmbedderSettings, IndexSettings
 FORMAT_VERSION = 1
 DTYPE = "float16"
 LIST_DEPTH = 100  # length of each first-stage ranking before fusion
-BLOCK_ROWS = 16384  # rows of the dense matrix scored at once (float32 copy of one block)
+BLOCK_ROWS = 16384  # rows of the dense matrix scored at once; fixes the float32 summation
 OPEN_ATTEMPTS = 5  # tries to open a search folder that other processes keep replacing
 BM25_HEAP_BYTES = 200_000_000
 UNIT_TOLERANCE = 1e-4  # a vector this close to length 1 is stored as it is
@@ -148,6 +156,9 @@ class LocalIndex:
 
     def keys(self) -> dict[str, str]:
         return {doc_id: shard.key for doc_id, shard in self._shards().items()}
+
+    def begin_write(self) -> None:
+        self._writer()
 
     def upsert(
         self, doc_id: str, key: str, chunks: Sequence[Chunk], vectors: Sequence[Vector]
@@ -246,6 +257,19 @@ class LocalIndex:
             pending=pending,
         )
 
+    def committed(self) -> CommittedState:
+        """The check before a question: ``ids.json`` of the last commit and the names in
+        ``shards/``. No shard is opened (``stats()`` and ``keys()`` read every header), so
+        the cost is one small file and one directory listing."""
+        found = self._read_ids()
+        stored = self._shard_stems()
+        if found is None:
+            return CommittedState(frozenset(), pending=bool(stored))
+        built = found[1]["shards"]
+        return CommittedState(
+            frozenset(s["doc_id"] for s in built), pending={s["stem"] for s in built} != stored
+        )
+
     def search(
         self, question: str, vector: Vector, k: int, *, keywords: KeywordMode | None = None
     ) -> list[Hit]:
@@ -261,19 +285,9 @@ class LocalIndex:
             ranked = rrf(dense, state.bm25_top(question, depth), n=depth)
         else:
             ranked = [(row, float(cosine[row])) for row in dense]
-        cap = self.settings.max_chunks_per_paper
-        taken: list[tuple[int, float]] = []
-        per_paper: Counter[str] = Counter()
-        for row, score in ranked:
-            if cap:
-                doc_id = state.doc_of(row)
-                if per_paper[doc_id] >= cap:
-                    continue
-                per_paper[doc_id] += 1
-            taken.append((row, score))
-            if len(taken) == k:
-                break
-        return [Hit(state.chunk(row), score) for row, score in taken]
+        taken = ranked[:k]
+        chunks = state.chunks([row for row, _ in taken])
+        return [Hit(chunk, score) for chunk, (_, score) in zip(chunks, taken, strict=True)]
 
     # ------------------------------------------------------------------ writing
 
@@ -514,6 +528,17 @@ class LocalIndex:
         orphans = [s for s in npz if not (shard_dir / f"{s}.jsonl").exists()]
         return winners, losers, orphans
 
+    def _shard_stems(self) -> set[str]:
+        """The stems of the shards that look complete, from the file names alone: a ``.jsonl``
+        (written last) with its ``.npz``. ``_scan_all`` also reads the headers and so also
+        drops a shard whose header is unreadable."""
+        try:
+            names = os.listdir(self.folder / "shards")
+        except FileNotFoundError:
+            return set()
+        jsonl = {n.removesuffix(".jsonl") for n in names if n.endswith(".jsonl")}
+        return jsonl & {n.removesuffix(".npz") for n in names if n.endswith(".npz")}
+
     def _search_dir(self) -> Path | None:
         """``search/``; ``search.old/`` for the instant of a swap in which it is missing."""
         for name in ("search", "search.old"):
@@ -569,8 +594,9 @@ class _Search:
         for shard in self.shards:
             self.starts.append(self.starts[-1] + shard["chunks"])
         self.dense = np.load(folder / "dense.npy", mmap_mode="r") if self.rows else None
+        self._dense32: np.ndarray | None = None  # float32 copy of dense, made by dense_top
         self._offsets = np.load(folder / "chunks.offsets.npy") if self.rows else None
-        self._records = (folder / "chunks.jsonl").open("rb") if self.rows else None
+        self._records = self._map_records(folder / "chunks.jsonl") if self.rows else None
         # Opened with the rest, not at the first English question: a lazily opened index
         # would be the one of a later commit than the vectors and the chunk records.
         self._bm25: tuple[Any, Any] | None = None
@@ -581,12 +607,18 @@ class _Search:
             index.reload()
             self._bm25 = (index, index.searcher())
 
+    @staticmethod
+    def _map_records(path: Path) -> mmap.mmap:
+        with path.open("rb") as f:  # the mapping keeps its own handle on the file
+            return mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+
     def close(self) -> None:
         if self._records is not None:
             self._records.close()
             self._records = None
         self._bm25 = None
         self.dense = None  # drops the memory map: the commit's files are really released
+        self._dense32 = None
         self._offsets = None
 
     def query(self, vector: Vector) -> np.ndarray:
@@ -604,11 +636,12 @@ class _Search:
     def dense_top(self, query: np.ndarray, depth: int) -> tuple[list[int], np.ndarray]:
         """Rows by cosine similarity, best first (stable), and the score of every row."""
         assert self.dense is not None
+        matrix = self._dense32
+        if matrix is None:  # converted once per open reader, not once per question
+            matrix = self._dense32 = self.dense.astype(np.float32)
         scores = np.empty(self.rows, dtype=np.float32)
-        for lo in range(0, self.rows, BLOCK_ROWS):
-            scores[lo : lo + BLOCK_ROWS] = (
-                self.dense[lo : lo + BLOCK_ROWS].astype(np.float32) @ query
-            )
+        for lo in range(0, self.rows, BLOCK_ROWS):  # the same blocks as ever: same sums
+            scores[lo : lo + BLOCK_ROWS] = matrix[lo : lo + BLOCK_ROWS] @ query
         top = np.argpartition(-scores, depth)[:depth] if self.rows > depth else np.arange(self.rows)
         return [int(r) for r in top[np.argsort(-scores[top], kind="stable")]], scores
 
@@ -626,18 +659,24 @@ class _Search:
         # the last shard that starts at or before the row (empty shards share their start)
         return self.shards[bisect_right(self.starts, row) - 1]["doc_id"]
 
-    def chunk(self, row: int) -> Chunk:
+    def chunks(self, rows: Sequence[int]) -> list[Chunk]:
+        """The chunk records of ``rows``, in that order. The records are cut from the mapped
+        file in file order, with no seek and no buffer refilled per record."""
         assert self._offsets is not None
         assert self._records is not None
-        self._records.seek(int(self._offsets[row]))
-        record = json.loads(self._records.readline())
-        first, last = record["pages"]
-        return Chunk(
-            doc_id=self.doc_of(row),
-            name=record["name"],
-            text=record["text"],
-            first_page=first,
-            last_page=last,
-            is_reference=record["is_reference"],
-            start=record["span"][0],
-        )
+        parsed: dict[int, Chunk] = {}
+        for row in sorted(set(rows)):
+            record = json.loads(
+                self._records[int(self._offsets[row]) : int(self._offsets[row + 1])]
+            )
+            first, last = record["pages"]
+            parsed[row] = Chunk(
+                doc_id=self.doc_of(row),
+                name=record["name"],
+                text=record["text"],
+                first_page=first,
+                last_page=last,
+                is_reference=record["is_reference"],
+                start=record["span"][0],
+            )
+        return [parsed[row] for row in rows]

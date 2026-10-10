@@ -19,18 +19,15 @@ DEFAULT_RERANK_INSTRUCTION = (
     "Given a question about a research paper, retrieve the passage that answers it"
 )
 
-# The one place for the default of [index] max_chunks_per_paper. 0 means no cap, which is what
-# the measured end-to-end retrieval did.
-DEFAULT_MAX_CHUNKS_PER_PAPER = 0
-
 
 class _Table(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
 class IndexSettings(IndexConfig):
-    """All of ``[index]``. ``candidates`` and ``contexts`` come from docingest's ``IndexConfig``
-    (``ask`` reads them there, and their defaults are written once); unknown keys are errors."""
+    """All of ``[index]``. ``candidates``, ``contexts`` and ``max_chunks_per_paper`` come from
+    docingest's ``IndexConfig`` (``ask`` reads them there, and their defaults are written
+    once); unknown keys are errors."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -38,7 +35,6 @@ class IndexSettings(IndexConfig):
     # Fuse BM25 with the dense ranking (RRF) for questions that look English ("english"),
     # for every question ("always") or never.
     bm25: KeywordMode = "english"
-    max_chunks_per_paper: int = Field(default=DEFAULT_MAX_CHUNKS_PER_PAPER, ge=0)  # 0: no cap
 
 
 class EmbedderSettings(_Table):
