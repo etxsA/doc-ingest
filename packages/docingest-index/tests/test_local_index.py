@@ -882,6 +882,41 @@ def test_close_after_a_search_releases_the_files_and_the_index_searches_again(tm
     assert index.search("zebra", unit(0, 1, 0, 0), 2)
 
 
+def test_the_check_before_a_question_opens_no_shard(tmp_path, monkeypatch):
+    index = make(tmp_path / "idx")
+    zebra_corpus(index)
+    reader = make(tmp_path / "idx")
+
+    def no_scan(self):
+        raise AssertionError("a shard header was read")
+
+    monkeypatch.setattr(LocalIndex, "_scan_all", no_scan)
+    assert reader.committed().documents == {DOC_A, DOC_B, DOC_C}
+    assert reader.committed().pending is False
+    monkeypatch.undo()
+    shutil.rmtree(index.folder / "shards")
+    assert reader.committed().pending is True  # the commit names shards that are gone
+    assert make(tmp_path / "other").committed().pending is False  # nothing there at all
+
+
+def test_the_check_before_a_question_reads_the_old_search_folder_during_a_swap(tmp_path):
+    committed_pair(tmp_path)
+    folder = make(tmp_path / "idx").folder
+    os.replace(folder / "search", folder / "search.old")
+    assert make(tmp_path / "idx").committed().documents == {DOC_A, DOC_B}
+
+
+def test_the_check_before_a_question_ignores_shards_that_are_not_complete(tmp_path):
+    index = make(tmp_path / "idx")
+    zebra_corpus(index)
+    shards = index.folder / "shards"
+    (shards / "x.npz.tmp").write_bytes(b"")
+    (shards / "orphan.npz").write_bytes(b"")  # vectors whose chunks were never written
+    assert make(tmp_path / "idx").committed().pending is False
+    (shards / "orphan.jsonl").write_text("{}\n")  # now it has the marker, but no commit knows it
+    assert make(tmp_path / "idx").committed().pending is True
+
+
 def test_removing_from_an_index_that_does_not_exist_creates_nothing(tmp_path):
     index = make(tmp_path / "idx")
     index.remove(DOC_A)

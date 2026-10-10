@@ -29,6 +29,7 @@ from docingest.domain.models import (
 from docingest.domain.text import render_markdown
 from docingest.ports import (
     Chunk,
+    CommittedState,
     Conversion,
     FetchedSource,
     Hit,
@@ -313,11 +314,14 @@ class FakeIndex:
         self.embedder_fingerprint = embedder_fingerprint
         self.committed_at: str | None = None
         self.closed = 0  # how many times close() was called
+        self.committed_calls = 0
+        self.full_scans = 0  # keys() and stats() calls: what the check before a question avoids
         self.keywords: list[str | None] = []  # the ``keywords`` argument of each search
         self._committed: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
         self._staged: dict[str, tuple[str, list[Chunk], list[Vector]]] = {}
 
     def keys(self) -> dict[str, str]:
+        self.full_scans += 1
         return {doc_id: key for doc_id, (key, _, _) in self._staged.items()}
 
     def upsert(
@@ -338,6 +342,7 @@ class FakeIndex:
         self.closed += 1
 
     def stats(self) -> IndexStats:
+        self.full_scans += 1
         return IndexStats(
             documents=len(self._staged),
             chunks=sum(len(c) for _, c, _ in self._staged.values()),
@@ -346,6 +351,10 @@ class FakeIndex:
             committed_at=self.committed_at,
             pending=self._staged != self._committed,
         )
+
+    def committed(self) -> CommittedState:
+        self.committed_calls += 1
+        return CommittedState(frozenset(self._committed), self._staged != self._committed)
 
     def search(
         self, question: str, vector: Vector, k: int, *, keywords: KeywordMode | None = None

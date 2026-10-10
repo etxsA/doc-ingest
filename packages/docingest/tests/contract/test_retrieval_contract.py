@@ -241,6 +241,38 @@ def test_pending_tells_changes_that_counts_cannot(index, embedder):
     assert index.stats().pending is False
 
 
+def test_committed_agrees_with_stats_and_keys_in_every_state(index, embedder):
+    def check(documents, pending):
+        state, stats = index.committed(), index.stats()
+        assert state.documents == documents and state.pending is pending
+        assert len(state.documents) == stats.searchable_documents and stats.pending is pending
+        if not pending:
+            assert state.documents == set(index.keys())
+
+    check(set(), pending=False)  # nothing stored
+    chunks = chunks_of(PAPER_A)
+    index.upsert(PAPER_A, "k1", chunks, embedder.embed_documents([c.text for c in chunks]))
+    check(set(), pending=True)  # stored, never committed
+    index.commit()
+    check({PAPER_A}, pending=False)
+    chunks = chunks_of(PAPER_B)
+    index.upsert(PAPER_B, "k1", chunks, embedder.embed_documents([c.text for c in chunks]))
+    check({PAPER_A}, pending=True)  # a document added since the commit is not searched yet
+    index.commit()
+    check({PAPER_A, PAPER_B}, pending=False)
+    new = chunk_pages(PAPER_A, {1: "Replaced text about graphs."}, chunk_chars=60, overlap=10)
+    index.upsert(PAPER_A, "k2", new, embedder.embed_documents([c.text for c in new]))
+    check({PAPER_A, PAPER_B}, pending=True)  # replaced: the counts of documents are equal
+    index.commit()
+    check({PAPER_A, PAPER_B}, pending=False)
+    index.remove(PAPER_B)
+    check({PAPER_A, PAPER_B}, pending=True)  # still searchable until the commit
+    index.commit()
+    index.remove(PAPER_A)
+    index.commit()
+    check(set(), pending=False)  # committed empty
+
+
 def test_upsert_replaces_everything_indexed_for_the_document(index, embedder):
     fill(index, embedder)
     new = chunk_pages(PAPER_A, {1: "Replaced text about graphs."}, chunk_chars=60, overlap=10)

@@ -151,17 +151,29 @@ def _check_ready(
             f"{configured!r}; restore the [embedder] settings or use another [index] dir, "
             f"then {BUILD_HINT}"
         )
-    stats = index.stats()
-    if stats.searchable_documents == 0:
+    # Before every question, so it reads what the last commit left for search, not every
+    # stored document (``stats()`` and ``keys()``, which ``index status`` and ``build`` use).
+    state = index.committed()
+    if not state.documents:
+        stats = index.stats()  # only to word the error; no answer follows, so a full scan is fine
         if stats.documents == 0:
             raise IndexNotReadyError(f"the index is empty; {BUILD_HINT}")
         raise IndexNotReadyError(
             f"the index holds {stats.documents} documents but none is committed, so none can "
             f"be searched (an earlier build was interrupted); {BUILD_HINT}"
         )
-    if stats.pending:
-        warn(f"the index has changes that are not committed yet and are not searched; {BUILD_HINT}")
-    missing = len(corpus.keys() - index.keys().keys())
+    searchable = state.documents
+    if state.pending:
+        # Rare, so the full scan is fine. A document that is stored but not committed is only
+        # pending, not missing. ``stats()`` has the last word on pending: it also sets aside a
+        # shard whose header cannot be read, which the file names alone cannot tell.
+        searchable = index.keys().keys()
+        if index.stats().pending:
+            warn(
+                f"the index has changes that are not committed yet and are not searched; "
+                f"{BUILD_HINT}"
+            )
+    missing = len(corpus.keys() - searchable)
     if missing:
         warn(
             f"{missing} of {len(corpus)} documents of the corpus are not in the index and cannot "

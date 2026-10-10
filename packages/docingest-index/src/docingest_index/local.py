@@ -69,7 +69,7 @@ from typing import IO, Any
 import numpy as np
 from docingest.domain.chunking import CHUNKER_VERSION
 from docingest.domain.errors import DocingestError
-from docingest.ports import Chunk, Hit, IndexStats, KeywordMode, Vector
+from docingest.ports import Chunk, CommittedState, Hit, IndexStats, KeywordMode, Vector
 
 from .embedder import embedder_fingerprint, query_task
 from .fusion import rrf
@@ -252,6 +252,19 @@ class LocalIndex:
             searchable_chunks=searchable[1],
             committed_at=committed_at,
             pending=pending,
+        )
+
+    def committed(self) -> CommittedState:
+        """The check before a question: ``ids.json`` of the last commit and the names in
+        ``shards/``. No shard is opened (``stats()`` and ``keys()`` read every header), so
+        the cost is one small file and one directory listing."""
+        found = self._read_ids()
+        stored = self._shard_stems()
+        if found is None:
+            return CommittedState(frozenset(), pending=bool(stored))
+        built = found[1]["shards"]
+        return CommittedState(
+            frozenset(s["doc_id"] for s in built), pending={s["stem"] for s in built} != stored
         )
 
     def search(
@@ -522,6 +535,17 @@ class LocalIndex:
             losers += [c[1].stem for c in candidates[:-1]]
         orphans = [s for s in npz if not (shard_dir / f"{s}.jsonl").exists()]
         return winners, losers, orphans
+
+    def _shard_stems(self) -> set[str]:
+        """The stems of the shards that look complete, from the file names alone: a ``.jsonl``
+        (written last) with its ``.npz``. ``_scan_all`` also reads the headers and so also
+        drops a shard whose header is unreadable."""
+        try:
+            names = os.listdir(self.folder / "shards")
+        except FileNotFoundError:
+            return set()
+        jsonl = {n.removesuffix(".jsonl") for n in names if n.endswith(".jsonl")}
+        return jsonl & {n.removesuffix(".npz") for n in names if n.endswith(".npz")}
 
     def _search_dir(self) -> Path | None:
         """``search/``; ``search.old/`` for the instant of a swap in which it is missing."""

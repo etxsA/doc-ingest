@@ -263,6 +263,35 @@ def test_documents_stored_but_never_committed_are_not_searchable_and_the_message
         ask(service(store, FakeQA(), embedder, index))
 
 
+def test_an_index_emptied_by_a_commit_is_empty_not_uncommitted(store):
+    embedder, index = build_index(store)
+    for doc_id in (PAPER_A, PAPER_B, PAPER_C):
+        index.remove(doc_id)
+    index.commit()
+    with pytest.raises(IndexNotReadyError, match=r"index is empty.*docingest index build"):
+        ask(service(store, FakeQA(), embedder, index))
+
+
+def test_an_index_that_is_up_to_date_is_checked_without_a_scan_of_its_documents(store):
+    embedder, index = build_index(store)
+    index.full_scans = index.committed_calls = 0
+    _, warnings = ask(service(store, FakeQA(), embedder, index))
+    assert warnings == [] and index.committed_calls == 1 and index.full_scans == 0
+
+
+def test_documents_stored_but_not_committed_are_pending_and_not_missing(store):
+    embedder, index = build_index(store)
+    add_doc(store, "d" * 64, [("A paper added after the build.", "Intro")], name="d.txt")
+    from docingest.domain.chunking import chunk_pages
+
+    chunks = chunk_pages(
+        "d" * 64, {1: "A paper added after the build."}, chunk_chars=CHARS, overlap=OVERLAP
+    )
+    index.upsert("d" * 64, "k", chunks, embedder.embed_documents([c.text for c in chunks]))
+    _, warnings = ask(service(store, FakeQA(), embedder, index))
+    assert len(warnings) == 1 and "not committed" in warnings[0]  # stored, so not "missing" too
+
+
 def test_an_index_built_with_another_embedder_is_refused_before_the_question_is_embedded(store):
     _, index = build_index(store)
     other = CountingEmbedder()

@@ -344,6 +344,7 @@ classDiagram
         +commit()
         +close()
         +stats() IndexStats
+        +committed() CommittedState
         +search(question, vector, k, keywords) list~Hit~
     }
     class Reranker {

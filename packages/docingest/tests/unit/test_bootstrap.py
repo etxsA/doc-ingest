@@ -143,6 +143,7 @@ def test_the_none_adapters_refuse_to_work_and_name_the_setting(cfg):
             lambda a: a.remove("d"),
             lambda a: a.commit(),
             lambda a: a.stats(),
+            lambda a: a.committed(),
             lambda a: a.search("q", [0.0], 5),
             lambda a: a.search("q", [0.0], 5, keywords="never"),
         ],

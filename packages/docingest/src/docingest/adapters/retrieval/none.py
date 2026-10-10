@@ -12,7 +12,7 @@ from typing import NoReturn
 
 from ...domain.chunking import Chunk
 from ...domain.errors import NotConfiguredError
-from ...ports import Hit, IndexStats, KeywordMode, Vector
+from ...ports import CommittedState, Hit, IndexStats, KeywordMode, Vector
 
 
 def _not_configured(port: str) -> NoReturn:
@@ -52,6 +52,9 @@ class NoIndex:
         """Nothing is held, so there is nothing to fail: callers close in a ``finally``."""
 
     def stats(self) -> IndexStats:
+        _not_configured("index")
+
+    def committed(self) -> CommittedState:
         _not_configured("index")
 
     def search(

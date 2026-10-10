@@ -33,6 +33,15 @@ class IndexStats:
     pending: bool = False
 
 
+@dataclass(frozen=True)
+class CommittedState:
+    """What ``search`` answers from, and whether changes are waiting for a ``commit``."""
+
+    documents: frozenset[str]  # ids of the documents in the last commit
+    # Same meaning as ``IndexStats.pending``: what ``keys()`` reports differs from the commit.
+    pending: bool
+
+
 @runtime_checkable
 class ChunkIndex(Protocol):
     fingerprint: str  # embedder + chunker settings + format: an index of another one is not reused
@@ -79,6 +88,16 @@ class ChunkIndex(Protocol):
     def stats(self) -> IndexStats:
         """Counts for ``docingest index status``, telling a built index from one with
         changes that no ``commit`` has made searchable yet."""
+        ...
+
+    def committed(self) -> CommittedState:
+        """The documents of the last commit and whether changes are waiting, for the check
+        before each question. Same answers as ``keys()`` and ``stats()`` (documents are
+        ``stats().searchable_documents`` of them, pending is ``stats().pending``), except for
+        a stored document that cannot be read, which only those two notice; but an
+        adapter should read only what the commit left for ``search`` and not every stored
+        document: it runs before every question, ``keys()`` and ``stats()`` run in
+        ``index status`` and ``build``."""
         ...
 
     def search(
